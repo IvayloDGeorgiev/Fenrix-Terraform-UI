@@ -38,7 +38,7 @@ A **command palette** (top bar, keyboard-invoked — [13](13-ui-design.md)) is b
 
 ## Themes & accessibility (part of a smooth experience)
 
-- **Light, Dark, and System** themes are first-class, switchable instantly from the top bar and in Settings → Appearance, built on the design-token system so the switch is seamless ([24-visual-design-language.md](24-visual-design-language.md)).
+- **Dark and Light** themes (Dark is the default) are switchable instantly from the top bar and in Settings → Appearance, built on the design-token system so the switch is seamless ([24-visual-design-language.md](24-visual-design-language.md)).
 - **High-contrast** theme and full **keyboard navigation** make the app usable for everyone; Help documents the shortcuts and accessibility options.
 - Help itself respects reduced-motion and contrast settings.
 

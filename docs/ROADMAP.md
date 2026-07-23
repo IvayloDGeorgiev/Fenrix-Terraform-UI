@@ -5,7 +5,7 @@ Twelve implementation phases, an MVP definition, and acceptance criteria. Progre
 ## Phases
 
 ### Phase 1 — Foundation
-.NET 10 MAUI Blazor Hybrid solution · DI · navigation shell · **theme + design-token system (light/dark/system), base components, and motion vocabulary (modern/animated/futuristic look — [24-visual-design-language.md](24-visual-design-language.md))** · **Help framework shell + command palette + theme toggle ([27-help-and-guidance.md](27-help-and-guidance.md))** · logging · SQLite + EF Core · settings framework · workspace directory creation · basic diagnostics.
+.NET 10 MAUI Blazor Hybrid solution · DI · navigation shell · **theme + design-token system (dark default + light), base components, and motion vocabulary (modern/animated/futuristic look — [24-visual-design-language.md](24-visual-design-language.md))** · **Help framework shell + command palette + theme toggle ([27-help-and-guidance.md](27-help-and-guidance.md))** · logging · SQLite + EF Core · settings framework · workspace directory creation · basic diagnostics.
 
 ### Phase 2 — Project management
 Create project · import project · project manifest · default Dev/UAT/Live structure · custom environments · linked external projects · recent projects · file tree · file create/rename/move/delete · filesystem watcher · external-change detection · **file version history capture + recover accidentally deleted files** ([20-pipelines-deployments.md](20-pipelines-deployments.md) uses the version data; [21-file-history-recovery.md](21-file-history-recovery.md)).

@@ -56,7 +56,7 @@ _Last updated: 2026-07-23 — status: **Phase 1 foundation in progress** (soluti
 - [ ] Basic diagnostics export
 
 _Phase 1 build the user should see in Visual Studio: a themed shell (rail + top bar + status bar),
-light/dark/system toggle that persists, Dashboard/Projects/Connections/Activity/Templates/Help/Settings
+dark/light toggle that persists (dark default), Dashboard/Projects/Connections/Activity/Templates/Help/Settings
 pages, SQLite DB + workspace tree created on first launch._
 
 ## Phase 2 — Project management

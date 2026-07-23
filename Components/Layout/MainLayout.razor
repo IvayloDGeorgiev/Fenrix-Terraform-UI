@@ -36,8 +36,8 @@
 </div>
 
 @code {
-    private string ThemeIcon => Theme.Theme switch { "light" => "sun", "dark" => "moon", _ => "monitor" };
-    private string ThemeLabel => Theme.Theme switch { "light" => "Light", "dark" => "Dark", _ => "System" };
+    private string ThemeIcon => Theme.Theme == "light" ? "sun" : "moon";
+    private string ThemeLabel => Theme.Theme == "light" ? "Light" : "Dark";
 
     protected override void OnInitialized() => Theme.Changed += OnThemeChanged;
 

@@ -29,7 +29,7 @@ window.fenrix = {
 // Apply an initial theme early to avoid a flash; the app overrides with the saved value.
 (function () {
   try {
-    var t = localStorage.getItem("fenrix.theme") || "system";
+    var t = localStorage.getItem("fenrix.theme") || "dark";
     window.fenrix.applyTheme(t);
   } catch (e) {
     window.fenrix.applyTheme("dark");

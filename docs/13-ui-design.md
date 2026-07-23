@@ -44,7 +44,7 @@ Sections: General · Appearance · Workspace paths · Terraform versions · Git 
 
 ## Appearance
 
-Light / Dark / System modes · compact & comfortable density · adjustable editor and terminal fonts · high-contrast compatibility · resizable panels · saved layouts · full keyboard navigation.
+Dark and Light modes (Dark is the default) · compact & comfortable density · adjustable editor and terminal fonts · high-contrast compatibility · resizable panels · saved layouts · full keyboard navigation.
 
 ## Accessibility principles
 
