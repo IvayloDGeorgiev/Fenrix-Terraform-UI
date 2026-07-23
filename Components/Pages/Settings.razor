@@ -2,7 +2,7 @@
 @using Fenrix.IaCStudio.Application.Abstractions
 @using Fenrix.IaCStudio.Application.Settings
 @inject ThemeService Theme
-@inject ISettingsService Settings
+@inject ISettingsService SettingsSvc
 @inject IWorkspacePaths Paths
 @inject IJSRuntime JS
 @implements IDisposable
@@ -50,7 +50,7 @@
     protected override void OnInitialized() => Theme.Changed += OnChanged;
 
     protected override async Task OnInitializedAsync()
-        => _reducedMotion = await Settings.GetOrDefaultAsync(FenrixSettingKeys.ReducedMotion, false);
+        => _reducedMotion = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.ReducedMotion, false);
 
     private string Active(string theme) => Theme.Theme == theme ? "accent" : "";
 
@@ -59,7 +59,7 @@
     private async Task OnReducedMotionChanged(ChangeEventArgs e)
     {
         _reducedMotion = e.Value is true;
-        await Settings.SetAsync(FenrixSettingKeys.ReducedMotion, _reducedMotion.ToString());
+        await SettingsSvc.SetAsync(FenrixSettingKeys.ReducedMotion, _reducedMotion.ToString());
         await JS.InvokeVoidAsync("fenrix.setReducedMotion", _reducedMotion);
     }
 
