@@ -1,0 +1,43 @@
+@* Minimal inline-SVG icon set (offline, no font dependency). *@
+@((MarkupString)Render())
+
+@code {
+    [Parameter] public string Name { get; set; } = "";
+    [Parameter] public int Size { get; set; } = 18;
+
+    private static readonly HashSet<string> Filled = new() { "play", "hexagon", "circle-dot" };
+
+    private string Render()
+    {
+        var fill = Filled.Contains(Name) ? "currentColor" : "none";
+        var stroke = Filled.Contains(Name) ? "none" : "currentColor";
+        return $"<svg width=\"{Size}\" height=\"{Size}\" viewBox=\"0 0 24 24\" fill=\"{fill}\" " +
+               $"stroke=\"{stroke}\" stroke-width=\"1.8\" stroke-linecap=\"round\" " +
+               $"stroke-linejoin=\"round\" aria-hidden=\"true\">{Inner(Name)}</svg>";
+    }
+
+    private static string Inner(string name) => name switch
+    {
+        "dashboard" => "<rect x='4' y='4' width='7' height='9' rx='1'/><rect x='4' y='15' width='7' height='5' rx='1'/><rect x='13' y='4' width='7' height='5' rx='1'/><rect x='13' y='11' width='7' height='9' rx='1'/>",
+        "folder" => "<path d='M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z'/>",
+        "git-branch" => "<circle cx='6' cy='6' r='2'/><circle cx='6' cy='18' r='2'/><circle cx='18' cy='8' r='2'/><path d='M6 8v8'/><path d='M18 10a6 6 0 0 1-6 6h-1'/>",
+        "plug" => "<path d='M9 3v6'/><path d='M15 3v6'/><path d='M6 9h12v3a6 6 0 0 1-12 0z'/><path d='M12 18v3'/>",
+        "activity" => "<path d='M3 12h4l3 8 4-16 3 8h4'/>",
+        "template" => "<rect x='4' y='4' width='16' height='16' rx='2'/><path d='M4 9h16'/><path d='M9 9v11'/>",
+        "help" => "<circle cx='12' cy='12' r='9'/><path d='M9.5 9a2.5 2.5 0 1 1 3 2.4c-.9.4-1.5 1-1.5 2.1'/><path d='M12 17h.01'/>",
+        "settings" => "<circle cx='12' cy='12' r='3'/><path d='M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1'/>",
+        "sun" => "<circle cx='12' cy='12' r='4'/><path d='M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>",
+        "moon" => "<path d='M20 14.5A8 8 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z'/>",
+        "monitor" => "<rect x='3' y='4' width='18' height='12' rx='2'/><path d='M8 20h8M12 16v4'/>",
+        "play" => "<path d='M8 5v14l11-7z'/>",
+        "command" => "<path d='M7 9a2 2 0 1 1 2-2v10a2 2 0 1 1-2-2h10a2 2 0 1 1-2 2V7a2 2 0 1 1 2 2z'/>",
+        "hexagon" => "<path d='M12 3l7.5 4.3v8.6L12 21l-7.5-4.1V7.3z'/>",
+        "git-commit" => "<circle cx='12' cy='12' r='3'/><path d='M3 12h6M15 12h6'/>",
+        "circle-dot" => "<circle cx='12' cy='12' r='4'/>",
+        "cloud" => "<path d='M7 18a4 4 0 0 1 0-8 5 5 0 0 1 9.6-1.5A3.5 3.5 0 0 1 17 18z'/>",
+        "check" => "<path d='M5 12l5 5 9-11'/>",
+        "book" => "<path d='M5 5a2 2 0 0 1 2-2h11v16H7a2 2 0 0 0-2 2z'/><path d='M18 3v18'/>",
+        "search" => "<circle cx='11' cy='11' r='7'/><path d='M21 21l-4-4'/>",
+        _ => "<circle cx='12' cy='12' r='9'/>"
+    };
+}

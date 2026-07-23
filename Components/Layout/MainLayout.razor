@@ -1,0 +1,55 @@
+@inherits LayoutComponentBase
+@inject ThemeService Theme
+@implements IDisposable
+
+<div class="fx-shell">
+    <NavMenu />
+
+    <header class="fx-top">
+        <span class="fx-crumb">
+            Fenrix <span class="sep">·</span> No project open
+        </span>
+        <span class="fx-chip"><span class="fx-ico"><Icon Name="git-branch" Size="13" /></span> —</span>
+        <span class="fx-chip"><span class="fx-ico"><Icon Name="cloud" Size="13" /></span> no connection</span>
+
+        <span class="fx-spacer"></span>
+
+        <button class="fx-btn" @onclick="ToggleThemeAsync" title="Toggle theme">
+            <span class="fx-ico"><Icon Name="@ThemeIcon" Size="15" /></span> @ThemeLabel
+        </button>
+        <button class="fx-btn accent">
+            <span class="fx-ico"><Icon Name="play" Size="14" /></span> Run plan
+        </button>
+    </header>
+
+    <main class="fx-main">
+        @Body
+    </main>
+
+    <footer class="fx-status">
+        <span><Icon Name="git-commit" Size="13" /> —</span>
+        <span><Icon Name="circle-dot" Size="10" /> no drift</span>
+        <span class="fx-spacer"></span>
+        <span>0 background operations</span>
+        <span><Icon Name="command" Size="12" /> Ctrl+K</span>
+    </footer>
+</div>
+
+@code {
+    private string ThemeIcon => Theme.Theme switch { "light" => "sun", "dark" => "moon", _ => "monitor" };
+    private string ThemeLabel => Theme.Theme switch { "light" => "Light", "dark" => "Dark", _ => "System" };
+
+    protected override void OnInitialized() => Theme.Changed += OnThemeChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await Theme.InitializeAsync();
+    }
+
+    private Task ToggleThemeAsync() => Theme.ToggleAsync();
+
+    private void OnThemeChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Theme.Changed -= OnThemeChanged;
+}

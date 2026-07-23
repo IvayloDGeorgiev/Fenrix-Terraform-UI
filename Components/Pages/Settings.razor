@@ -1,0 +1,69 @@
+@page "/settings"
+@using Fenrix.IaCStudio.Application.Abstractions
+@using Fenrix.IaCStudio.Application.Settings
+@inject ThemeService Theme
+@inject ISettingsService Settings
+@inject IWorkspacePaths Paths
+@inject IJSRuntime JS
+@implements IDisposable
+
+<h1 class="fx-page-title">Settings</h1>
+<p class="fx-page-sub">Appearance, workspace and diagnostics. More sections arrive with later phases.</p>
+
+<div class="fx-card" style="margin-bottom:16px;">
+    <h2 style="font-size:15px;margin:0 0 12px;">Appearance</h2>
+
+    <div style="font-size:13px;color:var(--fx-dim);margin-bottom:6px;">Theme</div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <button class="fx-btn @Active("light")" @onclick='() => SetTheme("light")'>
+            <span class="fx-ico"><Icon Name="sun" Size="15" /></span> Light
+        </button>
+        <button class="fx-btn @Active("dark")" @onclick='() => SetTheme("dark")'>
+            <span class="fx-ico"><Icon Name="moon" Size="15" /></span> Dark
+        </button>
+        <button class="fx-btn @Active("system")" @onclick='() => SetTheme("system")'>
+            <span class="fx-ico"><Icon Name="monitor" Size="15" /></span> System
+        </button>
+    </div>
+
+    <label style="display:flex;align-items:center;gap:9px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" checked="@_reducedMotion" @onchange="OnReducedMotionChanged" />
+        Reduce motion (disable animations)
+    </label>
+</div>
+
+<div class="fx-card">
+    <h2 style="font-size:15px;margin:0 0 12px;">Workspace</h2>
+    <div style="font-size:13px;line-height:1.9;">
+        <div><span style="color:var(--fx-dim);">Data root:</span> <span class="fx-mono">@Paths.DataRoot</span></div>
+        <div><span style="color:var(--fx-dim);">Database:</span> <span class="fx-mono">@Paths.DatabaseFilePath</span></div>
+        <div>
+            <span style="color:var(--fx-dim);">Using fallback location:</span>
+            @(Paths.UsingFallback ? "yes (LOCALAPPDATA)" : "no")
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool _reducedMotion;
+
+    protected override void OnInitialized() => Theme.Changed += OnChanged;
+
+    protected override async Task OnInitializedAsync()
+        => _reducedMotion = await Settings.GetOrDefaultAsync(FenrixSettingKeys.ReducedMotion, false);
+
+    private string Active(string theme) => Theme.Theme == theme ? "accent" : "";
+
+    private Task SetTheme(string theme) => Theme.SetThemeAsync(theme);
+
+    private async Task OnReducedMotionChanged(ChangeEventArgs e)
+    {
+        _reducedMotion = e.Value is true;
+        await Settings.SetAsync(FenrixSettingKeys.ReducedMotion, _reducedMotion.ToString());
+        await JS.InvokeVoidAsync("fenrix.setReducedMotion", _reducedMotion);
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Theme.Changed -= OnChanged;
+}

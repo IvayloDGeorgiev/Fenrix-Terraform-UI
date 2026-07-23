@@ -1,0 +1,35 @@
+@page "/"
+
+<h1 class="fx-page-title">Dashboard</h1>
+<p class="fx-page-sub">Welcome to Fenrix IaC Studio — a safe, visual layer over the real Terraform and Git CLIs.</p>
+
+<div class="fx-grid cols-4" style="margin-bottom:20px;">
+    <div class="fx-card fx-stat"><div class="n">0</div><div class="l">Projects</div></div>
+    <div class="fx-card fx-stat"><div class="n">0</div><div class="l">Environments</div></div>
+    <div class="fx-card fx-stat"><div class="n">0</div><div class="l">Connections</div></div>
+    <div class="fx-card fx-stat"><div class="n">0</div><div class="l">Recent runs</div></div>
+</div>
+
+<div class="fx-grid cols-3">
+    <div class="fx-card">
+        <h2 style="font-size:15px;margin:0 0 6px;">Create a project</h2>
+        <p style="color:var(--fx-dim);font-size:13px;margin:0 0 12px;">
+            Start a new Terraform project with Dev, UAT and Live environments.
+        </p>
+        <button class="fx-btn accent"><span class="fx-ico"><Icon Name="folder" Size="14" /></span> New project</button>
+    </div>
+    <div class="fx-card">
+        <h2 style="font-size:15px;margin:0 0 6px;">Import existing</h2>
+        <p style="color:var(--fx-dim);font-size:13px;margin:0 0 12px;">
+            Register an existing Terraform repository without restructuring it.
+        </p>
+        <button class="fx-btn"><span class="fx-ico"><Icon Name="folder" Size="14" /></span> Import project</button>
+    </div>
+    <div class="fx-card">
+        <h2 style="font-size:15px;margin:0 0 6px;">Learn the app</h2>
+        <p style="color:var(--fx-dim);font-size:13px;margin:0 0 12px;">
+            The Help area explains how everything works, screen by screen.
+        </p>
+        <a class="fx-btn" href="help"><span class="fx-ico"><Icon Name="help" Size="14" /></span> Open Help</a>
+    </div>
+</div>

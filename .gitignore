@@ -1,0 +1,59 @@
+# ---- Build output ----
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+
+# ---- Visual Studio / Rider ----
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.DotSettings.user
+
+# ---- .NET / MSBuild ----
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.binlog
+*.nupkg
+*.snupkg
+
+# ---- MAUI / platform artifacts ----
+*.aab
+*.apk
+*.ipa
+*.app
+*.appx
+*.appxbundle
+*.msix
+*.msixbundle
+Platforms/Android/**/bin/
+Platforms/Android/**/obj/
+
+# ---- Local databases (Fenrix data root lives outside the repo, but ignore any local copies) ----
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ---- OS cruft ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Secrets / local settings (never commit) ----
+appsettings.*.local.json
+*.local.json
+secrets.json
+
+# ---- Test / coverage ----
+[Tt]est[Rr]esults/
+coverage*.json
+coverage*.xml
+*.coverage

@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Fenrix.IaCStudio.Domain/Fenrix.IaCStudio.Domain.csproj" />
+    <Project Path="src/Fenrix.IaCStudio.Contracts/Fenrix.IaCStudio.Contracts.csproj" />
+    <Project Path="src/Fenrix.IaCStudio.Application/Fenrix.IaCStudio.Application.csproj" />
+    <Project Path="src/Fenrix.IaCStudio.Infrastructure/Fenrix.IaCStudio.Infrastructure.csproj" />
+  </Folder>
+  <Project Path="Fenrix Terraform UI.csproj" />
+</Solution>

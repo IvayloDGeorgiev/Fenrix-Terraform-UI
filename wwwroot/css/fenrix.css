@@ -1,0 +1,269 @@
+/* Fenrix IaC Studio — design tokens & shell. See docs/24-visual-design-language.md. */
+
+:root,
+:root[data-theme="dark"] {
+  --fx-bg: #0a0b12;
+  --fx-panel: #12142a;
+  --fx-panel-2: #161a2b;
+  --fx-surface: #1a1e30;
+  --fx-surface-2: #202542;
+  --fx-text: #e8eaf2;
+  --fx-dim: #9aa0b4;
+  --fx-faint: #6b7186;
+  --fx-border: rgba(255, 255, 255, 0.09);
+  --fx-border-strong: rgba(255, 255, 255, 0.16);
+
+  --fx-accent: #7f7dff;
+  --fx-accent-strong: #6d6cff;
+  --fx-accent-tint: rgba(127, 125, 255, 0.16);
+  --fx-accent-text: #c9c8ff;
+  --fx-cyan: #22d3ee;
+
+  --fx-success: #34d399;
+  --fx-warn: #fbbf24;
+  --fx-danger: #fb5c6b;
+  --fx-prod: #ff8a3d;
+
+  --fx-radius: 14px;
+  --fx-radius-sm: 9px;
+  --fx-space: 8px;
+
+  --fx-font-ui: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --fx-font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+
+  --fx-dur-fast: 120ms;
+  --fx-dur-base: 200ms;
+  --fx-dur-slow: 360ms;
+  --fx-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+:root[data-theme="light"] {
+  --fx-bg: #f5f7fc;
+  --fx-panel: #ffffff;
+  --fx-panel-2: #eef1f8;
+  --fx-surface: #ffffff;
+  --fx-surface-2: #f3f5fb;
+  --fx-text: #14161f;
+  --fx-dim: #5b6478;
+  --fx-faint: #8a92a6;
+  --fx-border: rgba(12, 14, 22, 0.10);
+  --fx-border-strong: rgba(12, 14, 22, 0.18);
+
+  --fx-accent: #4f46e5;
+  --fx-accent-strong: #4338ca;
+  --fx-accent-tint: rgba(79, 70, 229, 0.12);
+  --fx-accent-text: #4338ca;
+  --fx-cyan: #0891b2;
+
+  --fx-success: #059669;
+  --fx-warn: #b45309;
+  --fx-danger: #dc2626;
+  --fx-prod: #c2410c;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--fx-bg);
+  color: var(--fx-text);
+  font-family: var(--fx-font-ui);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app { height: 100vh; }
+
+a { color: var(--fx-accent); text-decoration: none; }
+a:hover { color: var(--fx-accent-strong); }
+
+/* ---- Shell layout ---- */
+.fx-shell {
+  display: grid;
+  grid-template-columns: 208px 1fr;
+  grid-template-rows: 48px 1fr 30px;
+  grid-template-areas:
+    "rail top"
+    "rail main"
+    "rail status";
+  height: 100vh;
+  overflow: hidden;
+}
+
+.fx-rail {
+  grid-area: rail;
+  background: var(--fx-panel-2);
+  border-right: 1px solid var(--fx-border);
+  display: flex;
+  flex-direction: column;
+  padding: 10px 8px;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.fx-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px 14px;
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.2px;
+}
+.fx-brand .fx-logo { color: var(--fx-accent); font-size: 20px; }
+
+.fx-nav {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 11px;
+  border-radius: var(--fx-radius-sm);
+  color: var(--fx-dim);
+  font-size: 13.5px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  transition: background var(--fx-dur-fast) var(--fx-ease), color var(--fx-dur-fast) var(--fx-ease);
+}
+.fx-nav:hover { background: var(--fx-panel); color: var(--fx-text); }
+.fx-nav .fx-ico { font-size: 18px; width: 18px; text-align: center; }
+.fx-nav.active {
+  color: var(--fx-text);
+  background: var(--fx-accent-tint);
+  box-shadow: inset 2px 0 0 var(--fx-accent);
+}
+.fx-nav-spacer { flex: 1; }
+
+/* ---- Top bar ---- */
+.fx-top {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  background: var(--fx-panel-2);
+  border-bottom: 1px solid var(--fx-border);
+}
+.fx-crumb { font-size: 13px; color: var(--fx-text); }
+.fx-crumb .sep { color: var(--fx-faint); margin: 0 2px; }
+.fx-crumb .env { color: var(--fx-accent); font-weight: 500; }
+
+.fx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--fx-border);
+  border-radius: 20px;
+  color: var(--fx-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.fx-chip .fx-ico { font-size: 13px; }
+.fx-spacer { flex: 1; }
+
+/* ---- Status bar ---- */
+.fx-status {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px;
+  background: var(--fx-panel-2);
+  border-top: 1px solid var(--fx-border);
+  color: var(--fx-dim);
+  font-size: 11.5px;
+}
+
+/* ---- Main content ---- */
+.fx-main {
+  grid-area: main;
+  overflow-y: auto;
+  padding: 22px 26px;
+}
+.fx-page-title { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+.fx-page-sub { color: var(--fx-dim); font-size: 13px; margin: 0 0 20px; }
+
+/* ---- Buttons ---- */
+.fx-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
+  border-radius: var(--fx-radius-sm);
+  border: 1px solid var(--fx-border-strong);
+  background: transparent;
+  color: var(--fx-text);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform var(--fx-dur-fast) var(--fx-ease), background var(--fx-dur-fast) var(--fx-ease);
+}
+.fx-btn:hover { background: var(--fx-panel); }
+.fx-btn:active { transform: scale(0.98); }
+.fx-btn.accent { background: var(--fx-accent-strong); border-color: var(--fx-accent-strong); color: #fff; }
+.fx-btn.accent:hover { background: var(--fx-accent); }
+
+/* ---- Cards ---- */
+.fx-card {
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+.fx-grid { display: grid; gap: 14px; }
+.fx-grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.fx-grid.cols-4 { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+
+.fx-stat .n { font-size: 26px; font-weight: 600; line-height: 1.1; }
+.fx-stat .l { color: var(--fx-dim); font-size: 12px; margin-top: 3px; }
+
+.fx-prod-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--fx-prod); border: 1px solid var(--fx-prod);
+  border-radius: 6px; padding: 1px 7px; font-size: 11px; font-weight: 500;
+}
+
+.fx-mono { font-family: var(--fx-font-mono); }
+
+/* ---- Motion / animation ---- */
+.fx-main > * { animation: fx-rise var(--fx-dur-base) var(--fx-ease); }
+@keyframes fx-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+:root[data-reduced-motion="true"] * { animation: none !important; transition: none !important; }
+
+/* ---- Scrollbars ---- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--fx-border-strong); border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ---- Blazor error UI ---- */
+#blazor-error-ui {
+  background: var(--fx-danger);
+  color: #fff;
+  bottom: 0;
+  display: none;
+  left: 0;
+  padding: 0.7rem 1.2rem;
+  position: fixed;
+  width: 100%;
+  z-index: 1000;
+  font-size: 13px;
+}
+#blazor-error-ui .dismiss {
+  cursor: pointer;
+  position: absolute;
+  right: 0.9rem;
+  top: 0.6rem;
+}
+#blazor-error-ui a { color: #fff; text-decoration: underline; }
