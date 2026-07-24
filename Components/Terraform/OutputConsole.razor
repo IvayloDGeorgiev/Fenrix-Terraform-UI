@@ -1,0 +1,40 @@
+@* Append-only streaming output console. See docs/05-terraform-engine.md. *@
+@using Fenrix.IaCStudio.Contracts.Terraform
+@inject IJSRuntime JS
+
+<div class="fx-tf-console" @ref="_el">
+    @if (Lines is null || Lines.Count == 0)
+    {
+        <span class="fx-tf-console-empty">@EmptyText</span>
+    }
+    else
+    {
+        @foreach (var line in Lines)
+        {
+            <div class="@(line.Stream == OutputStream.Stderr ? "stderr" : null)">@line.Text</div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<ProcessOutputEvent>? Lines { get; set; }
+    [Parameter] public string EmptyText { get; set; } = "Output will stream here when you run a command.";
+    [Parameter] public bool AutoScroll { get; set; } = true;
+
+    private ElementReference _el;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (AutoScroll && Lines is { Count: > 0 })
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("fenrix.scrollToBottom", _el);
+            }
+            catch
+            {
+                // Interop unavailable during teardown — ignore.
+            }
+        }
+    }
+}

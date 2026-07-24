@@ -32,6 +32,9 @@ else
         <button class="fx-btn" @onclick="ReloadAllAsync" title="Rescan from disk">
             <span class="fx-ico"><Icon Name="refresh" Size="14" /></span> Rescan
         </button>
+        <button class="fx-btn accent" @onclick='() => Nav.NavigateTo($"/projects/{ProjectId}/terraform")' title="Run Terraform commands">
+            <span class="fx-ico"><Icon Name="terminal" Size="14" /></span> Terraform
+        </button>
     </div>
 
     <div class="fx-split">

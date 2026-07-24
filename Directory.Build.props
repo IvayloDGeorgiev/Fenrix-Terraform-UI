@@ -1,0 +1,15 @@
+<Project>
+
+  <!--
+    Solution-wide build settings.
+
+    Security pin: the .NET stack pulls in System.Security.Cryptography.Xml 9.0.0 transitively, which has
+    known high-severity advisories (GHSA-37gx-xxp4-5rgx / CVE-2026-33116 and related), surfaced as NU1903
+    across every project. Forcing the patched 9.0.15 clears the warnings without changing behaviour.
+    Remove this once the upstream packages reference a patched version themselves.
+  -->
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="9.0.15" />
+  </ItemGroup>
+
+</Project>

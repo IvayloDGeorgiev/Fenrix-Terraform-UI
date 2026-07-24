@@ -4,7 +4,7 @@ Living record of where the project stands. Update this in the same PR as the wor
 
 **Legend:** `[ ]` not started · `[~]` in progress · `[x]` done
 
-_Last updated: 2026-07-24 — status: **Phase 2 project management complete** (project create/import, manifest, environments, recent/linked projects, file tree, FileSystemWatcher + reconciliation + change journal, and DB-backed file history/recovery all implemented; EF switched to migrations. Solution builds. Remaining before Phase 3: generate the initial migration and run a quick smoke test — see note below)._
+_Last updated: 2026-07-24 — status: **Phase 3 core complete** (Terraform discovery + version/constraint enforcement, safe process runner with tree-kill, live streaming output, redacted DB-backed command history, typed Init/Format/Validate/Version screens, and the shared live command-preview component). Deferred to a follow-up: dynamic `-help` command builder + ConPTY terminal. Needs a migration for the new `CommandRun` config before running — see the Phase 3 note. Phase 2 remains complete below._
 
 ## Milestone summary
 
@@ -13,12 +13,13 @@ _Last updated: 2026-07-24 — status: **Phase 2 project management complete** (p
 | 0 | Design & documentation | **Done** |
 | 1 | Foundation | **In progress** |
 | 2 | Project management | **Complete** |
-| 3 | Terraform execution foundation | Not started |
+| 3 | Terraform execution foundation | **Core complete** |
 | 4 | Plans & deployment safety | Not started |
 | 5 | Git core | Not started |
 | 6 | Advanced Git | Not started |
 | 7 | Provider integrations | Not started |
 | 8 | Cloud connections | Not started |
+| 8.5 | Project secrets & key-pair management | Not started |
 | 9 | State & inspection tools | Not started |
 | 9.5 | CI/CD Pipelines & Deployments | Not started |
 | 10 | Visual resource builder | Not started |
@@ -86,15 +87,27 @@ pages, SQLite DB + workspace tree created on first launch._
 - [x] `IFileHistoryStore` works on both SQLite and SQL Server — provider-neutral EF only (SQL Server not yet exercised)
 - [ ] _Follow-ups:_ retention/pruning job, file-history diff view, drag-to-move in tree, watcher-exclusions settings UI, real `git init` (needs Phase 3 process runner)
 
-## Phase 3 — Terraform execution foundation
+## Phase 3 — Terraform execution foundation  ✅ core complete
 
-- [ ] Terraform discovery + version detection + constraint enforcement ([05](05-terraform-engine.md))
-- [ ] Process runner (`ArgumentList`, cancellation, tree-kill, structured events)
-- [ ] stdout/stderr streaming to UI
-- [ ] Command history (redacted)
-- [ ] Typed screens: init, format, validate, version
-- [ ] Command-preview component — show exact command per action, live-updating, redacted, copyable ([23](23-command-transparency.md))
-- [ ] Dynamic raw command builder + embedded ConPTY terminal
+> **Build/migration note.** Phase 3 adds an explicit EF configuration for the existing `CommandRun`
+> entity (indexes on `StartedAt`, `(ProjectId, StartedAt)`, `EnvironmentId`; column lengths). After
+> pulling these changes, generate a migration in Visual Studio before running:
+> if the `InitialCreate` migration hasn't been made yet, `InitialCreate` now captures everything; if it
+> already exists, add a follow-up (e.g. `AddCommandRunHistory`). Terraform must be on `PATH` or set in
+> Settings (`terraform.executable`) for discovery to resolve a binary.
+>
+> **Warnings:** a root `Directory.Build.props` pins `System.Security.Cryptography.Xml` to `9.0.15` to
+> clear the transitive NU1903 high-severity advisories (the stack resolved the vulnerable 9.0.0). Remove
+> the pin once upstream packages ship a patched transitive reference.
+
+- [x] Terraform discovery + version detection + constraint enforcement ([05](05-terraform-engine.md)) — `TerraformVersion`/`TerraformVersionConstraint` (full `required_version` grammar incl. `~>`, prerelease precedence; validated against 16 cases), `TerraformInstallation.SatisfiesConstraint`, `TerraformDiscovery` (configured path → PATH → `version -json`)
+- [x] Process runner (`ArgumentList`, cancellation, tree-kill, structured events) — `IProcessRunner`/`ProcessRunner` (`UseShellExecute=false`, redirected streams, `Kill(entireProcessTree:true)`, `IProgress<ProcessOutputEvent>`)
+- [x] stdout/stderr streaming to UI — `OutputConsole` (append-only, auto-scroll) fed live via `Progress<T>`
+- [x] Command history (redacted) — `ICommandHistoryStore`/`EfCommandHistoryStore` (persists `CommandRun`; raw output to `Logs/terraform/<runId>.log`; args redacted via `ArgumentRedactor`)
+- [x] Typed screens: init, format, validate, version — `TerraformRun` page at `/projects/{id}/terraform` (env selector, per-command options, `validate -json` → structured diagnostics)
+- [x] Command-preview component — show exact command per action, live-updating, redacted, copyable ([23](23-command-transparency.md)) — `CommandPreviewPanel` + `CommandPreviewBuilder`/`TerraformCommandCatalog` (preview and execution share one `ArgumentList`, so they can't diverge)
+- [ ] _Deferred to a Phase 3 follow-up:_ dynamic raw command builder (`terraform -help` discovery) + embedded ConPTY terminal
+- [ ] _Follow-ups:_ Settings UI for the Terraform executable path + a discovered-versions picker; history retention/pruning; cloud-credential env injection (Phase 8) so previews show credential chips
 
 ## Phase 4 — Plans & deployment safety
 
@@ -144,6 +157,15 @@ pages, SQLite DB + workspace tree created on first launch._
 
 - [ ] State browser · list/show · outputs · dependency graph
 - [ ] Import assistant · workspace management · force-unlock · advanced state ops
+
+## Phase 8.5 — Project secrets & key-pair management
+
+- [ ] Per-project **SSH/EC2 key-pair** management: import existing keys into a secure app folder ([28](28-key-pair-management.md))
+- [ ] **Generate** key pairs via Terraform on the backend (`tls_private_key` + `aws_key_pair`), auto-capture the sensitive output into the secure store — no AWS-console round-trip
+- [ ] Encrypted-at-rest (DPAPI) private keys under `Data\keys\<projectId>\`; DB holds only metadata + a `SecretReference` ([11](11-secrets.md))
+- [ ] Keys section inside the project (view fingerprint/public key/source; copy public key or secure path; rotate/delete; gated+audited private-key export)
+- [ ] Reference-picker so `connection`/`provisioner`/`aws_key_pair` blocks point at a managed key
+- [ ] _Stretch:_ "Connect" (SSH to instance/bastion using a managed key); tfvars secret references; policy/cost/drift add-ons (see [28](28-key-pair-management.md))
 
 ## Phase 9.5 — CI/CD Pipelines & Deployments
 

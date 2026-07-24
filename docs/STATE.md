@@ -10,17 +10,18 @@ _Updated: 2026-07-24_
 - **Phase 0 (design & docs):** ✅ complete — 27 topic docs + 5 ADRs in `docs/`.
 - **Phase 1 (foundation):** ✅ built — solution structure, EF Core/SQLite, settings, themed Blazor shell.
 - **Phase 2 (project management):** ✅ complete — project create/import, manifest, environments, recent/linked projects, file tree, `FileSystemWatcher` + reconciliation + change journal, DB-backed file history/recovery. EF switched to migrations. Solution builds.
-- **Next:** Phase 3 — Terraform execution foundation (discovery/version, process runner, streaming, typed init/format/validate, command-preview). See [PROGRESS.md](PROGRESS.md#phase-3--terraform-execution-foundation) and [05](05-terraform-engine.md), [23](23-command-transparency.md), [25](25-execution-lifecycle.md).
+- **Phase 3 (Terraform execution foundation):** ✅ core complete — Terraform discovery + version/constraint enforcement, safe process runner (ArgumentList, cancellation, tree-kill, structured events), live streaming output, redacted DB-backed command history, typed Init/Format/Validate/Version screens, and the shared live command-preview component. Deferred to a follow-up: dynamic `-help` builder + ConPTY terminal.
+- **Next:** Phase 4 — plans & deployment safety (saved plan `-out`, `show -json` parsing, 3-pane change view, apply-exact-saved-plan, production confirmation, per-environment locks). See [PROGRESS.md](PROGRESS.md#phase-4--plans--deployment-safety) and [06](06-plan-apply-safety.md), [25](25-execution-lifecycle.md).
 
-## Before Phase 3 (one-time)
+## Before running (one-time migration)
 
-Generate the initial EF migration (design-time factory is in place), then smoke-test:
+Generate the EF migration (design-time factory is in place), then smoke-test:
 
 ```
 dotnet ef migrations add InitialCreate -p src/Fenrix.IaCStudio.Infrastructure -s src/Fenrix.IaCStudio.Infrastructure
 ```
 
-Delete any dev `fenrix.db` from Phase 1 first (an `EnsureCreated` schema has no `__EFMigrationsHistory`). Then run the app and create + import a project to confirm the tree, history, and Recoverable items work.
+If `InitialCreate` already exists from before Phase 3, add a follow-up migration instead (the new `CommandRun` config adds indexes + column lengths), e.g. `AddCommandRunHistory`. Delete any dev `fenrix.db` from a pre-migration `EnsureCreated` run first (that schema has no `__EFMigrationsHistory`). Terraform must be on `PATH` or set in Settings (`terraform.executable`) for the Terraform screens to resolve a binary.
 
 ## What exists (Phase 1)
 
@@ -38,6 +39,14 @@ Delete any dev `fenrix.db` from Phase 1 first (an `EnsureCreated` schema has no 
 - UI: rewritten `Projects` page (list/recent/new/import), `ProjectFiles` page (tree + editor + history + recoverable), `NewProjectDialog`, `ImportProjectDialog`, `FileTreeView`, shared `Modal`; `IFolderPicker` (Windows WinRT) in `Services`; extended `Icon` set + CSS.
 - Route: `/projects/{id}` opens a project; synchronizer starts on open, stops on dispose.
 
+## What exists (Phase 3)
+
+- Domain: `Terraform/{TerraformVersion, TerraformVersionConstraint, TerraformInstallation, TerraformExecutableSource, TerraformRunStatus}`. Constraint parser covers the full `required_version` grammar (`=,!=,>,>=,<,<=,~>`, comma-AND) with correct prerelease precedence; validated against 16 cases.
+- Contracts: `Terraform/*` — `TerraformCommandRequest`, `TerraformCommandKind`, `Init/Format/ValidateOptions`, `ProcessOutputEvent`, `ProcessResult`, `CommandPreview`(+`CommandContextChip`), `TerraformValidationResult`(+`ValidationDiagnostic`), `CommandRunSummary`, `TerraformRunSpec/Plan/Result`.
+- Application: abstractions `Abstractions/Terraform/{IProcessRunner, ITerraformDiscovery, ICommandHistoryStore, ITerraformExecutor}`; pure logic `Terraform/{TerraformCommandCatalog, CommandPreviewBuilder, ArgumentRedactor}` (the catalog is the single source of the `ArgumentList`, so preview == execution).
+- Infrastructure: `Processes/ProcessRunner`; `Terraform/{TerraformDiscovery, TerraformExecutor, EfCommandHistoryStore}`; `CommandRunConfiguration` in `Configurations.cs`; DI registered (runner singleton; discovery/history/executor scoped).
+- UI: `Components/Terraform/{CommandPreviewPanel, OutputConsole}`; `Components/Pages/TerraformRun.razor` at `/projects/{id}/terraform` (env selector, Init/Format/Validate/Version, live preview + streaming + redacted history); "Terraform" button added to the project files page; `scrollToBottom` + `copy`/`terminal`/`stop` icons added.
+
 ## Key decisions (don't re-litigate)
 
 - Drive official CLIs; files are source of truth; saved-plan-only apply. (ADRs 0001–0003)
@@ -45,6 +54,7 @@ Delete any dev `fenrix.db` from Phase 1 first (an `EnsureCreated` schema has no 
 - Versions are per-project, deployed independently per environment. ([20](20-pipelines-deployments.md))
 - Theme is **Dark + Light only** (no System); Dark default.
 - DB schema now via **EF migrations** (auto-falls back to `EnsureCreated` until the first migration exists). Files are source of truth; the file-history store is a recovery cache (dedup by SHA-256, GZip). In-app delete of tracked files is **off by default** (Settings → Security); external deletes are detected and recoverable.
+- Terraform engine lives **in Infrastructure** (not a separate `Fenrix.IaCStudio.Terraform` project yet) to match the Phase 2 precedent and avoid a blind `.csproj`/`.slnx` change. Commands run via **`ArgumentList` only** — never a shell string. The **preview and the executed process share one argument list** (`TerraformCommandCatalog`), so they can't diverge. Redacted history is persisted (`CommandRun`); raw output goes to `Logs/terraform/<runId>.log`, never the DB.
 - On **SQLite**, all `DateTimeOffset` columns use `DateTimeOffsetToBinaryConverter` (SQLite can't `ORDER BY`/compare `DateTimeOffset` in SQL); applied via `ConfigureConventions`, guarded to SQLite only. If you change this, regenerate the migration.
 
 ## Git / workflow

@@ -1,9 +1,12 @@
 using Fenrix.IaCStudio.Application.Abstractions;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
+using Fenrix.IaCStudio.Application.Abstractions.Terraform;
 using Fenrix.IaCStudio.Infrastructure.Files;
 using Fenrix.IaCStudio.Infrastructure.Persistence;
+using Fenrix.IaCStudio.Infrastructure.Processes;
 using Fenrix.IaCStudio.Infrastructure.Projects;
+using Fenrix.IaCStudio.Infrastructure.Terraform;
 using Fenrix.IaCStudio.Infrastructure.Workspace;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -45,6 +48,14 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<IProjectFileSynchronizer, ProjectFileSynchronizer>();
         services.AddScoped<IFileHistoryStore, FileHistoryStore>();
         services.AddScoped<IFileTreeService, FileTreeService>();
+
+        // Terraform execution foundation (Phase 3). The process runner is stateless (singleton);
+        // discovery/history/executor touch settings or the DB and are resolved per UI scope.
+        // See docs/05-terraform-engine.md, docs/23-command-transparency.md, docs/25-execution-lifecycle.md.
+        services.AddSingleton<IProcessRunner, ProcessRunner>();
+        services.AddScoped<ITerraformDiscovery, TerraformDiscovery>();
+        services.AddScoped<ICommandHistoryStore, EfCommandHistoryStore>();
+        services.AddScoped<ITerraformExecutor, TerraformExecutor>();
 
         return services;
     }

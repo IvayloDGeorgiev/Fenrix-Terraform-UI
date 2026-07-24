@@ -23,6 +23,11 @@ window.fenrix = {
 
   prefersDark: function () {
     return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  },
+
+  // Scroll an element to its bottom (used by the streaming Terraform console).
+  scrollToBottom: function (el) {
+    if (el) { el.scrollTop = el.scrollHeight; }
   }
 };
 

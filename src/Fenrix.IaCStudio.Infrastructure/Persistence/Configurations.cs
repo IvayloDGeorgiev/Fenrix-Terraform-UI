@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Fenrix.IaCStudio.Domain.Cloud;
 using Fenrix.IaCStudio.Domain.Environments;
+using Fenrix.IaCStudio.Domain.Execution;
 using Fenrix.IaCStudio.Domain.Files;
 using Fenrix.IaCStudio.Domain.Projects;
 using Fenrix.IaCStudio.Domain.Settings;
@@ -172,6 +173,22 @@ internal sealed class FileBlobConfiguration : IEntityTypeConfiguration<FileBlob>
         b.HasKey(x => x.Id);
         b.Property(x => x.ContentHash).IsRequired().HasMaxLength(64);
         b.HasIndex(x => x.ContentHash).IsUnique(); // the dedup key
+    }
+}
+
+internal sealed class CommandRunConfiguration : IEntityTypeConfiguration<CommandRun>
+{
+    public void Configure(EntityTypeBuilder<CommandRun> b)
+    {
+        b.ToTable("CommandRuns");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Tool).IsRequired().HasMaxLength(40);
+        b.Property(x => x.Command).IsRequired().HasMaxLength(120);
+        b.Property(x => x.Status).IsRequired().HasMaxLength(40);
+        // History is browsed newest-first, scoped by project/environment.
+        b.HasIndex(x => x.StartedAt);
+        b.HasIndex(x => new { x.ProjectId, x.StartedAt });
+        b.HasIndex(x => x.EnvironmentId);
     }
 }
 

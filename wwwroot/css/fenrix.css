@@ -377,3 +377,114 @@ a:hover { color: var(--fx-accent-strong); }
   top: 0.6rem;
 }
 #blazor-error-ui a { color: #fff; text-decoration: underline; }
+
+/* ---- Terraform execution (Phase 3). See docs/23-command-transparency.md. ---- */
+.fx-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--fx-border);
+  margin-bottom: 14px;
+}
+.fx-tab {
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  color: var(--fx-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.fx-tab:hover { color: var(--fx-text); }
+.fx-tab.active { color: var(--fx-accent-text); border-bottom-color: var(--fx-accent); }
+
+.fx-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+.fx-check input { width: 15px; height: 15px; accent-color: var(--fx-accent); cursor: pointer; }
+.fx-check .hint { color: var(--fx-faint); font-size: 12px; }
+
+/* Command preview — the exact command that will run. */
+.fx-tf-preview {
+  background: var(--fx-bg);
+  border: 1px solid var(--fx-border-strong);
+  border-radius: var(--fx-radius-sm);
+  padding: 12px 14px;
+}
+.fx-tf-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fx-faint);
+}
+.fx-tf-cmd {
+  font-family: var(--fx-font-mono);
+  font-size: 12.5px;
+  color: var(--fx-text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.6;
+}
+.fx-tf-cmd .exe { color: var(--fx-accent-text); }
+.fx-tf-cmd .flag { color: var(--fx-cyan); }
+.fx-tf-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+/* Append-only streaming console. */
+.fx-tf-console {
+  background: #05060c;
+  border: 1px solid var(--fx-border);
+  border-radius: var(--fx-radius-sm);
+  padding: 12px 14px;
+  font-family: var(--fx-font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: #cfd3e6;
+  max-height: 420px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.fx-tf-console .stderr { color: var(--fx-danger); }
+.fx-tf-console-empty { color: var(--fx-faint); font-style: italic; }
+
+/* Run status pills. */
+.fx-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  border: 1px solid var(--fx-border-strong);
+}
+.fx-pill.ok { color: var(--fx-success); border-color: var(--fx-success); }
+.fx-pill.fail { color: var(--fx-danger); border-color: var(--fx-danger); }
+.fx-pill.run { color: var(--fx-accent-text); border-color: var(--fx-accent); }
+.fx-pill.warn { color: var(--fx-warn); border-color: var(--fx-warn); }
+.fx-pill.muted { color: var(--fx-dim); }
+
+.fx-diag {
+  border-left: 3px solid var(--fx-danger);
+  padding: 6px 12px;
+  margin: 8px 0;
+  background: var(--fx-surface-2);
+  border-radius: 0 var(--fx-radius-sm) var(--fx-radius-sm) 0;
+}
+.fx-diag.warn { border-left-color: var(--fx-warn); }
+.fx-diag .summary { font-size: 13px; }
+.fx-diag .detail { font-size: 12px; color: var(--fx-dim); margin-top: 3px; white-space: pre-wrap; }
+.fx-diag .loc { font-size: 11.5px; color: var(--fx-faint); font-family: var(--fx-font-mono); margin-top: 3px; }

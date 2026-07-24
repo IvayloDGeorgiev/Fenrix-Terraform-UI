@@ -1,0 +1,53 @@
+@* Live, redacted preview of the exact command that will run. See docs/23-command-transparency.md. *@
+@using Fenrix.IaCStudio.Contracts.Terraform
+@inject IJSRuntime JS
+
+@if (Preview is not null)
+{
+    <div class="fx-tf-preview">
+        <div class="fx-tf-preview-head">
+            <span class="fx-ico"><Icon Name="terminal" Size="13" /></span>
+            <span style="flex:1;">Command that will run</span>
+            <button class="fx-btn sm ghost" title="Copy command" @onclick="CopyAsync">
+                <span class="fx-ico"><Icon Name="copy" Size="12" /></span> @(_copied ? "Copied" : "Copy")
+            </button>
+        </div>
+
+        <div class="fx-tf-cmd">
+            <span class="exe">@Preview.ExecutableDisplayName</span>@foreach (var arg in Preview.Arguments)
+            {
+                <text> </text><span class="@(arg.StartsWith('-') ? "flag" : "")">@arg</span>
+            }
+        </div>
+
+        <div class="fx-tf-chips">
+            @foreach (var chip in Preview.Chips)
+            {
+                <span class="fx-chip" title="@chip.Label"><strong style="color:var(--fx-dim);font-weight:500;">@chip.Label:</strong>&nbsp;@chip.Value</span>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public CommandPreview? Preview { get; set; }
+
+    private bool _copied;
+
+    private async Task CopyAsync()
+    {
+        if (Preview is null) return;
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", Preview.DisplayCommand);
+            _copied = true;
+            StateHasChanged();
+            await Task.Delay(1400);
+            _copied = false;
+        }
+        catch
+        {
+            // Clipboard unavailable (rare in the hosted WebView) — silently ignore.
+        }
+    }
+}

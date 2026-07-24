@@ -38,4 +38,11 @@ Logs and history redact values matching: known secret references, Terraform sens
 - Never place secrets in Git remote URLs — use the credential helper.
 - Offer a "clear clipboard" option after copying sensitive values.
 
+## Managed key material (SSH / EC2 key pairs)
+
+Private keys are Fenrix-specific secrets, so they use DPAPI (6) and follow the same rules: stored
+**encrypted at rest** outside the project folder (`Data\keys\<projectId>\`), with only a `KeyPair`
+record + `SecretReference` in the DB. Per-project key-pair import, Terraform-backed generation, and use
+are specified in [28-key-pair-management.md](28-key-pair-management.md).
+
 See [15-logging-auditing.md](15-logging-auditing.md) for what is logged and [17-testing-strategy.md](17-testing-strategy.md) for redaction and leakage tests.
