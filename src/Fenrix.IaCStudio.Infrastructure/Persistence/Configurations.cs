@@ -5,6 +5,7 @@ using Fenrix.IaCStudio.Domain.Execution;
 using Fenrix.IaCStudio.Domain.Files;
 using Fenrix.IaCStudio.Domain.Projects;
 using Fenrix.IaCStudio.Domain.Settings;
+using Fenrix.IaCStudio.Domain.Terraform;
 using Fenrix.IaCStudio.Domain.Versioning;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -189,6 +190,32 @@ internal sealed class CommandRunConfiguration : IEntityTypeConfiguration<Command
         b.HasIndex(x => x.StartedAt);
         b.HasIndex(x => new { x.ProjectId, x.StartedAt });
         b.HasIndex(x => x.EnvironmentId);
+    }
+}
+
+internal sealed class SavedPlanConfiguration : IEntityTypeConfiguration<SavedPlan>
+{
+    public void Configure(EntityTypeBuilder<SavedPlan> b)
+    {
+        b.ToTable("SavedPlans");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.EnvironmentName).HasMaxLength(120);
+        b.Property(x => x.PlanFilePath).IsRequired().HasMaxLength(1024);
+        b.Property(x => x.RelativePlanFilePath).HasMaxLength(1024);
+        b.Property(x => x.WorkingDirectory).HasMaxLength(1024);
+        b.Property(x => x.TerraformVersion).HasMaxLength(40);
+        // Integrity hashes are lowercase hex SHA-256 (64 chars).
+        b.Property(x => x.ConfigHash).HasMaxLength(64);
+        b.Property(x => x.LockHash).HasMaxLength(64);
+        b.Property(x => x.PlanFileHash).HasMaxLength(64);
+        b.Property(x => x.GitCommitSha).HasMaxLength(64);
+        b.Property(x => x.GitBranch).HasMaxLength(200);
+        b.Property(x => x.InvalidatedReason).HasMaxLength(400);
+        // Stored as its enum name so the table stays human-readable (as with CommandRun.Status).
+        b.Property(x => x.Mode).HasConversion<string>().HasMaxLength(20);
+        // Browsed newest-first, scoped by project and environment.
+        b.HasIndex(x => new { x.ProjectId, x.CreatedAt });
+        b.HasIndex(x => new { x.EnvironmentId, x.CreatedAt });
     }
 }
 

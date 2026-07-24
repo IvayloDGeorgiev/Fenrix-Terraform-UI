@@ -11,6 +11,20 @@ public sealed record TerraformRunSpec(Guid ProjectId, Guid EnvironmentId, Terraf
     public InitOptions Init { get; init; } = new();
     public FormatOptions Format { get; init; } = new();
     public ValidateOptions Validate { get; init; } = new();
+    public PlanOptions Plan { get; init; } = new();
+
+    /// <summary>
+    /// Var-file passed to <c>plan</c> (<c>-var-file</c>). Typically the environment's tfvars, resolved
+    /// relative to the working directory. Never passed to <c>apply</c> — a saved plan already fixes its
+    /// variables, and Terraform rejects <c>-var-file</c> with a saved plan.
+    /// </summary>
+    public string? VarFile { get; init; }
+
+    /// <summary>The <c>-out</c> target when planning: the absolute path the saved plan is written to.</summary>
+    public string? OutPlanFile { get; init; }
+
+    /// <summary>The saved plan file to <c>apply</c> or <c>show</c> (absolute path). Required for those kinds.</summary>
+    public string? PlanFilePath { get; init; }
 }
 
 /// <summary>

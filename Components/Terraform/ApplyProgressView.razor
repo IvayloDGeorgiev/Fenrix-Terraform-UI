@@ -1,0 +1,68 @@
+@* Live per-resource apply progress, parsed from `apply -json`. Carries no attribute values.
+   See docs/25-execution-lifecycle.md. *@
+@using Fenrix.IaCStudio.Contracts.Terraform
+
+@if (Rows is null || Rows.Count == 0)
+{
+    <div class="fx-plan-empty">Per-resource progress will appear here as the apply runs.</div>
+}
+else
+{
+    <div class="fx-apply-rows">
+        @foreach (var r in Rows)
+        {
+            <div class="fx-apply-row @StatusClass(r.Status)">
+                @if (!string.IsNullOrWhiteSpace(r.Provider))
+                {
+                    <span class="prov">@r.Provider</span>
+                }
+                <span class="addr" title="@r.Address">@r.Address</span>
+                <span class="stat">
+                    @StatusText(r)
+                    @if (r.ElapsedSeconds is { } s && s > 0)
+                    {
+                        <span class="el">@s.ToString("0.0")s</span>
+                    }
+                </span>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<ApplyProgressEvent>? Rows { get; set; }
+
+    private static string StatusClass(ApplyResourceStatus s) => s switch
+    {
+        ApplyResourceStatus.Complete => "complete",
+        ApplyResourceStatus.Errored => "errored",
+        _ => "inprogress"
+    };
+
+    private static string StatusText(ApplyProgressEvent e)
+    {
+        var verb = e.Action switch
+        {
+            ApplyResourceAction.Create => "Creating",
+            ApplyResourceAction.Update => "Modifying",
+            ApplyResourceAction.Delete => "Destroying",
+            ApplyResourceAction.Replace => "Replacing",
+            ApplyResourceAction.Read => "Reading",
+            _ => "Working"
+        };
+        return e.Status switch
+        {
+            ApplyResourceStatus.Complete => e.Action switch
+            {
+                ApplyResourceAction.Create => "Created",
+                ApplyResourceAction.Update => "Modified",
+                ApplyResourceAction.Delete => "Destroyed",
+                ApplyResourceAction.Replace => "Replaced",
+                ApplyResourceAction.Read => "Read",
+                _ => "Done"
+            },
+            ApplyResourceStatus.Errored => "Errored",
+            _ => verb + "…"
+        };
+    }
+}

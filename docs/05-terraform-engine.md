@@ -6,6 +6,17 @@ Drives `terraform.exe`, parses its structured output, and streams progress to th
 
 Fenrix supports: using Terraform from `PATH`; selecting a custom executable; maintaining multiple versions; pinning a version per project; detecting the required version from configuration; showing installed/selected versions; validating with `terraform version`; and **refusing to run** when the selected version violates the project's constraint.
 
+### Installation & version management (planned — Terraform tab)
+
+A dedicated **Terraform** tab/section that manages the binary itself, so users never have to install Terraform by hand:
+
+- **Show the current install** — resolved executable path, source (`PATH` / configured / Fenrix-managed), parsed version, platform, and whether it satisfies the open project's constraint.
+- **One-click install (Windows)** — download the official HashiCorp release for the current OS/arch, **verify the `SHA256SUMS` checksum and its GPG signature**, unzip into the Fenrix-managed tools directory (`WorkspacePaths.ToolsDirectory`), and set it as the configured executable (`terraform.executable`). No admin rights or PATH edits required.
+- **Check for updates / update** — query the HashiCorp releases index (`https://releases.hashicorp.com/terraform/index.json`) for the latest stable, compare against the installed version, and update on request.
+- **Version picker** — list available releases and install a specific version; keep multiple versions side by side under the tools directory and switch the active one (tfenv-style), which also lets a project pin resolve to a matching managed install automatically.
+
+Security: downloads only from `releases.hashicorp.com`, always checksum- and signature-verified before use; the managed binary lives under the app's tools directory, never overwriting a system install. Delivery: a Phase 3 follow-up (reuses `ITerraformDiscovery`, `TerraformInstallation`, and the Settings `terraform.executable` key).
+
 ## Command transparency
 
 Every command surface shows a **live preview of the exact command that will run** (executable + `ArgumentList` + working dir + context chips, secrets redacted). The Run button executes exactly what the preview shows — both are generated from the same argument list, so there is never divergence. This is a cross-cutting product promise detailed in [23-command-transparency.md](23-command-transparency.md).

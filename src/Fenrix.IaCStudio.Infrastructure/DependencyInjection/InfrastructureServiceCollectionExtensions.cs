@@ -57,6 +57,16 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ICommandHistoryStore, EfCommandHistoryStore>();
         services.AddScoped<ITerraformExecutor, TerraformExecutor>();
 
+        // Plans & deployment safety (Phase 4). The lock service is a singleton (its in-process guard is
+        // shared across all operations); plan/apply services and the saved-plan store touch the DB and are
+        // scoped. The process coordinator centralizes redacted history + logging for the new services.
+        // See docs/06-plan-apply-safety.md, docs/25-execution-lifecycle.md.
+        services.AddSingleton<IEnvironmentLockService, FileEnvironmentLockService>();
+        services.AddScoped<TerraformProcessCoordinator>();
+        services.AddScoped<ISavedPlanStore, EfSavedPlanStore>();
+        services.AddScoped<ITerraformPlanService, TerraformPlanService>();
+        services.AddScoped<ITerraformApplyService, TerraformApplyService>();
+
         return services;
     }
 }

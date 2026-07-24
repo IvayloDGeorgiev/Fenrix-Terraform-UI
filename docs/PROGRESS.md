@@ -4,7 +4,7 @@ Living record of where the project stands. Update this in the same PR as the wor
 
 **Legend:** `[ ]` not started · `[~]` in progress · `[x]` done
 
-_Last updated: 2026-07-24 — status: **Phase 3 core complete** (Terraform discovery + version/constraint enforcement, safe process runner with tree-kill, live streaming output, redacted DB-backed command history, typed Init/Format/Validate/Version screens, and the shared live command-preview component). Deferred to a follow-up: dynamic `-help` command builder + ConPTY terminal. Needs a migration for the new `CommandRun` config before running — see the Phase 3 note. Phase 2 remains complete below._
+_Last updated: 2026-07-24 — status: **Phase 4 core complete** (saved plan `-out` + `show -json` parsing, three-pane resource-change review with filters and sensitive-value redaction, config/lock/plan hashing with invalidation, apply of the exact saved plan, production typed-confirmation, destroy workflow, per-environment on-disk operation locks, and refresh-only drift plans). Plans + state are version-controlled (git + Fenrix file history) per project. Needs a migration for the new `SavedPlan` table before running — see the Phase 4 note. Phases 2–3 remain complete below._
 
 ## Milestone summary
 
@@ -14,7 +14,7 @@ _Last updated: 2026-07-24 — status: **Phase 3 core complete** (Terraform disco
 | 1 | Foundation | **In progress** |
 | 2 | Project management | **Complete** |
 | 3 | Terraform execution foundation | **Core complete** |
-| 4 | Plans & deployment safety | Not started |
+| 4 | Plans & deployment safety | **Core complete** |
 | 5 | Git core | Not started |
 | 6 | Advanced Git | Not started |
 | 7 | Provider integrations | Not started |
@@ -71,8 +71,9 @@ pages, SQLite DB + workspace tree created on first launch._
 > dotnet ef migrations add InitialCreate -p src/Fenrix.IaCStudio.Infrastructure -s src/Fenrix.IaCStudio.Infrastructure
 > ```
 >
-> If a dev `fenrix.db` was already created via `EnsureCreated`, delete it before the first migrated
-> run (EnsureCreated-made schemas have no `__EFMigrationsHistory`). See [12](12-database-design.md).
+> A dev `fenrix.db` created via `EnsureCreated` no longer needs deleting — `AppInitializer` adopts it
+> automatically (creates missing model tables, stamps migrations as applied, keeps data). See
+> [12](12-database-design.md).
 
 - [x] Create project (recommended structure) ([03](03-domain-model.md)) — `ProjectService` + `ProjectScaffolder`
 - [x] Import existing project wizard (no restructuring) — `ProjectImportScanner` + `ImportProjectDialog`
@@ -96,9 +97,13 @@ pages, SQLite DB + workspace tree created on first launch._
 > already exists, add a follow-up (e.g. `AddCommandRunHistory`). Terraform must be on `PATH` or set in
 > Settings (`terraform.executable`) for discovery to resolve a binary.
 >
-> **Warnings:** a root `Directory.Build.props` pins `System.Security.Cryptography.Xml` to `9.0.15` to
-> clear the transitive NU1903 high-severity advisories (the stack resolved the vulnerable 9.0.0). Remove
-> the pin once upstream packages ship a patched transitive reference.
+> **Warnings (NU1903 security pins in `Directory.Build.props`):** two transitive packages are flagged
+> high-severity and pinned to patched versions (each needs a `dotnet restore`): `System.Security.Cryptography.Xml`
+> → `10.0.10` (net10 stack resolved a vulnerable `[10.0.0, 10.0.9]` build — CVE-2026-50525/-50527/-47304;
+> supersedes the earlier `9.0.15` pin), and `SQLitePCLRaw.lib.e_sqlite3` → `3.50.3` (EF Core SQLite ships
+> the vulnerable `2.1.11` with SQLite < 3.50.2 — CVE-2025-6965; native lib overridden, managed
+> core/provider stay at 2.1.11). Remove each once the upstream packages reference patched versions
+> (the SQLite fix is slated for EF Core 11).
 
 - [x] Terraform discovery + version detection + constraint enforcement ([05](05-terraform-engine.md)) — `TerraformVersion`/`TerraformVersionConstraint` (full `required_version` grammar incl. `~>`, prerelease precedence; validated against 16 cases), `TerraformInstallation.SatisfiesConstraint`, `TerraformDiscovery` (configured path → PATH → `version -json`)
 - [x] Process runner (`ArgumentList`, cancellation, tree-kill, structured events) — `IProcessRunner`/`ProcessRunner` (`UseShellExecute=false`, redirected streams, `Kill(entireProcessTree:true)`, `IProgress<ProcessOutputEvent>`)
@@ -108,18 +113,33 @@ pages, SQLite DB + workspace tree created on first launch._
 - [x] Command-preview component — show exact command per action, live-updating, redacted, copyable ([23](23-command-transparency.md)) — `CommandPreviewPanel` + `CommandPreviewBuilder`/`TerraformCommandCatalog` (preview and execution share one `ArgumentList`, so they can't diverge)
 - [ ] _Deferred to a Phase 3 follow-up:_ dynamic raw command builder (`terraform -help` discovery) + embedded ConPTY terminal
 - [ ] _Follow-ups:_ Settings UI for the Terraform executable path + a discovered-versions picker; history retention/pruning; cloud-credential env injection (Phase 8) so previews show credential chips
+- [ ] _Follow-up — Terraform tab (binary manager):_ show the current install (version/path/source); one-click **install Terraform for Windows** (download from `releases.hashicorp.com`, verify SHA256SUMS + GPG signature, unzip into `WorkspacePaths.ToolsDirectory`, set `terraform.executable`); **check-for-updates / update**; optional **version picker** to install/switch a specific version (multi-version, tfenv-style). See [05](05-terraform-engine.md#installation--version-management-planned--terraform-tab)
 
-## Phase 4 — Plans & deployment safety
+## Phase 4 — Plans & deployment safety  ✅ core complete
 
-- [ ] Saved plan (`-out`) + `show -json` parsing ([06](06-plan-apply-safety.md))
-- [ ] Resource-change display (3-pane) + filters
-- [ ] Sensitive-data redaction ([11](11-secrets.md))
-- [ ] Plan + configuration + lock hashing; invalidation
-- [ ] Apply exact saved plan
-- [ ] Production confirmation (type env name)
-- [ ] Destroy workflow
-- [ ] Per-environment operation locks
-- [ ] Drift-only (refresh-only) planning
+> **Build/migration note.** Phase 4 adds a new `SavedPlan` entity + `SavedPlanConfiguration` (table
+> `SavedPlans`). After pulling these changes, generate a migration in Visual Studio before running:
+> `dotnet ef migrations add AddSavedPlans -p src/Fenrix.IaCStudio.Infrastructure -s src/Fenrix.IaCStudio.Infrastructure`.
+> No other schema changed. Plans are written to `plans/<env>/` and env locks to `.fenrix/locks/` inside
+> each project; both, plus state and the provider lock, are now git-tracked (`.gitignore` updated in the
+> scaffolder). `.tfplan`/`.tfstate` were added to the file-history versioned extensions. **Security:** plan
+> and state files hold sensitive values in plaintext by design — keep project repositories private.
+>
+> Parsing logic (`PlanJsonParser`, `ApplyJsonParser`) and integrity hashing were validated against real
+> `show -json` / `apply -json` fixtures via a reference cross-check (25 assertions, all passing) since MAUI
+> can't be compiled in the authoring environment.
+
+- [x] Saved plan (`-out`) + `show -json` parsing ([06](06-plan-apply-safety.md)) — `TerraformPlanService` runs `plan -out` then `show -json`; `PlanJsonParser` parses it in memory (never persisted raw)
+- [x] Resource-change display (3-pane) + filters — `PlanReviewPanel` (summary cards, action + text filters, list | detail | before/after) at `/projects/{id}/plan`
+- [x] Sensitive-data redaction ([11](11-secrets.md)) — `before_sensitive`/`after_sensitive` → `••••`, `after_unknown` → "(known after apply)"; `-json` outputs never written to logs
+- [x] Plan + configuration + lock hashing; invalidation — `PlanIntegrity` (combined config hash + `.terraform.lock.hcl` hash + plan-file hash); preflight re-hashes and marks stale plans un-appliable
+- [x] Apply exact saved plan — `TerraformApplyService` runs `apply -input=false -json <plan>`; no var-file; re-verifies plan hash immediately before executing
+- [x] Production confirmation (type env name) — preflight `RequiresTypedConfirmation`; apply refused unless the typed value equals the environment name
+- [x] Destroy workflow — `plan -destroy -out` → same review (all deletes) → apply the saved destroy plan (saved-plan-only, ADR-0003)
+- [x] Per-environment operation locks — `IEnvironmentLockService`/`FileEnvironmentLockService` (on-disk `.fenrix/locks/<env>.lock`, PID-based staleness + force-release); read-only `show` doesn't lock
+- [x] Drift-only (refresh-only) planning — `plan -refresh-only -out`; drift surfaced in the same review UI
+- [ ] _Deferred to Phase 5:_ Git provenance in plan metadata (commit/branch/uncommitted warnings) — `SavedPlan` has the nullable fields; populated once the Git engine lands
+- [ ] _Follow-ups:_ structured `apply -json` progress covers per-resource status/timing but not the dependency-ordering annotations from doc 25's worked example; config hashing covers the working-dir subtree + `modules/` only (modules referenced from elsewhere aren't tracked); deployment recording is Phase 9.5
 
 ## Phase 5 — Git core
 
@@ -213,3 +233,7 @@ pages, SQLite DB + workspace tree created on first launch._
 | 2026-07-23 | DB-backed file version history for recovery | [ADR-0004](adr/0004-db-file-version-history.md) |
 | 2026-07-23 | Switch DB schema from EnsureCreated to EF migrations (with fallback) | [12](12-database-design.md) |
 | 2026-07-24 | Store DateTimeOffset as sortable binary on SQLite (SQLite can't ORDER BY/compare it) | [12](12-database-design.md) |
+| 2026-07-24 | Plans, state, and the provider lock live inside each project (`plans/<env>/`) and are version-controlled (git + Fenrix file history); repos must be private (plaintext secrets) | [06](06-plan-apply-safety.md) |
+| 2026-07-24 | Per-environment operation lock is an on-disk lock file in `.fenrix/locks/` (crash-safe, PID-staleness, force-releasable) | [06](06-plan-apply-safety.md) |
+| 2026-07-24 | Keep every saved plan as its own file so any reviewed plan stays exactly applyable (ADR-0003); apply uses `apply -json` for structured per-resource progress | [06](06-plan-apply-safety.md) |
+| 2026-07-24 | `AppInitializer` adopts a legacy `EnsureCreated` DB (create missing tables + stamp migration history) instead of requiring a reset — upgrades never lose data | [12](12-database-design.md) |

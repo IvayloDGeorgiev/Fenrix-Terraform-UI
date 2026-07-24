@@ -34,6 +34,9 @@ else
         <button class="fx-btn sm" @onclick="RefreshBinaryAsync" title="Re-detect the Terraform binary">
             <span class="fx-ico"><Icon Name="refresh" Size="13" /></span> Detect
         </button>
+        <button class="fx-btn sm accent" @onclick="GoToPlan" title="Plan, review, and apply changes safely">
+            <span class="fx-ico"><Icon Name="shield" Size="13" /></span> Plan &amp; apply
+        </button>
     </div>
 
     <div class="fx-split">
@@ -387,6 +390,8 @@ else
         => _history = (await History.GetRecentAsync(ProjectId, 25)).ToList();
 
     private void GoToFiles() => Nav.NavigateTo($"/projects/{ProjectId}");
+
+    private void GoToPlan() => Nav.NavigateTo($"/projects/{ProjectId}/plan");
 
     private async Task CopyAsync(string text)
     {

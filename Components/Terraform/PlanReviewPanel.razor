@@ -1,0 +1,243 @@
+@* Three-pane saved-plan review: summary cards, filters, resource list, and before/after comparison.
+   All values are already redacted by PlanJsonParser. See docs/06-plan-apply-safety.md. *@
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Terraform
+
+@if (Review is null || Review.IsEmpty)
+{
+    <div class="fx-plan-empty">
+        @(Review is null ? "Create a plan to review the changes here." : "No changes — your infrastructure matches the configuration.")
+    </div>
+}
+else
+{
+    <div class="fx-plan-summary">
+        <div class="fx-sumcard add"><div class="n">@Review.Summary.Add</div><div class="l">Add</div></div>
+        <div class="fx-sumcard change"><div class="n">@Review.Summary.Change</div><div class="l">Change</div></div>
+        <div class="fx-sumcard destroy"><div class="n">@Review.Summary.Destroy</div><div class="l">Destroy</div></div>
+        <div class="fx-sumcard replace"><div class="n">@Review.Summary.Replace</div><div class="l">Replace</div></div>
+        @if (Review.Summary.Drift > 0)
+        {
+            <div class="fx-sumcard drift"><div class="n">@Review.Summary.Drift</div><div class="l">Drift</div></div>
+        }
+    </div>
+
+    <div class="fx-plan-filters">
+        @foreach (var f in _filters)
+        {
+            <button class="fx-fchip @(_active.Contains(f.Action) ? "active" : "")" @onclick="() => ToggleFilter(f.Action)">
+                @f.Label (@CountFor(f.Action))
+            </button>
+        }
+        <input class="fx-input fx-fsearch fx-mono" placeholder="filter address / type / provider / module"
+               @bind="_search" @bind:event="oninput" />
+    </div>
+
+    <div class="fx-plan-grid">
+        <div class="fx-plan-list">
+            @if (Filtered.Count == 0)
+            {
+                <div class="fx-plan-empty">No changes match the current filters.</div>
+            }
+            else
+            {
+                @foreach (var rc in Filtered)
+                {
+                    <div class="fx-res @(ReferenceEquals(rc, _selected) ? "selected" : "")" @onclick="() => Select(rc)">
+                        <span class="fx-badge @ActionClass(rc.Action)" title="@ActionLabel(rc.Action)">@ActionGlyph(rc.Action)</span>
+                        <div class="grow">
+                            <div class="addr">@rc.Address</div>
+                            <div class="meta">@rc.Type · @rc.ProviderName@(rc.Mode == ResourceMode.Data ? " · data" : "")</div>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+
+        <div class="fx-plan-detail">
+            @if (_selected is null)
+            {
+                <div class="fx-plan-empty" style="padding:0;">Select a resource to see its before / after values.</div>
+            }
+            else
+            {
+                <div class="addr">@_selected.Address</div>
+                <div class="sub">
+                    <span class="fx-pill @PillClass(_selected.Action)">@ActionLabel(_selected.Action)</span>
+                    &nbsp;@_selected.Type · @_selected.ProviderName@(_selected.Mode == ResourceMode.Data ? " · data source" : "")
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_selected.ActionReason))
+                {
+                    <div class="reason">Reason: @_selected.ActionReason</div>
+                }
+                @if (_selected.ReplacePaths.Count > 0)
+                {
+                    <div class="reason">Forces replacement: @string.Join(", ", _selected.ReplacePaths)</div>
+                }
+
+                @if (_selected.Attributes.Count == 0)
+                {
+                    <div class="fx-diff-none" style="margin-top:12px;">No attribute-level detail for this change.</div>
+                }
+                else
+                {
+                    <div style="display:flex;align-items:center;gap:8px;margin-top:12px;">
+                        <label class="fx-check" style="padding:0;">
+                            <input type="checkbox" @bind="_changedOnly" /> Changed attributes only
+                        </label>
+                    </div>
+                    <table class="fx-diff-table">
+                        <thead><tr><th>Attribute</th><th>Before</th><th>After</th></tr></thead>
+                        <tbody>
+                            @foreach (var a in VisibleAttributes(_selected))
+                            {
+                                <tr>
+                                    <td class="k">@a.Name @(a.Sensitive ? "🔒" : "")</td>
+                                    <td>@RenderCell(a.Before, a, isBefore: true)</td>
+                                    <td>@RenderCell(a.After, a, isBefore: false)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+        </div>
+    </div>
+
+    @if (Review.OutputChanges.Count > 0)
+    {
+        <div style="margin-top:16px;">
+            <div style="font-size:13px;font-weight:500;margin-bottom:8px;">Output changes</div>
+            @foreach (var o in Review.OutputChanges)
+            {
+                <div class="fx-res" style="cursor:default;">
+                    <span class="fx-badge @ActionClass(o.Action)">@ActionGlyph(o.Action)</span>
+                    <div class="grow">
+                        <div class="addr">@o.Name @(o.Sensitive ? "🔒" : "")</div>
+                        <div class="meta">@ActionLabel(o.Action)@(o.UnknownAfter ? " · known after apply" : "")</div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public PlanReview? Review { get; set; }
+    [Parameter] public PlanMode Mode { get; set; } = PlanMode.Normal;
+
+    private readonly HashSet<ChangeAction> _active = new();
+    private string _search = "";
+    private bool _changedOnly = true;
+    private PlanResourceChange? _selected;
+    private PlanReview? _lastReview;
+
+    private static readonly (ChangeAction Action, string Label)[] _filters =
+    [
+        (ChangeAction.Create, "Added"),
+        (ChangeAction.Update, "Updated"),
+        (ChangeAction.Delete, "Destroyed"),
+        (ChangeAction.Replace, "Replaced"),
+        (ChangeAction.Read, "Read"),
+        (ChangeAction.NoOp, "Unchanged"),
+    ];
+
+    protected override void OnParametersSet()
+    {
+        // Reset selection when a new review is supplied.
+        if (!ReferenceEquals(Review, _lastReview))
+        {
+            _lastReview = Review;
+            _selected = Review?.ResourceChanges.FirstOrDefault(r => r.Action != ChangeAction.NoOp)
+                        ?? Review?.ResourceChanges.FirstOrDefault();
+        }
+    }
+
+    private IReadOnlyList<PlanResourceChange> AllChanges =>
+        Review is null ? [] : Review.ResourceChanges;
+
+    private List<PlanResourceChange> Filtered
+    {
+        get
+        {
+            IEnumerable<PlanResourceChange> q = AllChanges;
+            if (_active.Count > 0)
+                q = q.Where(r => _active.Contains(r.Action));
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                var s = _search.Trim();
+                q = q.Where(r =>
+                    r.Address.Contains(s, StringComparison.OrdinalIgnoreCase)
+                    || r.Type.Contains(s, StringComparison.OrdinalIgnoreCase)
+                    || r.ProviderName.Contains(s, StringComparison.OrdinalIgnoreCase)
+                    || (r.ModuleAddress?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+            return q.ToList();
+        }
+    }
+
+    private int CountFor(ChangeAction action) => AllChanges.Count(r => r.Action == action);
+
+    private void ToggleFilter(ChangeAction action)
+    {
+        if (!_active.Remove(action))
+            _active.Add(action);
+    }
+
+    private void Select(PlanResourceChange rc) => _selected = rc;
+
+    private IEnumerable<AttributeChange> VisibleAttributes(PlanResourceChange rc) =>
+        _changedOnly ? rc.Attributes.Where(a => a.Changed) : rc.Attributes;
+
+    private static MarkupString RenderCell(string? value, AttributeChange a, bool isBefore)
+    {
+        if (!isBefore && a.UnknownAfter)
+            return new MarkupString("<span class=\"fx-diff-unknown\">(known after apply)</span>");
+        if (value is null)
+            return new MarkupString("<span class=\"fx-diff-none\">—</span>");
+        var cls = a.Sensitive ? "fx-diff-sensitive" : isBefore ? "fx-diff-before" : "fx-diff-after";
+        var escaped = System.Net.WebUtility.HtmlEncode(value);
+        return new MarkupString($"<span class=\"{cls}\">{escaped}</span>");
+    }
+
+    private static string ActionClass(ChangeAction a) => a switch
+    {
+        ChangeAction.Create => "add",
+        ChangeAction.Update => "change",
+        ChangeAction.Delete => "destroy",
+        ChangeAction.Replace => "replace",
+        ChangeAction.Read => "read",
+        _ => "noop"
+    };
+
+    private static string ActionGlyph(ChangeAction a) => a switch
+    {
+        ChangeAction.Create => "+",
+        ChangeAction.Update => "~",
+        ChangeAction.Delete => "-",
+        ChangeAction.Replace => "±",
+        ChangeAction.Read => "?",
+        ChangeAction.Forget => "⊘",
+        _ => "·"
+    };
+
+    private static string ActionLabel(ChangeAction a) => a switch
+    {
+        ChangeAction.Create => "create",
+        ChangeAction.Update => "update",
+        ChangeAction.Delete => "destroy",
+        ChangeAction.Replace => "replace",
+        ChangeAction.Read => "read",
+        ChangeAction.Forget => "forget",
+        _ => "no-op"
+    };
+
+    private static string PillClass(ChangeAction a) => a switch
+    {
+        ChangeAction.Create => "ok",
+        ChangeAction.Update => "warn",
+        ChangeAction.Delete => "fail",
+        ChangeAction.Replace => "prod",
+        _ => "muted"
+    };
+}

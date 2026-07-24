@@ -124,21 +124,21 @@ public sealed class ProjectScaffolder(ILogger<ProjectScaffolder> logger) : IProj
         """;
 
     private static string GitIgnore() => """
-        # Terraform
+        # Terraform provider/module cache (machine-generated, large — never version-controlled).
         .terraform/
-        .terraform.lock.hcl
-        *.tfstate
-        *.tfstate.*
+
+        # Local CLI config and crash logs (may hold credentials / are noise).
         crash.log
         crash.*.log
-        override.tf
-        override.tf.json
-        *_override.tf
-        *_override.tf.json
         .terraformrc
         terraform.rc
 
+        # NOTE: Terraform config, plans (plans/), state (*.tfstate) and the provider lock
+        # (.terraform.lock.hcl) are intentionally tracked. Plan and state files can contain sensitive
+        # values in plaintext — keep this repository private and access-controlled.
+
         # Fenrix (local machine artifacts only; the manifest is intentionally tracked)
         .fenrix/artifacts/
+        .fenrix/locks/
         """;
 }

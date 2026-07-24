@@ -1,0 +1,508 @@
+@page "/projects/{ProjectId:guid}/plan"
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Environments
+@using Fenrix.IaCStudio.Domain.Projects
+@using Fenrix.IaCStudio.Domain.Terraform
+@inject IProjectService Projects
+@inject ITerraformPlanService PlanService
+@inject ITerraformApplyService ApplyService
+@inject ITerraformDiscovery Discovery
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@implements IDisposable
+
+@if (_project is null)
+{
+    <div class="fx-card" style="text-align:center;color:var(--fx-dim);">@(_loading ? "Loading…" : "Project not found.")</div>
+}
+else
+{
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <button class="fx-iconbtn" title="Back to project files" @onclick="GoToFiles"><Icon Name="arrow-left" Size="16" /></button>
+        <div style="flex:1;">
+            <h1 class="fx-page-title" style="margin:0;">@_project.Name — Plan &amp; apply</h1>
+            <div class="fx-page-sub fx-mono" style="margin:2px 0 0;">@_workingDir</div>
+        </div>
+        <span class="fx-chip" title="Resolved Terraform binary">
+            <span class="fx-ico"><Icon Name="hexagon" Size="13" /></span>
+            @(_installation?.Version?.ToString() ?? "not found")
+        </span>
+    </div>
+
+    <div class="fx-split">
+        @* ---- Plan controls ---- *@
+        <div style="display:flex;flex-direction:column;gap:16px;">
+            <div class="fx-card">
+                <div class="fx-field" style="margin-bottom:12px;">
+                    <label>Environment</label>
+                    <select class="fx-select" value="@_envId" @onchange="OnEnvChanged" disabled="@Busy">
+                        @foreach (var env in _environments)
+                        {
+                            <option value="@env.Id">@env.Name@(env.IsProduction ? " (production)" : "")</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="fx-field" style="margin-bottom:12px;">
+                    <label>Plan type</label>
+                    <div class="fx-seg">
+                        <button class="@(_mode == PlanMode.Normal ? "active" : "")" @onclick="() => SetMode(PlanMode.Normal)" disabled="@Busy">
+                            <span class="fx-ico"><Icon Name="layers" Size="13" /></span> Plan
+                        </button>
+                        <button class="@(_mode == PlanMode.Destroy ? "active danger" : "")" @onclick="() => SetMode(PlanMode.Destroy)" disabled="@Busy">
+                            <span class="fx-ico"><Icon Name="trash" Size="13" /></span> Destroy
+                        </button>
+                        <button class="@(_mode == PlanMode.RefreshOnly ? "active" : "")" @onclick="() => SetMode(PlanMode.RefreshOnly)" disabled="@Busy">
+                            <span class="fx-ico"><Icon Name="refresh" Size="13" /></span> Drift
+                        </button>
+                    </div>
+                    <p class="fx-hint" style="margin-top:6px;">@ModeHint()</p>
+                </div>
+
+                <CommandPreviewPanel Preview="_planPreview" />
+
+                @if (_planBlockReason is not null)
+                {
+                    <div class="fx-hint" style="margin-top:12px;color:var(--fx-warn);display:flex;gap:8px;align-items:flex-start;">
+                        <span class="fx-ico" style="margin-top:1px;"><Icon Name="alert" Size="14" /></span>
+                        <span>@_planBlockReason</span>
+                    </div>
+                }
+
+                <div style="display:flex;gap:8px;margin-top:14px;">
+                    @if (_planRunning)
+                    {
+                        <button class="fx-btn danger" @onclick="Cancel"><span class="fx-ico"><Icon Name="stop" Size="14" /></span> Cancel</button>
+                        <span class="fx-pill run"><span class="fx-ico"><Icon Name="refresh" Size="12" /></span> Planning…</span>
+                    }
+                    else
+                    {
+                        <button class="fx-btn accent" @onclick="CreatePlanAsync" disabled="@(_planBlockReason is not null || _applyRunning)">
+                            <span class="fx-ico"><Icon Name="play" Size="13" /></span> Create plan
+                        </button>
+                    }
+                    @if (_planResultPill is { } pill)
+                    {
+                        <span class="fx-pill @pill.Cls" title="@pill.Text">@pill.Text</span>
+                    }
+                </div>
+
+                @if (_planOutput.Count > 0)
+                {
+                    <div style="margin-top:12px;"><OutputConsole Lines="_planOutput" /></div>
+                }
+            </div>
+
+            <div class="fx-card">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                    <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="history" Size="16" /></span>
+                    <span style="flex:1;font-size:14px;font-weight:500;">Saved plans</span>
+                </div>
+                @if (_recent.Count == 0)
+                {
+                    <div class="fx-hint">No plans yet for this environment.</div>
+                }
+                else
+                {
+                    @foreach (var p in _recent)
+                    {
+                        <div class="fx-row @(p.Id == _savedPlanId ? "selected" : "")" style="cursor:pointer;" @onclick="() => SelectPlanAsync(p.Id)">
+                            <div class="grow" style="min-width:0;">
+                                <div class="title" style="font-size:12.5px;">@ModeLabel(p.Mode) · +@p.AddCount ~@p.ChangeCount -@p.DestroyCount ±@p.ReplaceCount</div>
+                                <div class="meta">@p.CreatedAt.LocalDateTime.ToString("g")</div>
+                            </div>
+                            @if (p.Applied) { <span class="fx-pill ok">applied</span> }
+                            else if (p.IsInvalidated) { <span class="fx-pill fail" title="@p.InvalidatedReason">stale</span> }
+                            else { <span class="fx-pill muted">ready</span> }
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+
+        @* ---- Right rail: quick status ---- *@
+        <div style="display:flex;flex-direction:column;gap:16px;">
+            <div class="fx-card">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                    <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="shield" Size="16" /></span>
+                    <span style="font-size:14px;font-weight:500;">Deployment safety</span>
+                </div>
+                <p class="fx-hint" style="margin:0;">
+                    Fenrix applies only the <strong>exact saved plan</strong> you review here. A plan is invalidated
+                    if the configuration or provider lock changes after it was created, and production environments
+                    require you to type the environment name to confirm.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    @* ---- Review (full width) ---- *@
+    @if (_review is not null)
+    {
+        <div class="fx-card" style="margin-top:16px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="file-text" Size="16" /></span>
+                <span style="flex:1;font-size:14px;font-weight:500;">Plan review</span>
+                @if (_reviewLoading) { <span class="fx-pill run">Loading…</span> }
+            </div>
+            <PlanReviewPanel Review="_review" Mode="_reviewMode" />
+        </div>
+    }
+
+    @* ---- Apply (full width) ---- *@
+    @if (_preflight is not null && _savedPlanId is not null)
+    {
+        <div class="fx-card" style="margin-top:16px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="zap" Size="16" /></span>
+                <span style="flex:1;font-size:14px;font-weight:500;">Apply this plan</span>
+                @if (_applyResultPill is { } ap) { <span class="fx-pill @ap.Cls">@ap.Text</span> }
+            </div>
+
+            <CommandPreviewPanel Preview="_preflight.Preview" />
+
+            <div style="margin-top:14px;">
+                @foreach (var c in _preflight.Checks)
+                {
+                    <div class="fx-checkrow @CheckClass(c)">
+                        <span class="fx-ico"><Icon Name="@CheckIcon(c)" Size="15" /></span>
+                        <div>
+                            <div>@c.Label</div>
+                            @if (!string.IsNullOrWhiteSpace(c.Detail)) { <div class="detail">@c.Detail</div> }
+                        </div>
+                    </div>
+                }
+            </div>
+
+            @if (_preflight.RequiresTypedConfirmation && !_appliedThisPlan)
+            {
+                <div class="fx-confirm">
+                    <div class="lead"><span class="fx-ico"><Icon Name="alert" Size="15" /></span> Production environment</div>
+                    <p class="fx-hint" style="margin:0 0 8px;">Type <strong class="fx-mono">@_preflight.ConfirmationPhrase</strong> to confirm this deployment.</p>
+                    <input class="fx-input fx-mono" placeholder="@_preflight.ConfirmationPhrase" @bind="_typedConfirm" @bind:event="oninput" disabled="@_applyRunning" />
+                </div>
+            }
+
+            <div style="display:flex;gap:8px;margin-top:14px;align-items:center;">
+                @if (_applyRunning)
+                {
+                    <button class="fx-btn danger" @onclick="Cancel"><span class="fx-ico"><Icon Name="stop" Size="14" /></span> Cancel</button>
+                    <span class="fx-pill run"><span class="fx-ico"><Icon Name="refresh" Size="12" /></span> Applying…</span>
+                }
+                else
+                {
+                    <button class="fx-btn accent" @onclick="ApplyAsync" disabled="@(!CanApplyNow)">
+                        <span class="fx-ico"><Icon Name="zap" Size="13" /></span> Apply saved plan
+                    </button>
+                }
+                @if (_applyError is not null)
+                {
+                    <span class="fx-pill fail" title="@_applyError"><span class="fx-ico"><Icon Name="alert" Size="12" /></span> @_applyError</span>
+                }
+            </div>
+
+            @if (_applyOrder.Count > 0)
+            {
+                <div style="margin-top:14px;">
+                    <ApplyProgressView Rows="OrderedApplyRows" />
+                </div>
+            }
+
+            @if (_applyOutput.Count > 0)
+            {
+                <details style="margin-top:12px;">
+                    <summary style="cursor:pointer;font-size:12.5px;color:var(--fx-dim);">Raw output (terraform apply -json)</summary>
+                    <div style="margin-top:8px;"><OutputConsole Lines="_applyOutput" EmptyText="No output." /></div>
+                </details>
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private InfrastructureProject? _project;
+    private List<ProjectEnvironment> _environments = [];
+    private Guid _envId;
+    private TerraformInstallation? _installation;
+    private PlanMode _mode = PlanMode.Normal;
+    private string _workingDir = "";
+    private bool _loading = true;
+    private Guid _loadedId;
+
+    // Plan
+    private PlanContext? _planContext;
+    private CommandPreview? _planPreview;
+    private string? _planBlockReason;
+    private readonly List<ProcessOutputEvent> _planOutput = [];
+    private bool _planRunning;
+    private (string Cls, string Text)? _planResultPill;
+
+    // Review
+    private PlanReview? _review;
+    private PlanMode _reviewMode = PlanMode.Normal;
+    private bool _reviewLoading;
+    private Guid? _savedPlanId;
+    private List<SavedPlanSummary> _recent = [];
+
+    // Apply
+    private ApplyPreflight? _preflight;
+    private string _typedConfirm = "";
+    private readonly List<ProcessOutputEvent> _applyOutput = [];
+    private readonly Dictionary<string, ApplyProgressEvent> _applyRows = [];
+    private readonly List<string> _applyOrder = [];
+    private bool _applyRunning;
+    private bool _appliedThisPlan;
+    private string? _applyError;
+    private (string Cls, string Text)? _applyResultPill;
+
+    private CancellationTokenSource? _cts;
+
+    private bool Busy => _planRunning || _applyRunning;
+
+    private IReadOnlyList<ApplyProgressEvent> OrderedApplyRows =>
+        _applyOrder.Select(a => _applyRows[a]).ToList();
+
+    private bool CanApplyNow =>
+        !_applyRunning
+        && _preflight is { CanApply: true }
+        && (!_preflight.RequiresTypedConfirmation
+            || string.Equals(_typedConfirm.Trim(), _preflight.ConfirmationPhrase, StringComparison.Ordinal));
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == ProjectId) return;
+        _loadedId = ProjectId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _project = await Projects.GetAsync(ProjectId);
+        _loading = false;
+        if (_project is null) return;
+
+        _environments = _project.Environments.OrderBy(e => e.DisplayOrder).ThenBy(e => e.Name).ToList();
+        _envId = _environments.FirstOrDefault()?.Id ?? Guid.Empty;
+        _installation = await Discovery.ResolveAsync(ProjectId);
+        await PreparePlanAsync();
+        await LoadRecentAsync();
+    }
+
+    private async Task OnEnvChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id))
+            _envId = id;
+        ResetPlanState();
+        await PreparePlanAsync();
+        await LoadRecentAsync();
+    }
+
+    private async Task SetMode(PlanMode mode)
+    {
+        _mode = mode;
+        await PreparePlanAsync();
+    }
+
+    private async Task PreparePlanAsync()
+    {
+        var options = new PlanOptions { Destroy = _mode == PlanMode.Destroy, RefreshOnly = _mode == PlanMode.RefreshOnly };
+        _planContext = await PlanService.PreparePlanAsync(ProjectId, _envId, options);
+        _planPreview = _planContext.Preview;
+        _planBlockReason = _planContext.BlockReason;
+        _workingDir = _planContext.WorkingDirectory;
+    }
+
+    private async Task CreatePlanAsync()
+    {
+        if (_planContext is null || _planBlockReason is not null) return;
+
+        _planRunning = true;
+        _planResultPill = null;
+        _planOutput.Clear();
+        _cts = new CancellationTokenSource();
+
+        try
+        {
+            var progress = new Progress<ProcessOutputEvent>(e => { _planOutput.Add(e); StateHasChanged(); });
+            var result = await PlanService.CreatePlanAsync(_planContext, progress, _cts.Token);
+
+            if (result.Succeeded)
+            {
+                _savedPlanId = result.SavedPlanId;
+                _review = result.Review;
+                _reviewMode = _mode;
+                _appliedThisPlan = false;
+                ResetApplyState();
+                _planResultPill = ("ok", PlanSummaryText(result.SavedPlan));
+                await LoadPreflightAsync(_savedPlanId!.Value);
+            }
+            else if (result.Process is { Cancelled: true })
+            {
+                _planResultPill = ("warn", "Cancelled");
+            }
+            else
+            {
+                _planResultPill = ("fail", result.BlockReason ?? "Plan failed");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _planResultPill = ("warn", "Cancelled");
+        }
+        catch (Exception ex)
+        {
+            _planResultPill = ("fail", ex.Message);
+        }
+        finally
+        {
+            _planRunning = false;
+            _cts?.Dispose();
+            _cts = null;
+            await LoadRecentAsync();
+            await PreparePlanAsync(); // fresh out-path for the next plan
+            StateHasChanged();
+        }
+    }
+
+    private async Task SelectPlanAsync(Guid savedPlanId)
+    {
+        _savedPlanId = savedPlanId;
+        _reviewLoading = true;
+        _appliedThisPlan = false;
+        ResetApplyState();
+        StateHasChanged();
+
+        _review = await PlanService.GetReviewAsync(savedPlanId);
+        _reviewMode = _recent.FirstOrDefault(p => p.Id == savedPlanId)?.Mode ?? PlanMode.Normal;
+        _reviewLoading = false;
+        await LoadPreflightAsync(savedPlanId);
+    }
+
+    private async Task LoadPreflightAsync(Guid savedPlanId)
+    {
+        _typedConfirm = "";
+        _preflight = await ApplyService.PreflightAsync(savedPlanId);
+        StateHasChanged();
+    }
+
+    private async Task ApplyAsync()
+    {
+        if (_savedPlanId is null || !CanApplyNow) return;
+
+        _applyRunning = true;
+        _applyError = null;
+        _applyResultPill = null;
+        _applyOutput.Clear();
+        _applyRows.Clear();
+        _applyOrder.Clear();
+        _cts = new CancellationTokenSource();
+
+        try
+        {
+            var raw = new Progress<ProcessOutputEvent>(e => { _applyOutput.Add(e); StateHasChanged(); });
+            var structured = new Progress<ApplyProgressEvent>(OnApplyProgress);
+            var result = await ApplyService.ApplyAsync(
+                _savedPlanId.Value, new ApplyConfirmation(_typedConfirm), raw, structured, _cts.Token);
+
+            _applyResultPill = result.Process.Cancelled
+                ? ("warn", "Cancelled")
+                : result.Process.Succeeded
+                    ? ("ok", $"Applied · +{result.Added} ~{result.Changed} -{result.Destroyed}")
+                    : ("fail", $"Exit {result.Process.ExitCode}");
+            if (result.Process.Succeeded)
+                _appliedThisPlan = true;
+        }
+        catch (OperationCanceledException)
+        {
+            _applyResultPill = ("warn", "Cancelled");
+        }
+        catch (Exception ex)
+        {
+            _applyError = ex.Message;
+        }
+        finally
+        {
+            _applyRunning = false;
+            _cts?.Dispose();
+            _cts = null;
+            await LoadRecentAsync();
+            if (_savedPlanId is not null)
+                await LoadPreflightAsync(_savedPlanId.Value);
+            StateHasChanged();
+        }
+    }
+
+    private void OnApplyProgress(ApplyProgressEvent e)
+    {
+        if (!_applyRows.ContainsKey(e.Address))
+            _applyOrder.Add(e.Address);
+        _applyRows[e.Address] = e;
+        StateHasChanged();
+    }
+
+    private async Task LoadRecentAsync()
+        => _recent = (await PlanService.GetRecentAsync(ProjectId, _envId, 15)).ToList();
+
+    private void ResetPlanState()
+    {
+        _review = null;
+        _savedPlanId = null;
+        _preflight = null;
+        _planResultPill = null;
+        _planOutput.Clear();
+        ResetApplyState();
+    }
+
+    private void ResetApplyState()
+    {
+        _preflight = null;
+        _typedConfirm = "";
+        _applyError = null;
+        _applyResultPill = null;
+        _applyOutput.Clear();
+        _applyRows.Clear();
+        _applyOrder.Clear();
+    }
+
+    private void Cancel() => _cts?.Cancel();
+
+    private void GoToFiles() => Nav.NavigateTo($"/projects/{ProjectId}");
+
+    private string ModeHint() => _mode switch
+    {
+        PlanMode.Destroy => "Plans the destruction of every managed resource in this environment. You still review and confirm before anything is destroyed.",
+        PlanMode.RefreshOnly => "A read-only drift check: reconciles state with real infrastructure and shows differences, without planning infrastructure changes.",
+        _ => "Computes the changes needed to match your configuration and saves the exact plan for review and apply."
+    };
+
+    private static string ModeLabel(PlanMode m) => m switch
+    {
+        PlanMode.Destroy => "Destroy",
+        PlanMode.RefreshOnly => "Drift",
+        _ => "Plan"
+    };
+
+    private static string PlanSummaryText(SavedPlanSummary? p) =>
+        p is null ? "Plan created" : $"Plan ready · +{p.AddCount} ~{p.ChangeCount} -{p.DestroyCount} ±{p.ReplaceCount}";
+
+    private static string CheckClass(PreflightCheck c) =>
+        c.Passed && c.Severity != PreflightSeverity.Warning ? "pass"
+        : c.Severity == PreflightSeverity.Warning ? "warn"
+        : "block";
+
+    private static string CheckIcon(PreflightCheck c) =>
+        c.Passed && c.Severity != PreflightSeverity.Warning ? "check"
+        : c.Severity == PreflightSeverity.Warning ? "alert"
+        : "x";
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

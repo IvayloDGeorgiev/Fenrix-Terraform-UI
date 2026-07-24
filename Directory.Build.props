@@ -3,13 +3,23 @@
   <!--
     Solution-wide build settings.
 
-    Security pin: the .NET stack pulls in System.Security.Cryptography.Xml 9.0.0 transitively, which has
-    known high-severity advisories (GHSA-37gx-xxp4-5rgx / CVE-2026-33116 and related), surfaced as NU1903
-    across every project. Forcing the patched 9.0.15 clears the warnings without changing behaviour.
-    Remove this once the upstream packages reference a patched version themselves.
+    Security pins for transitive packages flagged by NU1903 (high-severity advisories). Both override a
+    vulnerable transitive dependency without changing behaviour; each needs a `dotnet restore` to take
+    effect and should be removed once the upstream packages reference patched versions themselves.
+
+    1. System.Security.Cryptography.Xml: the net10 stack resolves a 10.0.x build in the vulnerable
+       [10.0.0, 10.0.9] range (CVE-2026-50525 / -50527 / -47304, and the earlier CVE-2026-33116).
+       Patched in 10.0.10. (Previous pin was 9.0.15, on the older 9.x line.)
+
+    2. SQLitePCLRaw.lib.e_sqlite3: EF Core SQLite (through 10.0.9) transitively ships 2.1.11, whose
+       bundled SQLite is < 3.50.2 (CVE-2025-6965). The upstream fix is slated for EF Core 11; until then
+       the accepted workaround is to pin only the native-library package to 3.50.3 — the managed
+       SQLitePCLRaw.core/provider stay at 2.1.11, and only the native SQLite binary (stable C ABI) is
+       swapped. Remove once Microsoft.Data.Sqlite/EF Core ship a bundle with SQLite >= 3.50.2.
   -->
   <ItemGroup>
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="9.0.15" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.50.3" />
   </ItemGroup>
 
 </Project>

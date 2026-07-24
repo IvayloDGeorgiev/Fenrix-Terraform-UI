@@ -44,3 +44,32 @@ public sealed record ValidateOptions
     /// <summary>Emit machine-readable JSON (<c>-json</c>). Kept on by default for structured display.</summary>
     public bool Json { get; init; } = true;
 }
+
+/// <summary>
+/// Options for <c>terraform plan -out</c>. Fenrix always passes <c>-input=false</c> and <c>-out</c> so a
+/// saved plan is produced for review and exact-apply (ADR-0003). <see cref="Destroy"/> plans the teardown
+/// of all managed resources; <see cref="RefreshOnly"/> plans only state reconciliation (drift). The two
+/// are mutually exclusive. See docs/06-plan-apply-safety.md and docs/25-execution-lifecycle.md.
+/// </summary>
+public sealed record PlanOptions
+{
+    /// <summary>Plan the destruction of all managed resources (<c>-destroy</c>).</summary>
+    public bool Destroy { get; init; }
+
+    /// <summary>Plan only state reconciliation against real infrastructure — a drift check (<c>-refresh-only</c>).</summary>
+    public bool RefreshOnly { get; init; }
+
+    /// <summary>Limit parallel resource operations (<c>-parallelism=n</c>). Null uses Terraform's default (10).</summary>
+    public int? Parallelism { get; init; }
+}
+
+/// <summary>
+/// The confirmation a user supplies before an apply runs. For a production environment the safety policy
+/// requires <see cref="TypedValue"/> to exactly equal the environment name before apply is allowed. See
+/// docs/06-plan-apply-safety.md.
+/// </summary>
+public sealed record ApplyConfirmation(string? TypedValue = null)
+{
+    /// <summary>A confirmation carrying no typed value (sufficient for non-production environments).</summary>
+    public static readonly ApplyConfirmation None = new();
+}

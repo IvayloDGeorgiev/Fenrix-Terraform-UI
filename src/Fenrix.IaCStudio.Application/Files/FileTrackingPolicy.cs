@@ -13,10 +13,16 @@ public static class FileTrackingPolicy
         ".git", ".terraform", "node_modules", "bin", "obj"
     };
 
-    /// <summary>File extensions whose content is captured in version history by default.</summary>
+    /// <summary>
+    /// File extensions whose content is captured in version history by default. Includes Terraform plan
+    /// (<c>.tfplan</c>) and state (<c>.tfstate</c>) files so every plan and state change is version-tracked
+    /// (see docs/06-plan-apply-safety.md). Note: plan and state files can contain sensitive values in
+    /// plaintext — they are versioned deliberately and belong only in private, secured repositories.
+    /// </summary>
     public static readonly IReadOnlySet<string> VersionedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        ".tf", ".tfvars", ".hcl", ".json", ".md", ".gitignore", ".gitattributes", ".txt", ".yaml", ".yml"
+        ".tf", ".tfvars", ".hcl", ".json", ".md", ".gitignore", ".gitattributes", ".txt", ".yaml", ".yml",
+        ".tfplan", ".tfstate"
     };
 
     /// <summary>Extensions treated as Terraform configuration for import detection.</summary>

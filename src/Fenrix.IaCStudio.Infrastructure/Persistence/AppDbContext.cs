@@ -5,6 +5,7 @@ using Fenrix.IaCStudio.Domain.Files;
 using Fenrix.IaCStudio.Domain.Projects;
 using Fenrix.IaCStudio.Domain.Security;
 using Fenrix.IaCStudio.Domain.Settings;
+using Fenrix.IaCStudio.Domain.Terraform;
 using Fenrix.IaCStudio.Domain.Versioning;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -27,6 +28,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ProjectVersion> ProjectVersions => Set<ProjectVersion>();
     public DbSet<Deployment> Deployments => Set<Deployment>();
     public DbSet<CommandRun> CommandRuns => Set<CommandRun>();
+    public DbSet<SavedPlan> SavedPlans => Set<SavedPlan>();
     public DbSet<RecentFile> RecentFiles => Set<RecentFile>();
     public DbSet<SettingEntry> Settings => Set<SettingEntry>();
 
