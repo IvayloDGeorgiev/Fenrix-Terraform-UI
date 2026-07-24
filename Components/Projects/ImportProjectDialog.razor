@@ -1,0 +1,156 @@
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Contracts.Projects
+@inject IProjectService Projects
+@inject IProjectImportScanner Scanner
+@inject IFolderPicker FolderPicker
+
+<Modal Title="Add existing project" IconName="upload" Wide="true" OnClose="Cancel">
+    <ChildContent>
+    <div class="fx-field">
+        <label>Project folder</label>
+        <div style="display:flex;gap:8px;">
+            <input class="fx-input" @bind="_folder" placeholder="C:\path\to\terraform-project" />
+            @if (FolderPicker.IsSupported)
+            {
+                <button class="fx-btn" type="button" @onclick="BrowseAsync">Browse…</button>
+            }
+            <button class="fx-btn" type="button" @onclick="ScanAsync" disabled="@_busy">
+                @(_busy ? "Scanning…" : "Scan")
+            </button>
+        </div>
+        <div class="fx-hint">Files are registered in place — nothing is moved or rewritten.</div>
+    </div>
+
+    @if (_scan is not null)
+    {
+        <div class="fx-card" style="margin:6px 0 14px;">
+            <div style="display:flex;flex-wrap:wrap;gap:14px;font-size:12.5px;">
+                <span><span style="color:var(--fx-dim);">Terraform files:</span> @_scan.TerraformFileCount</span>
+                <span><span style="color:var(--fx-dim);">Git repo:</span> @(_scan.IsGitRepository ? "yes" : "no")</span>
+                <span><span style="color:var(--fx-dim);">Backend:</span> @(_scan.HasBackendConfiguration ? "detected" : "none")</span>
+                @if (!string.IsNullOrEmpty(_scan.DetectedTerraformVersion))
+                {
+                    <span><span style="color:var(--fx-dim);">Required version:</span> @_scan.DetectedTerraformVersion</span>
+                }
+            </div>
+            @if (_scan.DetectedProviders.Count > 0)
+            {
+                <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;">
+                    @foreach (var p in _scan.DetectedProviders)
+                    {
+                        <span class="fx-tag">@p</span>
+                    }
+                </div>
+            }
+            @if (_scan.LooksEmpty)
+            {
+                <div class="fx-hint" style="color:var(--fx-warn);margin-top:8px;">
+                    No Terraform files found here. You can still register the folder.
+                </div>
+            }
+        </div>
+
+        <div class="fx-field">
+            <label>Environment mappings</label>
+            @if (_scan.SuggestedEnvironments.Count == 0)
+            {
+                <div class="fx-hint">No environment directories detected. You can add environments after importing.</div>
+            }
+            @foreach (var env in _scan.SuggestedEnvironments)
+            {
+                <div class="fx-env-row">
+                    <input type="checkbox" @bind="env.Include" title="Include" />
+                    <input class="fx-input" @bind="env.Name" style="max-width:150px;" />
+                    <input class="fx-input fx-mono" @bind="env.RelativePath" style="flex:1;" />
+                    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fx-dim);white-space:nowrap;">
+                        <input type="checkbox" @bind="env.IsProduction" /> Prod
+                    </label>
+                </div>
+            }
+        </div>
+    }
+
+    @if (_error is not null)
+    {
+        <div class="fx-error">@_error</div>
+    }
+    </ChildContent>
+
+    <Footer>
+        <button class="fx-btn ghost" @onclick="Cancel" disabled="@_busy">Cancel</button>
+        <button class="fx-btn accent" @onclick="ImportAsync" disabled="@(_busy || _scan is null)">
+            @(_busy ? "Importing…" : "Import project")
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<Guid> OnImported { get; set; }
+
+    private string _folder = "";
+    private ImportScanResult? _scan;
+    private bool _busy;
+    private string? _error;
+
+    private async Task BrowseAsync()
+    {
+        var picked = await FolderPicker.PickFolderAsync();
+        if (!string.IsNullOrEmpty(picked))
+        {
+            _folder = picked;
+            await ScanAsync();
+        }
+    }
+
+    private async Task ScanAsync()
+    {
+        _error = null;
+        _scan = null;
+        if (string.IsNullOrWhiteSpace(_folder))
+        {
+            _error = "Enter or choose a folder to scan.";
+            return;
+        }
+        if (!Directory.Exists(_folder))
+        {
+            _error = "That folder does not exist.";
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            _scan = await Scanner.ScanAsync(_folder.Trim());
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private Task Cancel() => OnClose.InvokeAsync();
+
+    private async Task ImportAsync()
+    {
+        if (_scan is null)
+            return;
+
+        _error = null;
+        _busy = true;
+        try
+        {
+            var project = await Projects.ImportAsync(_scan);
+            await OnImported.InvokeAsync(project.Id);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _busy = false;
+        }
+    }
+}

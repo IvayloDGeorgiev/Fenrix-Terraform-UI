@@ -12,6 +12,12 @@ public static class FenrixSettingKeys
     public const string ReopenLastProject = "general.reopenLastProject";
     public const string DefaultProjectsDirectory = "general.defaultProjectsDirectory";
 
+    // Files & history (Phase 2). See docs/04-filesystem-sync.md, docs/21-file-history-recovery.md.
+    public const string FileWatcherExclusions = "files.watcherExclusions";       // comma-separated dir names
+    public const string ReconcileIntervalSeconds = "files.reconcileIntervalSeconds";
+    public const string AllowInAppDelete = "security.allowInAppDelete";          // true | false (default false)
+    public const string HistoryRetentionDays = "security.historyRetentionDays";  // int, 0 = keep all
+
     // Terraform
     public const string TerraformExecutable = "terraform.executable";
     public const string TerraformDefaultParallelism = "terraform.defaultParallelism";

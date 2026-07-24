@@ -26,6 +26,12 @@ public sealed class InfrastructureProject
     /// <summary>The single repository connection for this project (a project maps to one repo).</summary>
     public Guid? RepositoryConnectionId { get; set; }
 
+    /// <summary>
+    /// True when the project lives outside the Fenrix Projects directory (registered in place,
+    /// never copied). See docs/03-domain-model.md (Existing project import).
+    /// </summary>
+    public bool IsLinked { get; set; }
+
     public bool IsArchived { get; set; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? LastOpenedAt { get; set; }

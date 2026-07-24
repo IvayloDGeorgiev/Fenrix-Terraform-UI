@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Fenrix.IaCStudio.Domain.Cloud;
 using Fenrix.IaCStudio.Domain.Environments;
+using Fenrix.IaCStudio.Domain.Files;
 using Fenrix.IaCStudio.Domain.Projects;
 using Fenrix.IaCStudio.Domain.Settings;
 using Fenrix.IaCStudio.Domain.Versioning;
@@ -121,6 +122,56 @@ internal sealed class DeploymentConfiguration : IEntityTypeConfiguration<Deploym
         b.HasIndex(x => new { x.EnvironmentId, x.Status });
         b.HasIndex(x => x.ProjectId);
         b.HasIndex(x => x.ProjectVersionId);
+    }
+}
+
+internal sealed class RecentFileConfiguration : IEntityTypeConfiguration<RecentFile>
+{
+    public void Configure(EntityTypeBuilder<RecentFile> b)
+    {
+        b.ToTable("RecentFiles");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Path).IsRequired();
+        b.HasIndex(x => x.ProjectId);
+        b.HasIndex(x => x.LastOpenedAt);
+    }
+}
+
+internal sealed class FileIdentityConfiguration : IEntityTypeConfiguration<FileIdentity>
+{
+    public void Configure(EntityTypeBuilder<FileIdentity> b)
+    {
+        b.ToTable("FileIdentities");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.CurrentRelativePath).IsRequired().HasMaxLength(1024);
+        // one identity per (project, current path); renames update the path in place
+        b.HasIndex(x => new { x.ProjectId, x.CurrentRelativePath });
+        b.HasIndex(x => new { x.ProjectId, x.IsDeleted });
+    }
+}
+
+internal sealed class FileVersionConfiguration : IEntityTypeConfiguration<FileVersion>
+{
+    public void Configure(EntityTypeBuilder<FileVersion> b)
+    {
+        b.ToTable("FileVersions");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.RelativePath).IsRequired().HasMaxLength(1024);
+        b.Property(x => x.ContentHash).HasMaxLength(64);
+        b.HasIndex(x => new { x.FileIdentityId, x.CapturedAt });
+        b.HasIndex(x => x.ProjectId);
+        b.HasIndex(x => x.BlobId);
+    }
+}
+
+internal sealed class FileBlobConfiguration : IEntityTypeConfiguration<FileBlob>
+{
+    public void Configure(EntityTypeBuilder<FileBlob> b)
+    {
+        b.ToTable("FileBlobs");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.ContentHash).IsRequired().HasMaxLength(64);
+        b.HasIndex(x => x.ContentHash).IsUnique(); // the dedup key
     }
 }
 

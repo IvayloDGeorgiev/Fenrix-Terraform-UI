@@ -1,0 +1,81 @@
+@using Fenrix.IaCStudio.Contracts.Files
+
+<div class="fx-tree-node">
+    <div class="row @(Selected ? "selected" : "") @(Node.IsIgnored ? "ignored" : "")" @onclick="Toggle">
+        <span class="twist">
+            @if (Node.IsDirectory && !Node.IsIgnored && Node.Children.Count > 0)
+            {
+                <Icon Name="@(_expanded ? "chevron-down" : "chevron-right")" Size="14" />
+            }
+        </span>
+        <span class="fx-ico">
+            <Icon Name="@(Node.IsDirectory ? "folder" : FileIcon(Node.Name))" Size="15" />
+        </span>
+        <span style="flex-shrink:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@Node.Name</span>
+
+        @if (!Node.IsIgnored)
+        {
+            <span class="fx-tree-row-actions" @onclick:stopPropagation="true">
+                @if (Node.IsDirectory)
+                {
+                    <button class="fx-iconbtn" title="New file" @onclick="() => OnCreateFile.InvokeAsync(Node)"><Icon Name="file" Size="14" /></button>
+                    <button class="fx-iconbtn" title="New folder" @onclick="() => OnCreateFolder.InvokeAsync(Node)"><Icon Name="folder-plus" Size="14" /></button>
+                }
+                else
+                {
+                    <button class="fx-iconbtn" title="History" @onclick="() => OnHistory.InvokeAsync(Node)"><Icon Name="history" Size="14" /></button>
+                }
+                <button class="fx-iconbtn" title="Rename" @onclick="() => OnRename.InvokeAsync(Node)"><Icon Name="pencil" Size="14" /></button>
+                <button class="fx-iconbtn" title="Delete" @onclick="() => OnDelete.InvokeAsync(Node)"><Icon Name="trash" Size="14" /></button>
+            </span>
+        }
+    </div>
+
+    @if (Node.IsDirectory && _expanded && !Node.IsIgnored)
+    {
+        <div class="fx-tree-children">
+            @foreach (var child in Node.Children)
+            {
+                <FileTreeView Node="child"
+                              SelectedPath="SelectedPath"
+                              OnSelect="OnSelect"
+                              OnCreateFile="OnCreateFile"
+                              OnCreateFolder="OnCreateFolder"
+                              OnRename="OnRename"
+                              OnDelete="OnDelete"
+                              OnHistory="OnHistory" />
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public FileTreeNode Node { get; set; } = default!;
+    [Parameter] public string? SelectedPath { get; set; }
+    [Parameter] public EventCallback<FileTreeNode> OnSelect { get; set; }
+    [Parameter] public EventCallback<FileTreeNode> OnCreateFile { get; set; }
+    [Parameter] public EventCallback<FileTreeNode> OnCreateFolder { get; set; }
+    [Parameter] public EventCallback<FileTreeNode> OnRename { get; set; }
+    [Parameter] public EventCallback<FileTreeNode> OnDelete { get; set; }
+    [Parameter] public EventCallback<FileTreeNode> OnHistory { get; set; }
+
+    private bool _expanded = true;
+
+    private bool Selected => !Node.IsDirectory && SelectedPath == Node.RelativePath;
+
+    private Task Toggle()
+    {
+        if (Node.IsDirectory)
+        {
+            _expanded = !_expanded;
+            return Task.CompletedTask;
+        }
+        return OnSelect.InvokeAsync(Node);
+    }
+
+    private static string FileIcon(string name)
+    {
+        var ext = System.IO.Path.GetExtension(name).ToLowerInvariant();
+        return ext is ".tf" or ".tfvars" or ".hcl" ? "file-text" : "file";
+    }
+}

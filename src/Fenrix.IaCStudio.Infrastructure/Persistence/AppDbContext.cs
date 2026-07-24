@@ -1,11 +1,13 @@
 using Fenrix.IaCStudio.Domain.Cloud;
 using Fenrix.IaCStudio.Domain.Environments;
 using Fenrix.IaCStudio.Domain.Execution;
+using Fenrix.IaCStudio.Domain.Files;
 using Fenrix.IaCStudio.Domain.Projects;
 using Fenrix.IaCStudio.Domain.Security;
 using Fenrix.IaCStudio.Domain.Settings;
 using Fenrix.IaCStudio.Domain.Versioning;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace Fenrix.IaCStudio.Infrastructure.Persistence;
 
@@ -28,9 +30,28 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<RecentFile> RecentFiles => Set<RecentFile>();
     public DbSet<SettingEntry> Settings => Set<SettingEntry>();
 
+    // File version history & recovery (Phase 2). See docs/21-file-history-recovery.md.
+    public DbSet<FileIdentity> FileIdentities => Set<FileIdentity>();
+    public DbSet<FileVersion> FileVersions => Set<FileVersion>();
+    public DbSet<FileBlob> FileBlobs => Set<FileBlob>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
         base.OnModelCreating(modelBuilder);
+    }
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        // SQLite has no native DateTimeOffset type and cannot ORDER BY / compare it in SQL.
+        // Store all DateTimeOffset values as a sortable binary long so queries translate.
+        // SQL Server has a native type, so this converter is only applied for SQLite.
+        if (Database.IsSqlite())
+        {
+            configurationBuilder.Properties<DateTimeOffset>()
+                .HaveConversion<DateTimeOffsetToBinaryConverter>();
+        }
+
+        base.ConfigureConventions(configurationBuilder);
     }
 }

@@ -1,0 +1,470 @@
+@page "/projects/{ProjectId:guid}"
+@using Fenrix.IaCStudio.Application.Abstractions.Files
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Files
+@using Fenrix.IaCStudio.Contracts.Files
+@using Fenrix.IaCStudio.Domain.Projects
+@inject IProjectService Projects
+@inject IFileTreeService Tree
+@inject IFileHistoryStore History
+@inject IProjectFileSynchronizer Sync
+@inject NavigationManager Nav
+@implements IAsyncDisposable
+
+@if (_project is null)
+{
+    <div class="fx-card" style="text-align:center;color:var(--fx-dim);">@(_loading ? "Loading…" : "Project not found.")</div>
+}
+else
+{
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <button class="fx-iconbtn" title="Back to projects" @onclick='() => Nav.NavigateTo("/projects")'><Icon Name="arrow-left" Size="16" /></button>
+        <div style="flex:1;">
+            <h1 class="fx-page-title" style="margin:0;">@_project.Name</h1>
+            <div class="fx-page-sub fx-mono" style="margin:2px 0 0;">@_project.RootPath</div>
+        </div>
+        @if (_recoverable.Count > 0)
+        {
+            <button class="fx-btn @(_mode == Mode.Recoverable ? "accent" : "")" @onclick="ShowRecoverable">
+                <span class="fx-ico"><Icon Name="restore" Size="14" /></span> Recoverable (@_recoverable.Count)
+            </button>
+        }
+        <button class="fx-btn" @onclick="ReloadAllAsync" title="Rescan from disk">
+            <span class="fx-ico"><Icon Name="refresh" Size="14" /></span> Rescan
+        </button>
+    </div>
+
+    <div class="fx-split">
+        <div class="fx-card" style="padding:12px;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                <span style="flex:1;font-size:12px;color:var(--fx-dim);text-transform:uppercase;letter-spacing:0.4px;">Files</span>
+                <button class="fx-iconbtn" title="New file at root" @onclick="() => PromptCreateFile(string.Empty)"><Icon Name="file" Size="15" /></button>
+                <button class="fx-iconbtn" title="New folder at root" @onclick="() => PromptCreateFolder(string.Empty)"><Icon Name="folder-plus" Size="15" /></button>
+            </div>
+            @if (_tree is not null)
+            {
+                <div class="fx-tree">
+                    @foreach (var child in _tree.Children)
+                    {
+                        <FileTreeView Node="child"
+                                      SelectedPath="_selectedPath"
+                                      OnSelect="SelectFileAsync"
+                                      OnCreateFile="n => PromptCreateFile(n.RelativePath)"
+                                      OnCreateFolder="n => PromptCreateFolder(n.RelativePath)"
+                                      OnRename="PromptRename"
+                                      OnDelete="ConfirmDelete"
+                                      OnHistory="ShowHistoryAsync" />
+                    }
+                    @if (_tree.Children.Count == 0)
+                    {
+                        <div class="fx-hint">This folder is empty.</div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="fx-card" style="min-height:340px;">
+            @if (_mode == Mode.Editor)
+            {
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                    <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="file-text" Size="16" /></span>
+                    <span class="grow fx-mono" style="flex:1;font-size:13px;">@_selectedPath</span>
+                    <button class="fx-btn sm" @onclick="() => ShowHistoryForPathAsync(_selectedPath!)"><span class="fx-ico"><Icon Name="history" Size="13" /></span> History</button>
+                    @if (_selectedIsText)
+                    {
+                        <button class="fx-btn sm accent" @onclick="SaveAsync" disabled="@(!_dirty || _busy)">@(_busy ? "Saving…" : "Save")</button>
+                    }
+                </div>
+                @if (_selectedIsText)
+                {
+                    <textarea class="fx-textarea fx-mono" style="min-height:340px;width:100%;font-size:12.5px;"
+                              @bind="_editorContent" @bind:event="oninput" @bind:after="() => _dirty = true"></textarea>
+                }
+                else
+                {
+                    <div class="fx-hint">Binary or non-text file — preview not available. Use History to recover past versions.</div>
+                }
+                @if (_error is not null)
+                {
+                    <div class="fx-error">@_error</div>
+                }
+            }
+            else if (_mode == Mode.History)
+            {
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                    <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="history" Size="16" /></span>
+                    <span style="flex:1;font-size:14px;font-weight:500;">History — <span class="fx-mono">@_historyPath</span></span>
+                </div>
+                @if (_history.Count == 0)
+                {
+                    <div class="fx-hint">No versions recorded yet.</div>
+                }
+                @foreach (var v in _history)
+                {
+                    <div class="fx-row">
+                        <span class="lead"><Icon Name="clock" Size="15" /></span>
+                        <div class="grow">
+                            <div class="title">@ChangeLabel(v.ChangeKind) · <span style="color:var(--fx-dim);font-weight:400;">@OriginLabel(v.Origin)</span></div>
+                            <div class="meta">@v.CapturedAt.LocalDateTime.ToString("g") · @FormatSize(v.SizeBytes)</div>
+                        </div>
+                        @if (v.HasContent)
+                        {
+                            <button class="fx-btn sm" @onclick="() => RestoreAsync(v.FileVersionId, v.RelativePath)"><span class="fx-ico"><Icon Name="restore" Size="13" /></span> Restore</button>
+                        }
+                    </div>
+                }
+                @if (_error is not null)
+                {
+                    <div class="fx-error">@_error</div>
+                }
+            }
+            else if (_mode == Mode.Recoverable)
+            {
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                    <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="restore" Size="16" /></span>
+                    <span style="flex:1;font-size:14px;font-weight:500;">Recoverable items</span>
+                </div>
+                <p class="fx-hint" style="margin-top:0;">Files removed from disk (in Fenrix or externally). Their last content is retained here.</p>
+                @foreach (var r in _recoverable)
+                {
+                    <div class="fx-row">
+                        <span class="lead" style="color:var(--fx-danger);"><Icon Name="trash" Size="15" /></span>
+                        <div class="grow">
+                            <div class="title fx-mono">@r.RelativePath</div>
+                            <div class="meta">deleted @r.DeletedAt.LocalDateTime.ToString("g") · @FormatSize(r.SizeBytes)</div>
+                        </div>
+                        <button class="fx-btn sm accent" @onclick="() => RestoreAsync(r.FileVersionId, r.RelativePath)"><span class="fx-ico"><Icon Name="restore" Size="13" /></span> Restore</button>
+                    </div>
+                }
+                @if (_recoverable.Count == 0)
+                {
+                    <div class="fx-hint">Nothing to recover.</div>
+                }
+            }
+            else
+            {
+                <div style="text-align:center;color:var(--fx-dim);padding:60px 20px;">
+                    <div style="margin-bottom:10px;color:var(--fx-accent);"><Icon Name="file-text" Size="26" /></div>
+                    Select a file to view or edit it.
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@if (_promptOpen)
+{
+    <Modal Title="@_promptTitle" IconName="pencil" OnClose="() => _promptOpen = false">
+        <ChildContent>
+            <div class="fx-field">
+                <label>@_promptLabel</label>
+                <input class="fx-input" @bind="_promptValue" @bind:event="oninput" />
+                @if (_promptError is not null) { <div class="fx-error">@_promptError</div> }
+            </div>
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn ghost" @onclick="() => _promptOpen = false">Cancel</button>
+            <button class="fx-btn accent" @onclick="RunPromptAsync">@_promptConfirm</button>
+        </Footer>
+    </Modal>
+}
+
+@if (_confirmOpen)
+{
+    <Modal Title="Delete" IconName="alert" OnClose="() => _confirmOpen = false">
+        <ChildContent>
+            <p style="font-size:13px;margin:0;">@_confirmMessage</p>
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn ghost" @onclick="() => _confirmOpen = false">Cancel</button>
+            <button class="fx-btn danger" @onclick="RunConfirmAsync">Delete</button>
+        </Footer>
+    </Modal>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private enum Mode { Welcome, Editor, History, Recoverable }
+
+    private InfrastructureProject? _project;
+    private FileTreeNode? _tree;
+    private List<RecoverableFile> _recoverable = [];
+    private bool _loading = true;
+    private bool _busy;
+    private string? _error;
+    private Guid _loadedId;
+
+    private Mode _mode = Mode.Welcome;
+    private string? _selectedPath;
+    private string _editorContent = "";
+    private bool _selectedIsText;
+    private bool _dirty;
+
+    private List<FileHistoryEntry> _history = [];
+    private string _historyPath = "";
+
+    private Action<FileSystemChangeEvent>? _changeHandler;
+
+    // prompt modal
+    private bool _promptOpen;
+    private string _promptTitle = "", _promptLabel = "", _promptValue = "", _promptConfirm = "OK";
+    private string? _promptError;
+    private Func<string, Task>? _promptAction;
+
+    // confirm modal
+    private bool _confirmOpen;
+    private string _confirmMessage = "";
+    private Func<Task>? _confirmAction;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == ProjectId)
+            return;
+        _loadedId = ProjectId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _mode = Mode.Welcome;
+        _selectedPath = null;
+
+        _project = await Projects.GetAsync(ProjectId);
+        _loading = false;
+        if (_project is null)
+            return;
+
+        await Projects.TouchAsync(ProjectId);
+        await ReloadTreeAsync();
+        await ReloadRecoverableAsync();
+
+        _changeHandler ??= OnExternalChange;
+        Sync.ExternalChangeDetected += _changeHandler;
+        try { await Sync.StartAsync(ProjectId, _project.RootPath); }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private void OnExternalChange(FileSystemChangeEvent evt)
+    {
+        if (evt.ProjectId != ProjectId)
+            return;
+        _ = InvokeAsync(async () =>
+        {
+            await ReloadTreeAsync();
+            await ReloadRecoverableAsync();
+            StateHasChanged();
+        });
+    }
+
+    private async Task ReloadTreeAsync()
+    {
+        if (_project is not null)
+            _tree = await Tree.GetTreeAsync(ProjectId, _project.RootPath);
+    }
+
+    private async Task ReloadRecoverableAsync()
+        => _recoverable = (await History.GetRecoverableAsync(ProjectId)).ToList();
+
+    private async Task ReloadAllAsync()
+    {
+        if (_project is null) return;
+        await Sync.RescanAsync(ProjectId, _project.RootPath);
+        await ReloadTreeAsync();
+        await ReloadRecoverableAsync();
+    }
+
+    private async Task SelectFileAsync(FileTreeNode node)
+    {
+        _error = null;
+        _selectedPath = node.RelativePath;
+        _selectedIsText = FileTrackingPolicy.IsVersioned(node.RelativePath);
+        _mode = Mode.Editor;
+        _dirty = false;
+
+        if (_selectedIsText && File.Exists(node.FullPath))
+        {
+            try { _editorContent = await File.ReadAllTextAsync(node.FullPath); }
+            catch (Exception ex) { _error = ex.Message; _editorContent = ""; }
+        }
+        else
+        {
+            _editorContent = "";
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_project is null || _selectedPath is null) return;
+        _busy = true; _error = null;
+        try
+        {
+            await Tree.WriteFileAsync(ProjectId, _project.RootPath, _selectedPath, _editorContent);
+            _dirty = false;
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task ShowHistoryAsync(FileTreeNode node) => await ShowHistoryForPathAsync(node.RelativePath);
+
+    private async Task ShowHistoryForPathAsync(string relativePath)
+    {
+        _error = null;
+        _historyPath = relativePath;
+        _history = (await History.GetHistoryForPathAsync(ProjectId, relativePath)).ToList();
+        _mode = Mode.History;
+    }
+
+    private void ShowRecoverable() => _mode = Mode.Recoverable;
+
+    private async Task RestoreAsync(Guid versionId, string relativePath)
+    {
+        if (_project is null) return;
+        _error = null;
+        try
+        {
+            var target = Path.Combine(_project.RootPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            await History.RestoreAsync(versionId, target);
+            await ReloadTreeAsync();
+            await ReloadRecoverableAsync();
+            if (_recoverable.Count == 0 && _mode == Mode.Recoverable)
+                _mode = Mode.Welcome;
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    // ---- prompts ----
+
+    private void PromptCreateFile(string parentDir)
+    {
+        _promptTitle = "New file";
+        _promptLabel = "File name";
+        _promptValue = "";
+        _promptConfirm = "Create";
+        _promptError = null;
+        _promptAction = async name =>
+        {
+            var rel = Join(parentDir, name);
+            await Tree.CreateFileAsync(ProjectId, _project!.RootPath, rel);
+            await ReloadTreeAsync();
+        };
+        _promptOpen = true;
+    }
+
+    private void PromptCreateFolder(string parentDir)
+    {
+        _promptTitle = "New folder";
+        _promptLabel = "Folder name";
+        _promptValue = "";
+        _promptConfirm = "Create";
+        _promptError = null;
+        _promptAction = async name =>
+        {
+            var rel = Join(parentDir, name);
+            await Tree.CreateFolderAsync(_project!.RootPath, rel);
+            await ReloadTreeAsync();
+        };
+        _promptOpen = true;
+    }
+
+    private void PromptRename(FileTreeNode node)
+    {
+        _promptTitle = "Rename";
+        _promptLabel = "New name";
+        _promptValue = node.Name;
+        _promptConfirm = "Rename";
+        _promptError = null;
+        _promptAction = async name =>
+        {
+            await Tree.RenameAsync(ProjectId, _project!.RootPath, node.RelativePath, name);
+            if (_selectedPath == node.RelativePath) { _selectedPath = null; _mode = Mode.Welcome; }
+            await ReloadTreeAsync();
+        };
+        _promptOpen = true;
+    }
+
+    private async Task RunPromptAsync()
+    {
+        if (_promptAction is null) return;
+        _promptError = null;
+        if (string.IsNullOrWhiteSpace(_promptValue))
+        {
+            _promptError = "Please enter a name.";
+            return;
+        }
+        try
+        {
+            await _promptAction(_promptValue.Trim());
+            _promptOpen = false;
+        }
+        catch (Exception ex) { _promptError = ex.Message; }
+    }
+
+    private void ConfirmDelete(FileTreeNode node)
+    {
+        _confirmMessage = $"Send '{node.RelativePath}' to the Recycle Bin? It stays recoverable from history.";
+        _confirmAction = async () =>
+        {
+            await Tree.DeleteAsync(ProjectId, _project!.RootPath, node.RelativePath);
+            if (_selectedPath == node.RelativePath) { _selectedPath = null; _mode = Mode.Welcome; }
+            await ReloadTreeAsync();
+            await ReloadRecoverableAsync();
+        };
+        _confirmOpen = true;
+    }
+
+    private async Task RunConfirmAsync()
+    {
+        if (_confirmAction is null) return;
+        _error = null;
+        try
+        {
+            await _confirmAction();
+            _confirmOpen = false;
+        }
+        catch (Exception ex)
+        {
+            _confirmOpen = false;
+            _error = ex.Message;
+        }
+    }
+
+    private static string Join(string parentDir, string name)
+        => string.IsNullOrEmpty(parentDir) ? name : $"{parentDir}/{name}";
+
+    private static string ChangeLabel(Fenrix.IaCStudio.Domain.Files.FileChangeKind k) => k switch
+    {
+        Fenrix.IaCStudio.Domain.Files.FileChangeKind.Created => "Created",
+        Fenrix.IaCStudio.Domain.Files.FileChangeKind.Updated => "Updated",
+        Fenrix.IaCStudio.Domain.Files.FileChangeKind.Renamed => "Renamed",
+        Fenrix.IaCStudio.Domain.Files.FileChangeKind.DeletedDetected => "Deleted",
+        Fenrix.IaCStudio.Domain.Files.FileChangeKind.Restored => "Restored",
+        _ => k.ToString()
+    };
+
+    private static string OriginLabel(Fenrix.IaCStudio.Domain.Files.ChangeOrigin o) => o switch
+    {
+        Fenrix.IaCStudio.Domain.Files.ChangeOrigin.FenrixEditor => "in Fenrix",
+        Fenrix.IaCStudio.Domain.Files.ChangeOrigin.External => "external",
+        Fenrix.IaCStudio.Domain.Files.ChangeOrigin.Import => "baseline",
+        Fenrix.IaCStudio.Domain.Files.ChangeOrigin.Restore => "restore",
+        _ => o.ToString()
+    };
+
+    private static string FormatSize(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
+        _ => $"{bytes / (1024.0 * 1024):0.#} MB"
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_changeHandler is not null)
+            Sync.ExternalChangeDetected -= _changeHandler;
+        if (_project is not null)
+            await Sync.StopAsync(_project.RootPath);
+    }
+}

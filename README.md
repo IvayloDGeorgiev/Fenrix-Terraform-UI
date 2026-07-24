@@ -53,6 +53,7 @@ Design docs live in [`docs/`](docs/). Read them in order for a full picture, or 
 
 ### Process & tracking
 
+- [STATE.md](docs/STATE.md) — **start here to resume**: one-screen handoff of where we are and what's next (keeps new sessions cheap).
 - [WORKFLOW.md](docs/WORKFLOW.md) — how we build: branching, coding standards, build/test loop, definition of done.
 - [ROADMAP.md](docs/ROADMAP.md) — the 12 implementation phases, MVP scope, acceptance criteria.
 - [PROGRESS.md](docs/PROGRESS.md) — living checklist of what is done, in progress, and next.

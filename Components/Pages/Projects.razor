@@ -1,13 +1,120 @@
 @page "/projects"
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Contracts.Projects
+@inject IProjectService ProjectSvc
+@inject NavigationManager Nav
 
-<h1 class="fx-page-title">Projects</h1>
-<p class="fx-page-sub">Your registered Terraform projects. Files on disk stay the source of truth.</p>
-
-<div class="fx-card" style="text-align:center;padding:40px;">
-    <div style="color:var(--fx-accent);margin-bottom:10px;"><Icon Name="folder" Size="28" /></div>
-    <h2 style="font-size:16px;margin:0 0 6px;">No projects yet</h2>
-    <p style="color:var(--fx-dim);font-size:13px;margin:0 0 16px;">
-        Create a new project or import an existing Terraform repository to get started.
-    </p>
-    <button class="fx-btn accent"><span class="fx-ico"><Icon Name="folder" Size="14" /></span> New project</button>
+<div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:20px;">
+    <div style="flex:1;">
+        <h1 class="fx-page-title">Projects</h1>
+        <p class="fx-page-sub" style="margin:0;">Your registered Terraform projects. Files on disk stay the source of truth.</p>
+    </div>
+    <button class="fx-btn" @onclick="() => _showImport = true">
+        <span class="fx-ico"><Icon Name="upload" Size="14" /></span> Add existing
+    </button>
+    <button class="fx-btn accent" @onclick="() => _showNew = true">
+        <span class="fx-ico"><Icon Name="folder-plus" Size="14" /></span> New project
+    </button>
 </div>
+
+@if (_loading)
+{
+    <div class="fx-card" style="text-align:center;color:var(--fx-dim);">Loading…</div>
+}
+else if (_all.Count == 0)
+{
+    <div class="fx-card" style="text-align:center;padding:40px;">
+        <div style="color:var(--fx-accent);margin-bottom:10px;"><Icon Name="folder" Size="28" /></div>
+        <h2 style="font-size:16px;margin:0 0 6px;">No projects yet</h2>
+        <p style="color:var(--fx-dim);font-size:13px;margin:0 0 16px;">
+            Create a new project or import an existing Terraform repository to get started.
+        </p>
+        <div style="display:flex;gap:8px;justify-content:center;">
+            <button class="fx-btn" @onclick="() => _showImport = true">Add existing</button>
+            <button class="fx-btn accent" @onclick="() => _showNew = true">New project</button>
+        </div>
+    </div>
+}
+else
+{
+    @if (_recent.Count > 0)
+    {
+        <h2 style="font-size:13px;color:var(--fx-dim);margin:0 0 8px;text-transform:uppercase;letter-spacing:0.4px;">Recent</h2>
+        @foreach (var p in _recent)
+        {
+            @ProjectRow(p)
+        }
+        <div style="height:14px;"></div>
+        <h2 style="font-size:13px;color:var(--fx-dim);margin:0 0 8px;text-transform:uppercase;letter-spacing:0.4px;">All projects</h2>
+    }
+    @foreach (var p in _all)
+    {
+        @ProjectRow(p)
+    }
+}
+
+@if (_showNew)
+{
+    <NewProjectDialog OnClose="() => _showNew = false" OnCreated="OnProjectAddedAsync" />
+}
+@if (_showImport)
+{
+    <ImportProjectDialog OnClose="() => _showImport = false" OnImported="OnProjectAddedAsync" />
+}
+
+@code {
+    private List<ProjectSummary> _all = [];
+    private List<ProjectSummary> _recent = [];
+    private bool _loading = true;
+    private bool _showNew;
+    private bool _showImport;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _all = (await ProjectSvc.ListAsync()).ToList();
+        _recent = (await ProjectSvc.GetRecentAsync(5)).ToList();
+        _loading = false;
+    }
+
+    private async Task OnProjectAddedAsync(Guid projectId)
+    {
+        _showNew = false;
+        _showImport = false;
+        Nav.NavigateTo($"/projects/{projectId}");
+    }
+
+    private void Open(Guid projectId) => Nav.NavigateTo($"/projects/{projectId}");
+
+    private RenderFragment<ProjectSummary> ProjectRow => p => @<div class="fx-row" style="cursor:pointer;" @onclick="() => Open(p.Id)">
+        <span class="lead"><Icon Name="folder" Size="18" /></span>
+        <div class="grow">
+            <div class="title">
+                @p.Name
+                @if (p.IsLinked)
+                {
+                    <span class="fx-tag" style="margin-left:6px;"><Icon Name="link" Size="10" /> linked</span>
+                }
+            </div>
+            <div class="meta fx-mono">@p.RootPath</div>
+        </div>
+        <span class="fx-tag">@p.EnvironmentCount env@(p.EnvironmentCount == 1 ? "" : "s")</span>
+        @if (p.LastOpenedAt is not null)
+        {
+            <span style="font-size:11px;color:var(--fx-faint);white-space:nowrap;">@Rel(p.LastOpenedAt.Value)</span>
+        }
+        <span style="color:var(--fx-faint);"><Icon Name="chevron-right" Size="16" /></span>
+    </div>;
+
+    private static string Rel(DateTimeOffset when)
+    {
+        var span = DateTimeOffset.UtcNow - when;
+        if (span.TotalMinutes < 1) return "just now";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m ago";
+        if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
+        if (span.TotalDays < 30) return $"{(int)span.TotalDays}d ago";
+        return when.LocalDateTime.ToString("d MMM yyyy");
+    }
+}

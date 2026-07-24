@@ -1,0 +1,138 @@
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Settings
+@using Fenrix.IaCStudio.Contracts.Projects
+@inject IProjectService Projects
+@inject IFolderPicker FolderPicker
+
+<Modal Title="New project" IconName="folder-plus" Wide="true" OnClose="Cancel">
+    <ChildContent>
+    <div class="fx-field">
+        <label>Project name</label>
+        <input class="fx-input" @bind="_name" @bind:event="oninput" placeholder="Customer Infrastructure" />
+    </div>
+
+    <div class="fx-field">
+        <label>Location</label>
+        <div style="display:flex;gap:8px;">
+            <input class="fx-input" @bind="_parentDirectory" placeholder="Default: Fenrix projects folder" />
+            @if (FolderPicker.IsSupported)
+            {
+                <button class="fx-btn" @onclick="BrowseAsync" type="button">Browse…</button>
+            }
+        </div>
+        <div class="fx-hint">The project folder is created inside this location. Leave blank to use the Fenrix projects folder.</div>
+    </div>
+
+    <div class="fx-field">
+        <label>Description <span style="color:var(--fx-faint);">(optional)</span></label>
+        <textarea class="fx-textarea" @bind="_description" placeholder="What this infrastructure is for."></textarea>
+    </div>
+
+    <div class="fx-field">
+        <label>Required Terraform version <span style="color:var(--fx-faint);">(optional)</span></label>
+        <input class="fx-input" @bind="_tfVersion" placeholder="e.g. 1.15.0" />
+    </div>
+
+    <div class="fx-field">
+        <label>Environments</label>
+        @foreach (var env in _environments)
+        {
+            <div class="fx-env-row">
+                <input class="fx-input" @bind="env.Name" />
+                <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fx-dim);white-space:nowrap;">
+                    <input type="checkbox" @bind="env.IsProduction" /> Production
+                </label>
+                <button class="fx-iconbtn" title="Remove" @onclick="() => RemoveEnv(env)"><Icon Name="trash" Size="15" /></button>
+            </div>
+        }
+        <button class="fx-btn sm" type="button" @onclick="AddEnv"><span class="fx-ico"><Icon Name="plus" Size="13" /></span> Add environment</button>
+    </div>
+
+    <div class="fx-field" style="display:flex;gap:18px;">
+        <label style="display:flex;align-items:center;gap:7px;font-size:13px;">
+            <input type="checkbox" @bind="_initGit" /> Add .gitignore
+        </label>
+        <label style="display:flex;align-items:center;gap:7px;font-size:13px;">
+            <input type="checkbox" @bind="_writeManifest" /> Write .fenrix/project-manifest.json
+        </label>
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="fx-error">@_error</div>
+    }
+    </ChildContent>
+
+    <Footer>
+        <button class="fx-btn ghost" @onclick="Cancel" disabled="@_busy">Cancel</button>
+        <button class="fx-btn accent" @onclick="CreateAsync" disabled="@_busy">
+            @(_busy ? "Creating…" : "Create project")
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<Guid> OnCreated { get; set; }
+
+    private string _name = "";
+    private string? _parentDirectory;
+    private string? _description;
+    private string? _tfVersion;
+    private bool _initGit = true;
+    private bool _writeManifest = true;
+    private bool _busy;
+    private string? _error;
+
+    private readonly List<NewEnvironmentSpec> _environments = CreateProjectRequest.DefaultEnvironments();
+
+    private void AddEnv() => _environments.Add(new NewEnvironmentSpec { Name = "New" });
+    private void RemoveEnv(NewEnvironmentSpec env) => _environments.Remove(env);
+
+    private async Task BrowseAsync()
+    {
+        var picked = await FolderPicker.PickFolderAsync();
+        if (!string.IsNullOrEmpty(picked))
+            _parentDirectory = picked;
+    }
+
+    private Task Cancel() => OnClose.InvokeAsync();
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_name))
+        {
+            _error = "Please enter a project name.";
+            return;
+        }
+        if (_environments.Count == 0 || _environments.Any(e => string.IsNullOrWhiteSpace(e.Name)))
+        {
+            _error = "Every environment needs a name (or remove the empty ones).";
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var request = new CreateProjectRequest
+            {
+                Name = _name.Trim(),
+                ParentDirectory = string.IsNullOrWhiteSpace(_parentDirectory) ? null : _parentDirectory!.Trim(),
+                Description = string.IsNullOrWhiteSpace(_description) ? null : _description,
+                RequiredTerraformVersion = string.IsNullOrWhiteSpace(_tfVersion) ? null : _tfVersion!.Trim(),
+                InitializeGit = _initGit,
+                WriteManifest = _writeManifest,
+                Environments = _environments
+            };
+
+            var project = await Projects.CreateAsync(request);
+            await OnCreated.InvokeAsync(project.Id);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _busy = false;
+        }
+    }
+}

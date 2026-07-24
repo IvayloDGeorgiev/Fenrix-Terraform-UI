@@ -1,5 +1,9 @@
 using Fenrix.IaCStudio.Application.Abstractions;
+using Fenrix.IaCStudio.Application.Abstractions.Files;
+using Fenrix.IaCStudio.Application.Abstractions.Projects;
+using Fenrix.IaCStudio.Infrastructure.Files;
 using Fenrix.IaCStudio.Infrastructure.Persistence;
+using Fenrix.IaCStudio.Infrastructure.Projects;
 using Fenrix.IaCStudio.Infrastructure.Workspace;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -27,6 +31,20 @@ public static class InfrastructureServiceCollectionExtensions
 
         services.AddScoped<ISettingsStore, EfSettingsStore>();
         services.AddSingleton<IAppInitializer, AppInitializer>();
+
+        // Projects (Phase 2). Stateless helpers are singletons; DB-touching services are scoped.
+        services.AddSingleton<IProjectScaffolder, ProjectScaffolder>();
+        services.AddSingleton<IProjectManifestStore, ProjectManifestStore>();
+        services.AddSingleton<IProjectImportScanner, ProjectImportScanner>();
+        services.AddScoped<IProjectService, ProjectService>();
+
+        // Files, history & recovery (Phase 2). The journal must be shared so the synchronizer
+        // recognises the tree service's own writes (loop prevention).
+        services.AddSingleton<IChangeJournal, ChangeJournal>();
+        services.AddSingleton<IRecycleBin, RecycleBin>();
+        services.AddSingleton<IProjectFileSynchronizer, ProjectFileSynchronizer>();
+        services.AddScoped<IFileHistoryStore, FileHistoryStore>();
+        services.AddScoped<IFileTreeService, FileTreeService>();
 
         return services;
     }

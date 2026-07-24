@@ -1,0 +1,37 @@
+@* Reusable modal shell. See docs/13-ui-design.md. *@
+
+<div class="fx-modal-backdrop" @onclick="OnBackdrop">
+    <div class="fx-modal @(Wide ? "wide" : "")" @onclick:stopPropagation="true">
+        <div class="fx-modal-head">
+            @if (!string.IsNullOrEmpty(IconName))
+            {
+                <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="@IconName" Size="17" /></span>
+            }
+            <h2>@Title</h2>
+            <button class="fx-iconbtn" @onclick="Close" aria-label="Close"><Icon Name="x" Size="16" /></button>
+        </div>
+        <div class="fx-modal-body">
+            @ChildContent
+        </div>
+        @if (Footer is not null)
+        {
+            <div class="fx-modal-foot">
+                @Footer
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public string? IconName { get; set; }
+    [Parameter] public bool Wide { get; set; }
+    [Parameter] public bool CloseOnBackdrop { get; set; } = true;
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public RenderFragment? Footer { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private Task Close() => OnClose.InvokeAsync();
+
+    private Task OnBackdrop() => CloseOnBackdrop ? OnClose.InvokeAsync() : Task.CompletedTask;
+}

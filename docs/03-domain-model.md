@@ -11,7 +11,7 @@ Projects\
     ├── .gitignore
     ├── README.md
     ├── .fenrix\
-    │   └── project.json
+    │   └── project-manifest.json
     ├── modules\
     │   ├── networking\
     │   ├── compute\
@@ -70,7 +70,7 @@ Default environments: **Dev · UAT · Live**. Users can rename, add, remove, and
 
 ## Project manifest
 
-Optional, written to `.fenrix/project.json` inside the project. It records the logical structure so a project can be shared/re-opened consistently. It must **never** contain passwords, tokens, client secrets, or cloud access keys.
+Optional, written to `.fenrix/project-manifest.json` inside the project. It records the logical structure so a project can be shared/re-opened consistently. It must **never** contain passwords, tokens, client secrets, or cloud access keys.
 
 ```json
 {
@@ -101,7 +101,7 @@ The **Add Existing Project** wizard:
 9. Suggest environment mappings.
 10. Let the user correct the mappings.
 11. Register the project **without moving or rewriting files**.
-12. Optionally create `.fenrix/project.json`.
+12. Optionally create `.fenrix/project-manifest.json`.
 13. Suggest suitable `.gitignore` entries.
 
 Projects outside the Fenrix projects directory are registered as **linked** projects. Fenrix never silently copies them into its own directory.

@@ -4,7 +4,7 @@ Living record of where the project stands. Update this in the same PR as the wor
 
 **Legend:** `[ ]` not started · `[~]` in progress · `[x]` done
 
-_Last updated: 2026-07-23 — status: **Phase 1 foundation in progress** (solution, persistence, settings, theme, nav shell built; open in Visual Studio to build/run on Windows)._
+_Last updated: 2026-07-24 — status: **Phase 2 project management complete** (project create/import, manifest, environments, recent/linked projects, file tree, FileSystemWatcher + reconciliation + change journal, and DB-backed file history/recovery all implemented; EF switched to migrations. Solution builds. Remaining before Phase 3: generate the initial migration and run a quick smoke test — see note below)._
 
 ## Milestone summary
 
@@ -12,7 +12,7 @@ _Last updated: 2026-07-23 — status: **Phase 1 foundation in progress** (soluti
 |-------|-------|--------|
 | 0 | Design & documentation | **Done** |
 | 1 | Foundation | **In progress** |
-| 2 | Project management | Not started |
+| 2 | Project management | **Complete** |
 | 3 | Terraform execution foundation | Not started |
 | 4 | Plans & deployment safety | Not started |
 | 5 | Git core | Not started |
@@ -59,19 +59,32 @@ _Phase 1 build the user should see in Visual Studio: a themed shell (rail + top 
 dark/light toggle that persists (dark default), Dashboard/Projects/Connections/Activity/Templates/Help/Settings
 pages, SQLite DB + workspace tree created on first launch._
 
-## Phase 2 — Project management
+## Phase 2 — Project management  ✅ complete
 
-- [ ] Create project (recommended structure) ([03](03-domain-model.md))
-- [ ] Import existing project wizard (no restructuring)
-- [ ] Project manifest read/write (`.fenrix/project.json`)
-- [ ] Default Dev/UAT/Live + custom environments
-- [ ] Linked external projects
-- [ ] Recent projects
-- [ ] File tree + create/rename/move/delete (Recycle Bin)
-- [ ] `FileSystemWatcher` + reconciliation + change journal ([04](04-filesystem-sync.md))
-- [ ] File version history capture (create/update snapshots, dedup, compression) ([21](21-file-history-recovery.md))
-- [ ] Recover accidentally deleted files (in-app delete disabled by default; external deletes recoverable)
-- [ ] `IFileHistoryStore` works on both SQLite and SQL Server
+> **Build note.** Solution builds in Visual Studio (the initial `CS0542` name-clash on `Projects.razor`
+> is fixed). This phase switches EF Core to **migrations**: on first run the app still uses
+> `EnsureCreated` until a migration exists, then it auto-switches to `Migrate`. Generate the initial
+> migration once (design-time factory added):
+>
+> ```
+> dotnet ef migrations add InitialCreate -p src/Fenrix.IaCStudio.Infrastructure -s src/Fenrix.IaCStudio.Infrastructure
+> ```
+>
+> If a dev `fenrix.db` was already created via `EnsureCreated`, delete it before the first migrated
+> run (EnsureCreated-made schemas have no `__EFMigrationsHistory`). See [12](12-database-design.md).
+
+- [x] Create project (recommended structure) ([03](03-domain-model.md)) — `ProjectService` + `ProjectScaffolder`
+- [x] Import existing project wizard (no restructuring) — `ProjectImportScanner` + `ImportProjectDialog`
+- [x] Project manifest read/write (`.fenrix/project-manifest.json`) — `ProjectManifestStore`
+- [x] Default Dev/UAT/Live + custom environments — new-project dialog env editor
+- [x] Linked external projects — `InfrastructureProject.IsLinked`, registered in place
+- [x] Recent projects — `LastOpenedAt` + `GetRecentAsync`
+- [x] File tree + create/rename/move/delete (Recycle Bin) — `FileTreeService` (+ `RecycleBin`); UI exposes create/rename/delete (move via rename), drag-move UI is future
+- [x] `FileSystemWatcher` + reconciliation + change journal ([04](04-filesystem-sync.md)) — `ProjectFileSynchronizer` + `ChangeJournal`
+- [x] File version history capture (create/update snapshots, dedup, compression) ([21](21-file-history-recovery.md)) — `FileHistoryStore` (GZip + SHA-256 dedup)
+- [x] Recover accidentally deleted files (in-app delete disabled by default; external deletes recoverable) — Recoverable-items panel
+- [x] `IFileHistoryStore` works on both SQLite and SQL Server — provider-neutral EF only (SQL Server not yet exercised)
+- [ ] _Follow-ups:_ retention/pruning job, file-history diff view, drag-to-move in tree, watcher-exclusions settings UI, real `git init` (needs Phase 3 process runner)
 
 ## Phase 3 — Terraform execution foundation
 
@@ -176,3 +189,5 @@ pages, SQLite DB + workspace tree created on first launch._
 | 2026-07-23 | Files are source of truth; DB is index | [ADR-0002](adr/0002-files-as-source-of-truth.md) |
 | 2026-07-23 | Apply only the exact reviewed saved plan | [ADR-0003](adr/0003-saved-plan-only-apply.md) |
 | 2026-07-23 | DB-backed file version history for recovery | [ADR-0004](adr/0004-db-file-version-history.md) |
+| 2026-07-23 | Switch DB schema from EnsureCreated to EF migrations (with fallback) | [12](12-database-design.md) |
+| 2026-07-24 | Store DateTimeOffset as sortable binary on SQLite (SQLite can't ORDER BY/compare it) | [12](12-database-design.md) |
