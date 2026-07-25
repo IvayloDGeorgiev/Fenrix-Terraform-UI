@@ -1,4 +1,5 @@
 using Fenrix.IaCStudio.Application.Abstractions.Files;
+using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Application.Abstractions.Terraform;
 using Fenrix.IaCStudio.Application.Files;
@@ -28,6 +29,7 @@ public sealed class TerraformPlanService(
     ISavedPlanStore plans,
     IEnvironmentLockService locks,
     IFileHistoryStore fileHistory,
+    IGitService git,
     ILogger<TerraformPlanService> logger) : ITerraformPlanService
 {
     private const string DefaultExecutable = "terraform";
@@ -38,6 +40,7 @@ public sealed class TerraformPlanService(
     private readonly ISavedPlanStore _plans = plans;
     private readonly IEnvironmentLockService _locks = locks;
     private readonly IFileHistoryStore _fileHistory = fileHistory;
+    private readonly IGitService _git = git;
     private readonly ILogger<TerraformPlanService> _logger = logger;
 
     public async Task<PlanContext> PreparePlanAsync(
@@ -130,6 +133,10 @@ public sealed class TerraformPlanService(
             ? await FileHashing.Sha256HexAsync(context.OutPlanFile, ct)
             : null;
 
+        // 3b) Capture Git provenance (commit/branch/dirty) so apply can warn if the tree moved since the
+        //     plan was reviewed (docs/06-plan-apply-safety.md, docs/08-git-engine.md).
+        var provenance = await _git.ReadProvenanceAsync(context.WorkingDirectory, ct);
+
         // 4) Persist the redacted safety record.
         var savedPlan = new SavedPlan
         {
@@ -151,7 +158,10 @@ public sealed class TerraformPlanService(
             DestroyCount = review.Summary.Destroy,
             ReplaceCount = review.Summary.Replace,
             IsProductionTarget = environment.IsProduction,
-            CloudConnectionId = environment.CloudConnectionId
+            CloudConnectionId = environment.CloudConnectionId,
+            GitCommitSha = provenance.CommitSha,
+            GitBranch = provenance.Branch,
+            GitTreeDirty = provenance.IsRepository ? provenance.IsDirty : null
         };
         await _plans.AddAsync(savedPlan, ct);
 

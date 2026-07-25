@@ -1,8 +1,10 @@
 using Fenrix.IaCStudio.Application.Abstractions;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
+using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Application.Abstractions.Terraform;
 using Fenrix.IaCStudio.Infrastructure.Files;
+using Fenrix.IaCStudio.Infrastructure.Git;
 using Fenrix.IaCStudio.Infrastructure.Persistence;
 using Fenrix.IaCStudio.Infrastructure.Processes;
 using Fenrix.IaCStudio.Infrastructure.Projects;
@@ -66,6 +68,14 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ISavedPlanStore, EfSavedPlanStore>();
         services.AddScoped<ITerraformPlanService, TerraformPlanService>();
         services.AddScoped<ITerraformApplyService, TerraformApplyService>();
+
+        // Git engine (Phase 5). Discovery reads settings; the coordinator records redacted history and
+        // logs to Logs/git; the service drives the git CLI via the shared ArgumentList runner. All are
+        // scoped to the UI request. See docs/08-git-engine.md, docs/23-command-transparency.md.
+        services.AddScoped<IGitDiscovery, GitDiscovery>();
+        services.AddScoped<GitProcessCoordinator>();
+        services.AddScoped<IGitRepositoryInitializer, GitRepositoryInitializer>();
+        services.AddScoped<IGitService, GitService>();
 
         return services;
     }

@@ -1,0 +1,37 @@
+@* Compact project tile. Used by the Projects page grid and the project picker dialog. *@
+@using Fenrix.IaCStudio.Contracts.Projects
+
+<button class="fx-proj-card @(Selected ? "sel" : "")" @onclick="OnClick" title="@Project.RootPath">
+    <span class="top">
+        <span class="ico"><Icon Name="folder" Size="17" /></span>
+        <span class="name">@Project.Name</span>
+        @if (Project.IsLinked)
+        {
+            <span class="fx-tag"><Icon Name="link" Size="10" /> linked</span>
+        }
+    </span>
+    <span class="path fx-mono">@Project.RootPath</span>
+    <span class="foot">
+        <span class="fx-tag">@Project.EnvironmentCount env@(Project.EnvironmentCount == 1 ? "" : "s")</span>
+        @if (Project.LastOpenedAt is not null)
+        {
+            <span class="when">@Rel(Project.LastOpenedAt.Value)</span>
+        }
+    </span>
+</button>
+
+@code {
+    [Parameter, EditorRequired] public ProjectSummary Project { get; set; } = default!;
+    [Parameter] public EventCallback OnClick { get; set; }
+    [Parameter] public bool Selected { get; set; }
+
+    private static string Rel(DateTimeOffset when)
+    {
+        var span = DateTimeOffset.UtcNow - when;
+        if (span.TotalMinutes < 1) return "just now";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m ago";
+        if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
+        if (span.TotalDays < 30) return $"{(int)span.TotalDays}d ago";
+        return when.LocalDateTime.ToString("d MMM yyyy");
+    }
+}

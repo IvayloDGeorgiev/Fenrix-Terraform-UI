@@ -19,4 +19,13 @@ public interface IProcessRunner
         TerraformCommandRequest request,
         IProgress<ProcessOutputEvent>? output,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Tool-agnostic overload: runs any external process from a <see cref="ProcessStartRequest"/> with the
+    /// same safety guarantees (used by the Git engine as well as Terraform). See docs/08-git-engine.md.
+    /// </summary>
+    Task<ProcessResult> RunAsync(
+        ProcessStartRequest request,
+        IProgress<ProcessOutputEvent>? output,
+        CancellationToken ct = default);
 }

@@ -1,0 +1,87 @@
+@* Read-only unified diff viewer. The interactive conflict/line-staging editor is Phase 6. See docs/08-git-engine.md. *@
+@using Fenrix.IaCStudio.Contracts.Git
+
+@if (Loading)
+{
+    <div class="fx-hint" style="padding:16px;">Loading diff…</div>
+}
+else if (File is null)
+{
+    <div class="fx-diff-empty">
+        <span class="fx-ico"><Icon Name="file-text" Size="20" /></span>
+        <span>@EmptyText</span>
+    </div>
+}
+else
+{
+    <div class="fx-diff">
+        <div class="fx-diff-head">
+            <span class="fx-ico"><Icon Name="file-text" Size="13" /></span>
+            <span class="path fx-mono">
+                @if (File.IsRename && File.OldPath is not null)
+                {
+                    <span class="old">@File.OldPath</span><span class="arrow"> → </span><span>@File.Path</span>
+                }
+                else
+                {
+                    <span>@File.Path</span>
+                }
+            </span>
+            @if (File.Added > 0)
+            {
+                <span class="add">+@File.Added</span>
+            }
+            @if (File.Deleted > 0)
+            {
+                <span class="del">−@File.Deleted</span>
+            }
+        </div>
+
+        @if (File.IsBinary)
+        {
+            <div class="fx-hint" style="padding:12px;">Binary file — no textual diff.</div>
+        }
+        else if (File.Hunks.Count == 0)
+        {
+            <div class="fx-hint" style="padding:12px;">No content changes (mode or rename only).</div>
+        }
+        else
+        {
+            <div class="fx-diff-body fx-mono">
+                @foreach (var hunk in File.Hunks)
+                {
+                    @foreach (var line in hunk.Lines)
+                    {
+                        <div class="fx-diff-line @LineClass(line.Kind)">
+                            <span class="ln old">@(line.Kind == GitDiffLineKind.Hunk ? "" : line.OldLine?.ToString())</span>
+                            <span class="ln new">@(line.Kind == GitDiffLineKind.Hunk ? "" : line.NewLine?.ToString())</span>
+                            <span class="sign">@Sign(line.Kind)</span>
+                            <span class="txt">@line.Text</span>
+                        </div>
+                    }
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public GitDiffFile? File { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public string EmptyText { get; set; } = "Select a file to see its changes.";
+
+    private static string LineClass(GitDiffLineKind kind) => kind switch
+    {
+        GitDiffLineKind.Added => "add",
+        GitDiffLineKind.Removed => "del",
+        GitDiffLineKind.Hunk => "hunk",
+        _ => "ctx"
+    };
+
+    private static string Sign(GitDiffLineKind kind) => kind switch
+    {
+        GitDiffLineKind.Added => "+",
+        GitDiffLineKind.Removed => "−",
+        _ => " "
+    };
+}

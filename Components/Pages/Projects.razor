@@ -1,10 +1,11 @@
 @page "/projects"
 @using Fenrix.IaCStudio.Application.Abstractions.Projects
 @using Fenrix.IaCStudio.Contracts.Projects
+@using Microsoft.AspNetCore.Components.Web.Virtualization
 @inject IProjectService ProjectSvc
 @inject NavigationManager Nav
 
-<div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:20px;">
+<div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;">
     <div style="flex:1;">
         <h1 class="fx-page-title">Projects</h1>
         <p class="fx-page-sub" style="margin:0;">Your registered Terraform projects. Files on disk stay the source of truth.</p>
@@ -37,19 +38,61 @@ else if (_all.Count == 0)
 }
 else
 {
-    @if (_recent.Count > 0)
+    <div class="fx-filterbar">
+        <div class="fx-picker-search" style="flex:1;min-width:200px;">
+            <span class="fx-ico"><Icon Name="search" Size="15" /></span>
+            <input class="fx-input" placeholder="Search by name or path…" @bind="_query" @bind:after="StateHasChanged" @bind:event="oninput" />
+            @if (!string.IsNullOrEmpty(_query))
+            {
+                <button class="fx-iconbtn" title="Clear" @onclick="@(() => { _query = string.Empty; })"><Icon Name="x" Size="14" /></button>
+            }
+        </div>
+
+        <select class="fx-select" style="width:auto;" @bind="_location">
+            <option value="@Location.All">All locations</option>
+            <option value="@Location.Workspace">In workspace</option>
+            <option value="@Location.Linked">Linked</option>
+        </select>
+
+        <select class="fx-select" style="width:auto;" @bind="_sort">
+            <option value="@Sort.Recent">Recently opened</option>
+            <option value="@Sort.Name">Name (A–Z)</option>
+            <option value="@Sort.Created">Newest</option>
+        </select>
+    </div>
+
+    @if (IsDefaultView && _recent.Count > 0)
     {
-        <h2 style="font-size:13px;color:var(--fx-dim);margin:0 0 8px;text-transform:uppercase;letter-spacing:0.4px;">Recent</h2>
-        @foreach (var p in _recent)
-        {
-            @ProjectRow(p)
-        }
-        <div style="height:14px;"></div>
-        <h2 style="font-size:13px;color:var(--fx-dim);margin:0 0 8px;text-transform:uppercase;letter-spacing:0.4px;">All projects</h2>
+        <div class="fx-section-head">Recent</div>
+        <div class="fx-proj-grid">
+            @foreach (var p in _recent)
+            {
+                <ProjectCard Project="p" OnClick="() => Open(p.Id)" />
+            }
+        </div>
+        <div class="fx-section-head" style="margin-top:18px;">All projects <span class="fx-faint">(@Filtered.Count)</span></div>
     }
-    @foreach (var p in _all)
+    else
     {
-        @ProjectRow(p)
+        <div class="fx-section-head">@Filtered.Count result@(Filtered.Count == 1 ? "" : "s")</div>
+    }
+
+    @if (Filtered.Count == 0)
+    {
+        <div class="fx-card fx-hint" style="text-align:center;padding:28px;">No projects match your search and filters.</div>
+    }
+    else
+    {
+        <div class="fx-proj-scroll">
+            <Virtualize Items="Rows" Context="row" ItemSize="106">
+                <div class="fx-proj-grid-row" style="grid-template-columns:repeat(@Columns,minmax(0,1fr));">
+                    @foreach (var p in row)
+                    {
+                        <ProjectCard Project="p" OnClick="() => Open(p.Id)" />
+                    }
+                </div>
+            </Virtualize>
+        </div>
     }
 }
 
@@ -63,11 +106,23 @@ else
 }
 
 @code {
+    private enum Location { All, Workspace, Linked }
+    private enum Sort { Recent, Name, Created }
+
+    private const int Columns = 3;
+
     private List<ProjectSummary> _all = [];
     private List<ProjectSummary> _recent = [];
     private bool _loading = true;
     private bool _showNew;
     private bool _showImport;
+
+    private string _query = "";
+    private Location _location = Location.All;
+    private Sort _sort = Sort.Recent;
+
+    private bool IsDefaultView =>
+        string.IsNullOrWhiteSpace(_query) && _location == Location.All && _sort == Sort.Recent;
 
     protected override Task OnInitializedAsync() => LoadAsync();
 
@@ -75,9 +130,42 @@ else
     {
         _loading = true;
         _all = (await ProjectSvc.ListAsync()).ToList();
-        _recent = (await ProjectSvc.GetRecentAsync(5)).ToList();
+        _recent = (await ProjectSvc.GetRecentAsync(Columns)).ToList();
         _loading = false;
     }
+
+    private List<ProjectSummary> Filtered
+    {
+        get
+        {
+            IEnumerable<ProjectSummary> items = _all;
+
+            items = _location switch
+            {
+                Location.Workspace => items.Where(p => !p.IsLinked),
+                Location.Linked => items.Where(p => p.IsLinked),
+                _ => items
+            };
+
+            var q = _query.Trim();
+            if (q.Length > 0)
+                items = items.Where(p =>
+                    p.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    p.RootPath.Contains(q, StringComparison.OrdinalIgnoreCase));
+
+            items = _sort switch
+            {
+                Sort.Name => items.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase),
+                Sort.Created => items.OrderByDescending(p => p.CreatedAt),
+                _ => items.OrderByDescending(p => p.LastOpenedAt ?? p.CreatedAt)
+            };
+
+            return items.ToList();
+        }
+    }
+
+    // Chunk into fixed-width rows so the card grid can be virtualized (scales to thousands of projects).
+    private List<ProjectSummary[]> Rows => Filtered.Chunk(Columns).ToList();
 
     private async Task OnProjectAddedAsync(Guid projectId)
     {
@@ -87,34 +175,4 @@ else
     }
 
     private void Open(Guid projectId) => Nav.NavigateTo($"/projects/{projectId}");
-
-    private RenderFragment<ProjectSummary> ProjectRow => p => @<div class="fx-row" style="cursor:pointer;" @onclick="() => Open(p.Id)">
-        <span class="lead"><Icon Name="folder" Size="18" /></span>
-        <div class="grow">
-            <div class="title">
-                @p.Name
-                @if (p.IsLinked)
-                {
-                    <span class="fx-tag" style="margin-left:6px;"><Icon Name="link" Size="10" /> linked</span>
-                }
-            </div>
-            <div class="meta fx-mono">@p.RootPath</div>
-        </div>
-        <span class="fx-tag">@p.EnvironmentCount env@(p.EnvironmentCount == 1 ? "" : "s")</span>
-        @if (p.LastOpenedAt is not null)
-        {
-            <span style="font-size:11px;color:var(--fx-faint);white-space:nowrap;">@Rel(p.LastOpenedAt.Value)</span>
-        }
-        <span style="color:var(--fx-faint);"><Icon Name="chevron-right" Size="16" /></span>
-    </div>;
-
-    private static string Rel(DateTimeOffset when)
-    {
-        var span = DateTimeOffset.UtcNow - when;
-        if (span.TotalMinutes < 1) return "just now";
-        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes}m ago";
-        if (span.TotalHours < 24) return $"{(int)span.TotalHours}h ago";
-        if (span.TotalDays < 30) return $"{(int)span.TotalDays}d ago";
-        return when.LocalDateTime.ToString("d MMM yyyy");
-    }
 }

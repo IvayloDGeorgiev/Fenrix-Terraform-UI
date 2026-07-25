@@ -1,0 +1,65 @@
+@* Searchable project picker. Card grid, virtualized by row so it scales to thousands of projects. *@
+@using Fenrix.IaCStudio.Contracts.Projects
+@using Microsoft.AspNetCore.Components.Web.Virtualization
+
+<Modal Title="@Title" IconName="folder" OnClose="OnClose" Wide="true">
+    <ChildContent>
+        <div class="fx-picker-search">
+            <span class="fx-ico"><Icon Name="search" Size="15" /></span>
+            <input class="fx-input" placeholder="Search by name or path…" @bind="_query" @bind:after="StateHasChanged" @bind:event="oninput" autofocus />
+            @if (!string.IsNullOrEmpty(_query))
+            {
+                <button class="fx-iconbtn" title="Clear" @onclick="@(() => { _query = string.Empty; })"><Icon Name="x" Size="14" /></button>
+            }
+        </div>
+
+        <div class="fx-picker-count">@Filtered.Count of @Projects.Count project@(Projects.Count == 1 ? "" : "s")</div>
+
+        <div class="fx-picker-list">
+            @if (Filtered.Count == 0)
+            {
+                <div class="fx-hint" style="padding:24px;text-align:center;">No projects match “@_query”.</div>
+            }
+            else
+            {
+                <Virtualize Items="Rows" Context="row" ItemSize="106">
+                    <div class="fx-proj-grid-row" style="grid-template-columns:repeat(@Columns,minmax(0,1fr));">
+                        @foreach (var p in row)
+                        {
+                            <ProjectCard Project="p" Selected="@(p.Id == SelectedId)" OnClick="() => OnSelect.InvokeAsync(p)" />
+                        }
+                    </div>
+                </Virtualize>
+            }
+        </div>
+    </ChildContent>
+    <Footer>
+        <button class="fx-btn" @onclick="OnClose">Close</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public IReadOnlyList<ProjectSummary> Projects { get; set; } = [];
+    [Parameter] public EventCallback<ProjectSummary> OnSelect { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public Guid SelectedId { get; set; }
+    [Parameter] public string Title { get; set; } = "Select a project";
+
+    private const int Columns = 2;
+    private string _query = "";
+
+    private List<ProjectSummary> Filtered
+    {
+        get
+        {
+            var q = _query.Trim();
+            if (q.Length == 0)
+                return Projects as List<ProjectSummary> ?? Projects.ToList();
+            return Projects.Where(p =>
+                p.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                p.RootPath.Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+    }
+
+    private List<ProjectSummary[]> Rows => Filtered.Chunk(Columns).ToList();
+}

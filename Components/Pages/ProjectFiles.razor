@@ -38,6 +38,9 @@ else
         <button class="fx-btn accent" @onclick='() => Nav.NavigateTo($"/projects/{ProjectId}/plan")' title="Plan, review, and apply changes safely">
             <span class="fx-ico"><Icon Name="shield" Size="14" /></span> Plan &amp; apply
         </button>
+        <button class="fx-btn accent" @onclick='() => Nav.NavigateTo($"/projects/{ProjectId}/source-control")' title="Git status, commits, branches">
+            <span class="fx-ico"><Icon Name="git-branch" Size="14" /></span> Source control
+        </button>
     </div>
 
     <div class="fx-split">

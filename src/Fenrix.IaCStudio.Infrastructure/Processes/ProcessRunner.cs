@@ -15,28 +15,49 @@ public sealed class ProcessRunner(ILogger<ProcessRunner> logger) : IProcessRunne
 {
     private readonly ILogger<ProcessRunner> _logger = logger;
 
-    public async Task<ProcessResult> RunAsync(
+    public Task<ProcessResult> RunAsync(
         TerraformCommandRequest request,
         IProgress<ProcessOutputEvent>? output,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        RunCoreAsync(
+            request.ExecutablePath, request.WorkingDirectory, request.Arguments,
+            request.EnvironmentVariables, request.Command, request.RequiresInteractiveTerminal, output, ct);
+
+    public Task<ProcessResult> RunAsync(
+        ProcessStartRequest request,
+        IProgress<ProcessOutputEvent>? output,
+        CancellationToken ct = default) =>
+        RunCoreAsync(
+            request.ExecutablePath, request.WorkingDirectory, request.Arguments,
+            request.EnvironmentVariables, request.CommandLabel, request.RequiresInteractiveTerminal, output, ct);
+
+    private async Task<ProcessResult> RunCoreAsync(
+        string executablePath,
+        string workingDirectory,
+        IReadOnlyList<string> arguments,
+        IReadOnlyDictionary<string, string> environmentVariables,
+        string commandLabel,
+        bool requiresInteractiveTerminal,
+        IProgress<ProcessOutputEvent>? output,
+        CancellationToken ct)
     {
         var psi = new ProcessStartInfo
         {
-            FileName = request.ExecutablePath,
-            WorkingDirectory = request.WorkingDirectory,
+            FileName = executablePath,
+            WorkingDirectory = workingDirectory,
             UseShellExecute = false,          // required for redirection and to avoid the shell entirely
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            RedirectStandardInput = request.RequiresInteractiveTerminal
+            RedirectStandardInput = requiresInteractiveTerminal
         };
 
         // Arguments go through ArgumentList so the OS receives them as a proper argv — no shell parsing,
         // no injection surface. Never build a single command string here.
-        foreach (var arg in request.Arguments)
+        foreach (var arg in arguments)
             psi.ArgumentList.Add(arg);
 
-        foreach (var (key, value) in request.EnvironmentVariables)
+        foreach (var (key, value) in environmentVariables)
             psi.Environment[key] = value;
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
@@ -59,11 +80,11 @@ public sealed class ProcessRunner(ILogger<ProcessRunner> logger) : IProcessRunne
         try
         {
             if (!process.Start())
-                throw new InvalidOperationException($"Failed to start '{request.ExecutablePath}'.");
+                throw new InvalidOperationException($"Failed to start '{executablePath}'.");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Could not start {Executable} in {WorkingDir}", request.ExecutablePath, request.WorkingDirectory);
+            _logger.LogError(ex, "Could not start {Executable} in {WorkingDir}", executablePath, workingDirectory);
             throw;
         }
 
@@ -90,7 +111,7 @@ public sealed class ProcessRunner(ILogger<ProcessRunner> logger) : IProcessRunne
 
         _logger.LogInformation(
             "Process {Executable} {Command} exited {ExitCode} in {Ms} ms (cancelled={Cancelled})",
-            Path.GetFileName(request.ExecutablePath), request.Command, exitCode,
+            Path.GetFileName(executablePath), commandLabel, exitCode,
             (completedAt - startedAt).TotalMilliseconds, cancelled);
 
         return new ProcessResult(exitCode, cancelled, startedAt, completedAt);

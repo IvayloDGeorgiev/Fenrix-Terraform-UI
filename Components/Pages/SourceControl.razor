@@ -1,10 +1,956 @@
 @page "/source-control"
+@page "/projects/{ProjectId:guid}/source-control"
+@using Fenrix.IaCStudio.Application.Abstractions.Git
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Git
+@using Fenrix.IaCStudio.Contracts.Git
+@using Fenrix.IaCStudio.Contracts.Projects
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Environments
+@using Fenrix.IaCStudio.Domain.Git
+@using Fenrix.IaCStudio.Domain.Projects
+@inject IGitService Git
+@inject IProjectService Projects
+@inject IProjectImportScanner ImportScanner
+@inject IJSRuntime JS
+@inject NavigationManager Nav
 
-<h1 class="fx-page-title">Source control</h1>
-<p class="fx-page-sub">Git status, commits and branches across your projects. Coming in Phase 5.</p>
-
-<div class="fx-card" style="text-align:center;padding:40px;">
-    <div style="color:var(--fx-accent);margin-bottom:10px;"><Icon Name="git-branch" Size="28" /></div>
-    <h2 style="font-size:16px;margin:0 0 6px;">Open a project first</h2>
-    <p style="color:var(--fx-dim);font-size:13px;margin:0;">Source control appears once a project is open.</p>
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+    <div style="flex:1;">
+        <h1 class="fx-page-title" style="margin:0;">Source control</h1>
+        <div class="fx-page-sub" style="margin:2px 0 0;">Git status, commits and branches. Remote operations run locally against configured credentials.</div>
+    </div>
+    <button class="fx-btn" @onclick="() => _showPicker = true" disabled="@_busy" title="Choose a project" style="min-width:200px;justify-content:space-between;">
+        <span style="display:flex;align-items:center;gap:6px;overflow:hidden;">
+            <span class="fx-ico"><Icon Name="folder" Size="14" /></span>
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@(_project?.Name ?? "Select a project…")</span>
+        </span>
+        <span class="fx-ico" style="color:var(--fx-faint);"><Icon Name="chevron-down" Size="14" /></span>
+    </button>
+    <button class="fx-btn" @onclick="OpenCloneDialog" title="Clone a remote repository">
+        <span class="fx-ico"><Icon Name="download" Size="14" /></span> Clone
+    </button>
+    @if (_ctx is not null)
+    {
+        <button class="fx-btn" @onclick="RefreshAsync" title="Refresh Git state" disabled="@_busy">
+            <span class="fx-ico"><Icon Name="refresh" Size="14" /></span> Refresh
+        </button>
+    }
 </div>
+
+@if (_project is null)
+{
+    <div class="fx-card" style="text-align:center;padding:40px;">
+        <div style="color:var(--fx-accent);margin-bottom:10px;"><Icon Name="git-branch" Size="28" /></div>
+        <h2 style="font-size:16px;margin:0 0 6px;">@(_projectList.Count == 0 ? "No projects yet" : "Select a project")</h2>
+        <p style="color:var(--fx-dim);font-size:13px;margin:0;">
+            @(_projectList.Count == 0 ? "Create or import a project, or clone a repository to get started." : "Choose a project above to see its source control.")
+        </p>
+    </div>
+}
+else if (_ctx is null || !_ctx.IsRepository)
+{
+    <div class="fx-card" style="text-align:center;padding:36px;">
+        <div style="color:var(--fx-warn);margin-bottom:10px;"><Icon Name="git-branch" Size="26" /></div>
+        <h2 style="font-size:16px;margin:0 0 6px;">@_project.Name is not a Git repository</h2>
+        <p style="color:var(--fx-dim);font-size:13px;margin:0 0 16px;">
+            @(_ctx is null ? "Git was not found. Set the executable in Settings or install Git on your PATH." : "Initialise a repository to start tracking changes.")
+        </p>
+        @if (_ctx is not null)
+        {
+            <button class="fx-btn accent" @onclick="InitRepoAsync" disabled="@_busy">
+                <span class="fx-ico"><Icon Name="git-branch" Size="14" /></span> Initialise repository
+            </button>
+            <div class="fx-mono" style="margin-top:12px;color:var(--fx-faint);font-size:12px;">git init · @_project.RootPath</div>
+        }
+    </div>
+}
+else
+{
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+        <span class="fx-chip" title="Current branch">
+            <span class="fx-ico"><Icon Name="git-branch" Size="13" /></span>
+            @(_status.IsDetached ? "(detached)" : _status.Branch ?? "—")
+        </span>
+        @if (_status.HasUpstream)
+        {
+            <span class="fx-chip" title="Upstream">@_status.Upstream</span>
+        }
+        @if (_status.Ahead > 0)
+        {
+            <span class="fx-pill run" title="Commits ahead of upstream"><span class="fx-ico"><Icon Name="arrow-up" Size="11" /></span> @_status.Ahead</span>
+        }
+        @if (_status.Behind > 0)
+        {
+            <span class="fx-pill warn" title="Commits behind upstream"><span class="fx-ico"><Icon Name="arrow-down" Size="11" /></span> @_status.Behind</span>
+        }
+        @if (_status.HasConflicts)
+        {
+            <span class="fx-pill fail" title="Merge conflicts present"><span class="fx-ico"><Icon Name="alert" Size="11" /></span> Conflicts</span>
+        }
+        <div style="flex:1;"></div>
+        <button class="fx-btn sm" @onclick="() => RunRemoteAsync(RemoteOp.Fetch)" disabled="@_busy" title="git fetch --all --prune">
+            <span class="fx-ico"><Icon Name="download" Size="13" /></span> Fetch
+        </button>
+        <button class="fx-btn sm" @onclick="() => RunRemoteAsync(RemoteOp.Pull)" disabled="@_busy" title="git pull">
+            <span class="fx-ico"><Icon Name="arrow-down" Size="13" /></span> Pull
+        </button>
+        <button class="fx-btn sm" @onclick="() => RunRemoteAsync(RemoteOp.Push)" disabled="@_busy" title="git push">
+            <span class="fx-ico"><Icon Name="arrow-up" Size="13" /></span> Push
+        </button>
+    </div>
+
+    @if (_status.HasConflicts)
+    {
+        <div class="fx-card" style="border-color:var(--fx-danger);margin-bottom:14px;padding:12px 14px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span class="fx-ico" style="color:var(--fx-danger);"><Icon Name="alert" Size="15" /></span>
+                <span style="flex:1;font-size:13px;">A merge is in progress with conflicts. Resolve the files, stage them, and commit — or abort the merge.</span>
+                <button class="fx-btn sm danger" @onclick="AbortMergeAsync" disabled="@_busy">Abort merge</button>
+            </div>
+        </div>
+    }
+
+    <div class="fx-tabs" style="margin-bottom:14px;">
+        @foreach (var tab in _tabs)
+        {
+            <button class="fx-tab @(_tab == tab ? "active" : "")" @onclick="() => SwitchTab(tab)" disabled="@_busy">@TabLabel(tab)</button>
+        }
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="fx-card" style="border-color:var(--fx-danger);margin-bottom:14px;padding:10px 14px;color:var(--fx-danger);font-size:13px;">
+            <span class="fx-ico"><Icon Name="alert" Size="13" /></span> @_error
+        </div>
+    }
+    @if (_notice is not null)
+    {
+        <div class="fx-card" style="border-color:var(--fx-accent);margin-bottom:14px;padding:10px 14px;font-size:13px;">
+            <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="check" Size="13" /></span> @_notice
+        </div>
+    }
+
+    <div class="fx-split">
+        <div style="display:flex;flex-direction:column;gap:14px;min-width:0;">
+            @if (_tab == Tab.Changes)
+            {
+                <div class="fx-card">
+                    <div class="fx-field" style="margin-bottom:8px;">
+                        <label>Commit message</label>
+                        <textarea class="fx-input" rows="3" placeholder="Describe your changes…" @bind="_commitMessage" @bind:after="StateHasChanged" @bind:event="oninput"></textarea>
+                    </div>
+                    <label class="fx-check"><input type="checkbox" @bind="_commitStageAll" @bind:after="StateHasChanged" /> Stage all changes first <span class="hint">git add -A</span></label>
+                    <label class="fx-check"><input type="checkbox" @bind="_commitAmend" @bind:after="StateHasChanged" /> Amend last commit <span class="hint">--amend</span></label>
+                    <label class="fx-check"><input type="checkbox" @bind="_commitSignOff" @bind:after="StateHasChanged" /> Sign off <span class="hint">--signoff</span></label>
+                    <div style="margin:10px 0;"><CommandPreviewPanel Preview="CommitPreview()" /></div>
+                    <div style="display:flex;gap:8px;">
+                        <button class="fx-btn accent" @onclick="CommitAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_commitMessage) || (!_commitStageAll && !_status.Staged.Any() && !_commitAmend))">
+                            <span class="fx-ico"><Icon Name="git-commit" Size="13" /></span> Commit
+                        </button>
+                        <button class="fx-btn" @onclick="StashPushAsync" disabled="@(_busy || !_status.HasChanges)" title="Stash all changes (including untracked)">
+                            <span class="fx-ico"><Icon Name="archive" Size="13" /></span> Stash
+                        </button>
+                        <div style="flex:1;"></div>
+                        @if (_status.Unstaged.Any() || _status.Untracked.Any())
+                        {
+                            <button class="fx-btn sm" @onclick="StageAllAsync" disabled="@_busy" title="Stage everything">Stage all</button>
+                        }
+                    </div>
+                </div>
+
+                @if (!_status.HasChanges)
+                {
+                    <div class="fx-card fx-hint" style="text-align:center;padding:24px;">Working tree clean — nothing to commit.</div>
+                }
+                @if (_status.Conflicted.Any())
+                {
+                    <div class="fx-card">
+                        <div class="fx-group-head" style="color:var(--fx-danger);">Conflicts (@_status.Conflicted.Count())</div>
+                        @foreach (var e in _status.Conflicted)
+                        {
+                            <div class="fx-row @(_selectedKey == $"w:{e.Path}" ? "sel" : "")">
+                                <span class="fx-code fail">@e.Code</span>
+                                <button class="grow path" @onclick="() => SelectFileAsync(e, false)"><span class="fx-mono">@e.Path</span></button>
+                                <button class="fx-iconbtn" title="Stage (mark resolved)" @onclick="() => StageAsync(e)"><Icon Name="plus" Size="14" /></button>
+                            </div>
+                        }
+                    </div>
+                }
+                @if (_status.Staged.Any())
+                {
+                    <div class="fx-card">
+                        <div class="fx-group-head">Staged (@_status.Staged.Count())</div>
+                        @foreach (var e in _status.Staged)
+                        {
+                            <div class="fx-row @(_selectedKey == $"s:{e.Path}" ? "sel" : "")">
+                                <span class="fx-code add">@e.Code</span>
+                                <button class="grow path" @onclick="() => SelectFileAsync(e, true)">
+                                    <span class="fx-mono">@e.Path</span>
+                                    @if (e.OriginalPath is not null) { <span class="fx-faint fx-mono"> ← @e.OriginalPath</span> }
+                                </button>
+                                <button class="fx-iconbtn" title="Unstage" @onclick="() => UnstageAsync(e)"><Icon Name="minus" Size="14" /></button>
+                            </div>
+                        }
+                    </div>
+                }
+                @if (_status.Unstaged.Any())
+                {
+                    <div class="fx-card">
+                        <div class="fx-group-head">Changes (@_status.Unstaged.Count())</div>
+                        @foreach (var e in _status.Unstaged)
+                        {
+                            <div class="fx-row @(_selectedKey == $"w:{e.Path}" ? "sel" : "")">
+                                <span class="fx-code warn">@e.Code</span>
+                                <button class="grow path" @onclick="() => SelectFileAsync(e, false)"><span class="fx-mono">@e.Path</span></button>
+                                <button class="fx-iconbtn" title="Stage" @onclick="() => StageAsync(e)"><Icon Name="plus" Size="14" /></button>
+                                <button class="fx-iconbtn danger" title="Discard changes" @onclick="() => ConfirmDiscard(e)"><Icon Name="restore" Size="14" /></button>
+                            </div>
+                        }
+                    </div>
+                }
+                @if (_status.Untracked.Any())
+                {
+                    <div class="fx-card">
+                        <div class="fx-group-head">Untracked (@_status.Untracked.Count())</div>
+                        @foreach (var e in _status.Untracked)
+                        {
+                            <div class="fx-row @(_selectedKey == $"w:{e.Path}" ? "sel" : "")">
+                                <span class="fx-code muted">@e.Code</span>
+                                <button class="grow path" @onclick="() => SelectFileAsync(e, false)"><span class="fx-mono">@e.Path</span></button>
+                                <button class="fx-iconbtn" title="Stage" @onclick="() => StageAsync(e)"><Icon Name="plus" Size="14" /></button>
+                                <button class="fx-iconbtn danger" title="Delete file" @onclick="() => ConfirmDiscard(e)"><Icon Name="trash" Size="14" /></button>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+            else if (_tab == Tab.History)
+            {
+                <div class="fx-card">
+                    <div class="fx-group-head">History (@_commits.Count)</div>
+                    @if (_commits.Count == 0)
+                    {
+                        <div class="fx-hint">No commits yet.</div>
+                    }
+                    @foreach (var c in _commits)
+                    {
+                        <div class="fx-row @(_selectedKey == c.Sha ? "sel" : "")">
+                            <button class="grow path" style="flex-direction:column;align-items:flex-start;" @onclick="() => SelectCommitAsync(c)">
+                                <span style="display:flex;align-items:center;gap:6px;">
+                                    <span class="fx-mono fx-faint">@c.ShortSha</span>
+                                    @if (c.IsMerge) { <span class="fx-pill muted" style="padding:0 5px;">merge</span> }
+                                    <span style="overflow:hidden;text-overflow:ellipsis;">@c.Subject</span>
+                                </span>
+                                <span class="meta">@c.Author · @c.Date.LocalDateTime.ToString("g")</span>
+                            </button>
+                            <button class="fx-iconbtn" title="Copy hash" @onclick="() => CopyAsync(c.Sha)"><Icon Name="copy" Size="13" /></button>
+                        </div>
+                    }
+                </div>
+            }
+            else if (_tab == Tab.Branches)
+            {
+                <div class="fx-card">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                        <span style="flex:1;" class="fx-group-head">Local branches</span>
+                        <button class="fx-btn sm accent" @onclick="OpenBranchDialog" disabled="@_busy"><span class="fx-ico"><Icon Name="plus" Size="12" /></span> New</button>
+                    </div>
+                    @foreach (var b in _branches.Where(x => !x.IsRemote))
+                    {
+                        <div class="fx-row">
+                            <span class="fx-ico" style="color:@(b.IsCurrent ? "var(--fx-accent)" : "var(--fx-faint)");"><Icon Name="git-branch" Size="13" /></span>
+                            <span class="grow" style="min-width:0;">
+                                <span class="fx-mono" style="font-weight:@(b.IsCurrent ? "600" : "400");">@b.Name</span>
+                                @if (b.Ahead > 0) { <span class="fx-faint"> ↑@b.Ahead</span> }
+                                @if (b.Behind > 0) { <span class="fx-faint"> ↓@b.Behind</span> }
+                            </span>
+                            @if (!b.IsCurrent)
+                            {
+                                <button class="fx-btn sm" @onclick="() => CheckoutAsync(b)" disabled="@_busy">Checkout</button>
+                                <button class="fx-btn sm" @onclick="() => ConfirmMerge(b)" disabled="@_busy" title="Merge into current"><Icon Name="git-merge" Size="12" /></button>
+                                <button class="fx-iconbtn danger" @onclick="() => ConfirmDeleteBranch(b)" disabled="@_busy" title="Delete branch"><Icon Name="trash" Size="13" /></button>
+                            }
+                        </div>
+                    }
+                    @if (_branches.Any(x => x.IsRemote))
+                    {
+                        <div class="fx-group-head" style="margin-top:12px;">Remote branches</div>
+                        @foreach (var b in _branches.Where(x => x.IsRemote))
+                        {
+                            <div class="fx-row">
+                                <span class="fx-ico" style="color:var(--fx-faint);"><Icon Name="cloud" Size="13" /></span>
+                                <span class="grow fx-mono" style="min-width:0;">@b.Name</span>
+                                <button class="fx-btn sm" @onclick="() => CheckoutAsync(b)" disabled="@_busy" title="Check out a local tracking branch">Checkout</button>
+                            </div>
+                        }
+                    }
+                </div>
+            }
+            else if (_tab == Tab.Stashes)
+            {
+                <div class="fx-card">
+                    <div class="fx-group-head">Stashes (@_stashes.Count)</div>
+                    @if (_stashes.Count == 0)
+                    {
+                        <div class="fx-hint">No stashes. Use the Stash button on the Changes tab to save your working state.</div>
+                    }
+                    @foreach (var s in _stashes)
+                    {
+                        <div class="fx-row">
+                            <span class="fx-ico" style="color:var(--fx-faint);"><Icon Name="archive" Size="13" /></span>
+                            <span class="grow" style="min-width:0;">
+                                <span class="fx-mono fx-faint">@s.Reference</span>
+                                <span style="margin-left:6px;">@s.Message</span>
+                                @if (s.Branch is not null) { <span class="fx-faint"> · @s.Branch</span> }
+                            </span>
+                            <button class="fx-btn sm" @onclick="() => StashApplyAsync(s)" disabled="@_busy" title="Apply and keep">Apply</button>
+                            <button class="fx-btn sm" @onclick="() => StashPopAsync(s)" disabled="@_busy" title="Apply and drop">Pop</button>
+                            <button class="fx-iconbtn danger" @onclick="() => ConfirmStashDrop(s)" disabled="@_busy" title="Drop"><Icon Name="trash" Size="13" /></button>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:14px;min-width:0;">
+            @if (_output.Count > 0)
+            {
+                <div class="fx-card">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                        <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="terminal" Size="15" /></span>
+                        <span style="flex:1;font-size:13px;font-weight:500;">Output</span>
+                        <button class="fx-iconbtn" title="Clear" @onclick="() => _output.Clear()"><Icon Name="x" Size="13" /></button>
+                    </div>
+                    <OutputConsole Lines="_output" />
+                </div>
+            }
+            <div class="fx-card" style="min-height:200px;">
+                <GitDiffView File="_diffFile" Loading="_diffLoading" EmptyText="@_diffEmpty" />
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showClone)
+{
+    <Modal Title="Clone repository" IconName="download" OnClose="() => _showClone = false" Wide="true">
+        <ChildContent>
+        <div class="fx-field">
+            <label>Repository URL</label>
+            <input class="fx-input fx-mono" placeholder="https://github.com/org/repo.git" @bind="_cloneUrl" @bind:after="OnCloneChanged" @bind:event="oninput" />
+        </div>
+        <div class="fx-tabs" style="margin:6px 0 12px;">
+            <button class="fx-tab @(_cloneToExisting ? "" : "active")" @onclick="() => SetCloneMode(false)">New project</button>
+            <button class="fx-tab @(_cloneToExisting ? "active" : "")" @onclick="() => SetCloneMode(true)">Existing project</button>
+        </div>
+        @if (!_cloneToExisting)
+        {
+            <div class="fx-field">
+                <label>Project name</label>
+                <input class="fx-input" placeholder="repo" @bind="_cloneName" @bind:after="OnCloneChanged" @bind:event="oninput" />
+            </div>
+            <div class="fx-field">
+                <label>Location</label>
+                <input class="fx-input fx-mono" placeholder="C:\path\to\projects" @bind="_cloneLocation" @bind:after="OnCloneChanged" @bind:event="oninput" />
+            </div>
+        }
+        else
+        {
+            <div class="fx-field">
+                <label>Add to project</label>
+                <select class="fx-select" value="@_cloneExistingId" @onchange="OnCloneExistingChanged">
+                    <option value="@Guid.Empty">Select a project…</option>
+                    @foreach (var p in _projectList)
+                    {
+                        <option value="@p.Id">@p.Name</option>
+                    }
+                </select>
+            </div>
+            @if (_cloneEnvironments.Count > 0)
+            {
+                <div class="fx-field">
+                    <label>Environment</label>
+                    <select class="fx-select" @bind="_cloneEnvironment" @bind:after="OnCloneChanged">
+                        @foreach (var e in _cloneEnvironments)
+                        {
+                            <option value="@e.Name">@e.Name@(e.IsProduction ? " (production)" : "")</option>
+                        }
+                    </select>
+                    <p class="fx-hint" style="margin:6px 0 0;">Clones into a subfolder of this project for the selected environment.</p>
+                </div>
+            }
+            <div class="fx-field">
+                <label>Folder name</label>
+                <input class="fx-input" placeholder="repo" @bind="_cloneName" @bind:after="OnCloneChanged" @bind:event="oninput" />
+            </div>
+        }
+
+        @if (_cloneValidation is not null)
+        {
+            <div class="fx-hint" style="color:var(--fx-warn);margin-top:4px;"><span class="fx-ico"><Icon Name="alert" Size="13" /></span> @_cloneValidation</div>
+        }
+        <div style="margin-top:10px;"><CommandPreviewPanel Preview="_clonePreview" /></div>
+        @if (_output.Count > 0 && _busy)
+        {
+            <div style="margin-top:10px;"><OutputConsole Lines="_output" /></div>
+        }
+
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn" @onclick="() => _showClone = false" disabled="@_busy">Cancel</button>
+            <button class="fx-btn accent" @onclick="CloneAsync" disabled="@(_busy || _cloneValidation is not null || string.IsNullOrWhiteSpace(_cloneUrl))">
+                <span class="fx-ico"><Icon Name="download" Size="13" /></span> @(_busy ? "Cloning…" : "Clone")
+            </button>
+        </Footer>
+    </Modal>
+}
+
+@if (_showBranchDialog)
+{
+    <Modal Title="New branch" IconName="git-branch" OnClose="() => _showBranchDialog = false">
+        <ChildContent>
+        <div class="fx-field">
+            <label>Branch name</label>
+            <input class="fx-input fx-mono" placeholder="feature/my-change" @bind="_newBranchName" @bind:after="StateHasChanged" @bind:event="oninput" />
+        </div>
+        <label class="fx-check"><input type="checkbox" @bind="_newBranchCheckout" @bind:after="StateHasChanged" /> Check out after creating</label>
+        <div style="margin-top:10px;"><CommandPreviewPanel Preview="@Preview(GitCommandCatalog.BranchCreate(SafeName(_newBranchName), null, _newBranchCheckout))" /></div>
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn" @onclick="() => _showBranchDialog = false" disabled="@_busy">Cancel</button>
+            <button class="fx-btn accent" @onclick="CreateBranchAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_newBranchName))">Create</button>
+        </Footer>
+    </Modal>
+}
+
+@if (_confirm is not null)
+{
+    <Modal Title="@_confirm.Title" IconName="alert" OnClose="CancelConfirm">
+        <ChildContent>
+        <p style="font-size:13px;margin:0 0 10px;">@_confirm.Message</p>
+        @if (_confirm.Preview is not null)
+        {
+            <CommandPreviewPanel Preview="_confirm.Preview" />
+        }
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn" @onclick="CancelConfirm" disabled="@_busy">Cancel</button>
+            <button class="fx-btn danger" @onclick="RunConfirmAsync" disabled="@_busy">@_confirm.ActionLabel</button>
+        </Footer>
+    </Modal>
+}
+
+@if (_showPicker)
+{
+    <ProjectPickerDialog Projects="_projectList" SelectedId="_projectId" OnSelect="OnPickProject" OnClose="() => _showPicker = false" />
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private enum Tab { Changes, History, Branches, Stashes }
+    private enum RemoteOp { Fetch, Pull, Push }
+    private static readonly Tab[] _tabs = [Tab.Changes, Tab.History, Tab.Branches, Tab.Stashes];
+
+    private List<ProjectSummary> _projectList = [];
+    private Guid _projectId;
+    private InfrastructureProject? _project;
+    private GitCommandContext? _ctx;
+    private GitStatus _status = GitStatus.NotARepository;
+    private List<GitBranch> _branches = [];
+    private List<GitCommit> _commits = [];
+    private List<GitStash> _stashes = [];
+
+    private Tab _tab = Tab.Changes;
+    private bool _busy;
+    private string? _error;
+    private string? _notice;
+
+    private readonly List<ProcessOutputEvent> _output = [];
+
+    // diff panel
+    private GitDiffFile? _diffFile;
+    private bool _diffLoading;
+    private string _diffEmpty = "Select a file to see its changes.";
+    private string? _selectedKey;
+
+    // commit box
+    private string _commitMessage = "";
+    private bool _commitAmend, _commitSignOff, _commitStageAll;
+
+    // dialogs
+    private bool _showPicker;
+    private bool _showClone;
+    private string _cloneUrl = "", _cloneName = "", _cloneLocation = "";
+    private bool _cloneToExisting;
+    private Guid _cloneExistingId;
+    private List<ProjectEnvironment> _cloneEnvironments = [];
+    private string _cloneEnvironment = "";
+    private string? _cloneValidation;
+    private CommandPreview? _clonePreview;
+
+    private bool _showBranchDialog;
+    private string _newBranchName = "";
+    private bool _newBranchCheckout = true;
+
+    private ConfirmState? _confirm;
+    private sealed record ConfirmState(string Title, string Message, string ActionLabel, CommandPreview? Preview, Func<Task> Action);
+
+    private Guid _loadedId = Guid.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == Guid.Empty && _projectList.Count == 0)
+            _projectList = (await Projects.ListAsync()).ToList();
+
+        if (ProjectId != Guid.Empty && ProjectId != _projectId)
+        {
+            _projectId = ProjectId;
+            await SelectProjectAsync(ProjectId);
+        }
+        _loadedId = ProjectId;
+    }
+
+    private async Task OnPickProject(ProjectSummary p)
+    {
+        _showPicker = false;
+        if (p.Id == _projectId) return;
+        _projectId = p.Id;
+        await SelectProjectAsync(p.Id);
+    }
+
+    private async Task SelectProjectAsync(Guid id)
+    {
+        _busy = true; _error = null; _notice = null;
+        ResetPanels();
+        try
+        {
+            _project = await Projects.GetAsync(id);
+            if (_project is null) { _ctx = null; return; }
+            _ctx = await Git.ResolveContextAsync(id);
+            if (_ctx is { IsRepository: true })
+                await RefreshAsync();
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_ctx is null) return;
+        _busy = true; _error = null;
+        try
+        {
+            _ctx = await Git.ResolveContextAsync(_projectId) ?? _ctx;
+            _status = await Git.GetStatusAsync(_projectId);
+            await LoadTabAsync(_tab);
+            await RefreshDiffAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task LoadTabAsync(Tab tab)
+    {
+        switch (tab)
+        {
+            case Tab.History: _commits = (await Git.GetHistoryAsync(_projectId, 100)).ToList(); break;
+            case Tab.Branches: _branches = (await Git.GetBranchesAsync(_projectId)).ToList(); break;
+            case Tab.Stashes: _stashes = (await Git.GetStashesAsync(_projectId)).ToList(); break;
+        }
+    }
+
+    private async Task SwitchTab(Tab tab)
+    {
+        _tab = tab;
+        _busy = true;
+        try { await LoadTabAsync(tab); }
+        finally { _busy = false; }
+    }
+
+    private void ResetPanels()
+    {
+        _status = GitStatus.NotARepository;
+        _branches = []; _commits = []; _stashes = [];
+        _diffFile = null; _selectedKey = null; _output.Clear();
+        _commitMessage = ""; _commitAmend = false; _commitSignOff = false; _commitStageAll = false;
+    }
+
+    // ---- repository ----
+
+    private async Task InitRepoAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            var r = await Git.InitAsync(_projectId);
+            if (!r.Succeeded) { _error = r.Error ?? "git init failed."; return; }
+            _notice = "Initialised a Git repository.";
+            await SelectProjectAsync(_projectId);
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task RunRemoteAsync(RemoteOp op)
+    {
+        _busy = true; _error = null; _notice = null; _output.Clear();
+        var progress = new Progress<ProcessOutputEvent>(OnLine);
+        try
+        {
+            var r = op switch
+            {
+                RemoteOp.Fetch => await Git.FetchAsync(_projectId, progress),
+                RemoteOp.Pull => await Git.PullAsync(_projectId, progress),
+                _ => await Git.PushAsync(_projectId, forceWithLease: false, progress)
+            };
+            if (!r.Succeeded) _error = r.Error ?? $"git {op.ToString().ToLowerInvariant()} failed.";
+            else _notice = $"{op} complete.";
+            await RefreshAfterMutationAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    // ---- changes / staging / commit ----
+
+    private async Task StageAsync(GitStatusEntry entry)
+        => await MutateAsync(() => Git.StageAsync(_projectId, PathArgs(entry)));
+
+    private async Task UnstageAsync(GitStatusEntry entry)
+        => await MutateAsync(() => Git.UnstageAsync(_projectId, [entry.Path]));
+
+    private Task StageAllAsync() => MutateAsync(() => Git.StageAllAsync(_projectId));
+
+    private void ConfirmDiscard(GitStatusEntry entry)
+    {
+        var def = GitCommandCatalog.Discard(PathArgs(entry), entry.IsUntracked);
+        _confirm = new ConfirmState(
+            entry.IsUntracked ? "Delete untracked file" : "Discard changes",
+            entry.IsUntracked
+                ? $"Permanently delete '{entry.Path}'? This cannot be undone."
+                : $"Discard all uncommitted changes to '{entry.Path}'? This restores it from the last commit.",
+            entry.IsUntracked ? "Delete" : "Discard",
+            Preview(def),
+            () => MutateAsync(() => Git.DiscardAsync(_projectId, PathArgs(entry), entry.IsUntracked)));
+    }
+
+    private async Task CommitAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_commitMessage)) return;
+        _busy = true; _error = null; _notice = null;
+        try
+        {
+            var req = new GitCommitRequest(_commitMessage.Trim(), _commitStageAll, _commitAmend, _commitSignOff);
+            var r = await Git.CommitAsync(_projectId, req);
+            if (!r.Succeeded) { _error = r.Error ?? "Commit failed."; return; }
+            _notice = "Committed.";
+            _commitMessage = ""; _commitAmend = false;
+            await RefreshAfterMutationAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private CommandPreview? CommitPreview() =>
+        string.IsNullOrWhiteSpace(_commitMessage)
+            ? null
+            : Preview(GitCommandCatalog.Commit(new GitCommitRequest(_commitMessage.Trim(), _commitStageAll, _commitAmend, _commitSignOff)));
+
+    // ---- branches ----
+
+    private void OpenBranchDialog()
+    {
+        _newBranchName = ""; _newBranchCheckout = true; _showBranchDialog = true;
+    }
+
+    private async Task CreateBranchAsync()
+    {
+        _showBranchDialog = false;
+        await MutateAsync(() => Git.CreateBranchAsync(_projectId, SafeName(_newBranchName), _newBranchCheckout), reloadBranches: true);
+    }
+
+    private Task CheckoutAsync(GitBranch b)
+        => MutateAsync(() => Git.CheckoutAsync(_projectId, b.IsRemote ? LocalName(b.Name) : b.Name), reloadBranches: true);
+
+    private void ConfirmDeleteBranch(GitBranch b)
+    {
+        _confirm = new ConfirmState(
+            "Delete branch",
+            $"Delete branch '{b.Name}'? Use force if it has unmerged commits.",
+            "Delete",
+            Preview(GitCommandCatalog.BranchDelete(b.Name, force: false)),
+            () => MutateAsync(() => Git.DeleteBranchAsync(_projectId, b.Name, force: true), reloadBranches: true));
+    }
+
+    private void ConfirmMerge(GitBranch b)
+    {
+        _confirm = new ConfirmState(
+            "Merge branch",
+            $"Merge '{b.Name}' into the current branch ({_status.Branch})?",
+            "Merge",
+            Preview(GitCommandCatalog.Merge(b.Name, noFastForward: false)),
+            () => MergeAsync(b.Name));
+    }
+
+    private async Task MergeAsync(string branch)
+    {
+        _busy = true; _error = null; _notice = null;
+        try
+        {
+            var r = await Git.MergeAsync(_projectId, branch);
+            if (r.HasConflicts)
+                _error = $"Merge stopped with conflicts in {r.ConflictedPaths.Count} file(s). Resolve them, stage, and commit — or abort.";
+            else if (!r.Succeeded)
+                _error = "Merge failed. See output.";
+            else
+                _notice = $"Merged '{branch}'.";
+            await RefreshAfterMutationAsync(reloadBranches: true);
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private Task AbortMergeAsync() => MutateAsync(() => Git.AbortMergeAsync(_projectId), reloadBranches: true);
+
+    // ---- stashes ----
+
+    private Task StashPushAsync()
+        => MutateAsync(() => Git.StashPushAsync(_projectId, string.IsNullOrWhiteSpace(_commitMessage) ? null : _commitMessage.Trim(), includeUntracked: true), reloadStashes: true);
+
+    private Task StashApplyAsync(GitStash s) => MutateAsync(() => Git.StashApplyAsync(_projectId, s.Index), reloadStashes: true);
+    private Task StashPopAsync(GitStash s) => MutateAsync(() => Git.StashPopAsync(_projectId, s.Index), reloadStashes: true);
+
+    private void ConfirmStashDrop(GitStash s)
+    {
+        _confirm = new ConfirmState(
+            "Drop stash",
+            $"Permanently drop {s.Reference} ({s.Message})?",
+            "Drop",
+            Preview(GitCommandCatalog.StashDrop(s.Index)),
+            () => MutateAsync(() => Git.StashDropAsync(_projectId, s.Index), reloadStashes: true));
+    }
+
+    // ---- diff selection ----
+
+    private async Task SelectFileAsync(GitStatusEntry entry, bool staged)
+    {
+        var key = $"{(staged ? "s" : "w")}:{entry.Path}";
+        _selectedKey = key;
+        _diffLoading = true; _diffFile = null; StateHasChanged();
+
+        var source = entry.IsUntracked ? GitDiffSource.Untracked : staged ? GitDiffSource.Staged : GitDiffSource.WorkTree;
+        var spec = new GitDiffSpec(source, Path: entry.Path);
+        try
+        {
+            var files = await Git.GetDiffAsync(_projectId, spec);
+            _diffFile = files.FirstOrDefault();
+            _diffEmpty = "No changes to show for this file.";
+        }
+        finally { _diffLoading = false; }
+    }
+
+    private async Task SelectCommitAsync(GitCommit commit)
+    {
+        _selectedKey = commit.Sha;
+        _diffLoading = true; _diffFile = null; StateHasChanged();
+        try
+        {
+            var files = await Git.GetDiffAsync(_projectId, new GitDiffSpec(GitDiffSource.Commit, CommitSha: commit.Sha));
+            _diffFile = files.FirstOrDefault();
+            _diffEmpty = "This commit has no textual diff.";
+        }
+        finally { _diffLoading = false; }
+    }
+
+    private async Task RefreshDiffAsync()
+    {
+        // Keep a selected working/staged file's diff in sync after a refresh; drop it if it's gone.
+        if (_selectedKey is null) return;
+        _diffFile = null;
+    }
+
+    // ---- clone ----
+
+    private async Task OpenCloneDialog()
+    {
+        _cloneUrl = ""; _cloneName = ""; _cloneValidation = null; _clonePreview = null;
+        _cloneToExisting = false; _cloneExistingId = Guid.Empty; _cloneEnvironments = []; _cloneEnvironment = "";
+        _cloneLocation = _project is not null ? (Path.GetDirectoryName(_project.RootPath.TrimEnd(Path.DirectorySeparatorChar)) ?? "") : "";
+        _output.Clear();
+        _showClone = true;
+        await Task.CompletedTask;
+    }
+
+    private void SetCloneMode(bool existing)
+    {
+        _cloneToExisting = existing;
+        OnCloneChanged();
+    }
+
+    private async Task OnCloneExistingChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id) && id != Guid.Empty)
+        {
+            _cloneExistingId = id;
+            var p = await Projects.GetAsync(id);
+            _cloneEnvironments = p?.Environments.OrderBy(x => x.DisplayOrder).ToList() ?? [];
+            _cloneEnvironment = _cloneEnvironments.FirstOrDefault()?.Name ?? "";
+        }
+        else { _cloneExistingId = Guid.Empty; _cloneEnvironments = []; }
+        OnCloneChanged();
+    }
+
+    private void OnCloneChanged()
+    {
+        if (string.IsNullOrWhiteSpace(_cloneName) && !string.IsNullOrWhiteSpace(_cloneUrl))
+            _cloneName = FolderFromUrl(_cloneUrl);
+
+        _cloneValidation = ValidateClone();
+        _clonePreview = string.IsNullOrWhiteSpace(_cloneUrl)
+            ? null
+            : BuildClonePreview();
+        StateHasChanged();
+    }
+
+    private string? ValidateClone()
+    {
+        if (string.IsNullOrWhiteSpace(_cloneUrl)) return null;
+        var folder = string.IsNullOrWhiteSpace(_cloneName) ? FolderFromUrl(_cloneUrl) : _cloneName.Trim();
+        if (string.IsNullOrWhiteSpace(folder)) return "Enter a folder or project name.";
+
+        if (!_cloneToExisting)
+        {
+            if (_projectList.Any(p => string.Equals(p.Name, folder, StringComparison.OrdinalIgnoreCase)))
+                return $"A project named '{folder}' already exists — switch to 'Existing project' to add to it, or choose another name.";
+            if (string.IsNullOrWhiteSpace(_cloneLocation)) return "Choose a location for the new project.";
+        }
+        else if (_cloneExistingId == Guid.Empty)
+        {
+            return "Select the project to add the clone to.";
+        }
+        return null;
+    }
+
+    private CommandPreview? BuildClonePreview()
+    {
+        var folder = string.IsNullOrWhiteSpace(_cloneName) ? FolderFromUrl(_cloneUrl) : _cloneName.Trim();
+        var def = GitCommandCatalog.Clone(_cloneUrl.Trim(), folder);
+        var exe = _ctx?.ExecutablePath ?? "git";
+        var parent = CloneParent();
+        var req = GitCommandPreviewBuilder.BuildRequest(def, Guid.Empty, exe, parent);
+        return GitCommandPreviewBuilder.BuildPreview(req, [new CommandContextChip("Risk", GitCommandPreviewBuilder.RiskLabel(def.Risk))]);
+    }
+
+    private string CloneParent()
+    {
+        if (_cloneToExisting)
+        {
+            var p = _projectList.FirstOrDefault(x => x.Id == _cloneExistingId);
+            return p?.RootPath ?? "";
+        }
+        return _cloneLocation.Trim();
+    }
+
+    private async Task CloneAsync()
+    {
+        if (_cloneValidation is not null || string.IsNullOrWhiteSpace(_cloneUrl)) return;
+        _busy = true; _error = null; _notice = null; _output.Clear();
+        var folder = string.IsNullOrWhiteSpace(_cloneName) ? FolderFromUrl(_cloneUrl) : _cloneName.Trim();
+        var parent = CloneParent();
+        var progress = new Progress<ProcessOutputEvent>(OnLine);
+        try
+        {
+            var r = await Git.CloneAsync(new GitCloneRequest(_cloneUrl.Trim(), parent, folder), progress);
+            if (!r.Succeeded) { _error = r.Error ?? "Clone failed."; return; }
+
+            if (!_cloneToExisting)
+            {
+                // Register the freshly cloned folder as a Fenrix project.
+                var dest = Path.Combine(parent, folder);
+                var scan = await ImportScanner.ScanAsync(dest);
+                var project = await Projects.ImportAsync(scan);
+                _projectList = (await Projects.ListAsync()).ToList();
+                _showClone = false;
+                Nav.NavigateTo($"/projects/{project.Id}/source-control");
+                return;
+            }
+
+            _notice = $"Cloned into '{folder}'.";
+            _showClone = false;
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    // ---- shared helpers ----
+
+    private async Task MutateAsync(Func<Task<GitOperationResult>> action, bool reloadBranches = false, bool reloadStashes = false)
+    {
+        _busy = true; _error = null; _notice = null;
+        try
+        {
+            var r = await action();
+            if (!r.Succeeded) _error = r.Error ?? "Git command failed.";
+            await RefreshAfterMutationAsync(reloadBranches, reloadStashes);
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task RefreshAfterMutationAsync(bool reloadBranches = false, bool reloadStashes = false)
+    {
+        _status = await Git.GetStatusAsync(_projectId);
+        if (reloadBranches || _tab == Tab.Branches) _branches = (await Git.GetBranchesAsync(_projectId)).ToList();
+        if (reloadStashes || _tab == Tab.Stashes) _stashes = (await Git.GetStashesAsync(_projectId)).ToList();
+        if (_tab == Tab.History) _commits = (await Git.GetHistoryAsync(_projectId, 100)).ToList();
+    }
+
+    private void OnLine(ProcessOutputEvent e)
+    {
+        _output.Add(e);
+        StateHasChanged();
+    }
+
+    private async Task CopyAsync(string text)
+    {
+        try { await JS.InvokeVoidAsync("navigator.clipboard.writeText", text); }
+        catch { /* clipboard unavailable */ }
+    }
+
+    private CommandPreview? Preview(GitCommandCatalog.GitCommandDefinition def)
+    {
+        if (_ctx is null) return null;
+        var req = GitCommandPreviewBuilder.BuildRequest(def, _ctx.ProjectId, _ctx.ExecutablePath, _ctx.WorkingDirectory);
+        return GitCommandPreviewBuilder.BuildPreview(req, [new CommandContextChip("Risk", GitCommandPreviewBuilder.RiskLabel(def.Risk))]);
+    }
+
+    private static IReadOnlyList<string> PathArgs(GitStatusEntry e) =>
+        e.OriginalPath is not null ? [e.Path, e.OriginalPath] : [e.Path];
+
+    private Task RunConfirmAsync()
+    {
+        var action = _confirm?.Action;
+        _confirm = null;
+        return action?.Invoke() ?? Task.CompletedTask;
+    }
+
+    private void CancelConfirm() => _confirm = null;
+
+    private static string SafeName(string s) => s.Trim();
+    private static string LocalName(string remoteBranch)
+    {
+        var slash = remoteBranch.IndexOf('/');
+        return slash >= 0 ? remoteBranch[(slash + 1)..] : remoteBranch;
+    }
+
+    private static string FolderFromUrl(string url)
+    {
+        var u = url.Trim().TrimEnd('/');
+        var slash = u.LastIndexOf('/');
+        var name = slash >= 0 ? u[(slash + 1)..] : u;
+        if (name.EndsWith(".git", StringComparison.OrdinalIgnoreCase)) name = name[..^4];
+        return name;
+    }
+
+    private static string TabLabel(Tab t) => t.ToString();
+}

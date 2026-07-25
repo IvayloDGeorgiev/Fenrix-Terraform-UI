@@ -1,9 +1,11 @@
 using Fenrix.IaCStudio.Application.Abstractions.Files;
+using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Application.Abstractions.Terraform;
 using Fenrix.IaCStudio.Application.Files;
 using Fenrix.IaCStudio.Application.Terraform;
 using Fenrix.IaCStudio.Contracts.Files;
+using Fenrix.IaCStudio.Contracts.Git;
 using Fenrix.IaCStudio.Contracts.Terraform;
 using Fenrix.IaCStudio.Domain.Common;
 using Fenrix.IaCStudio.Domain.Environments;
@@ -27,6 +29,7 @@ public sealed class TerraformApplyService(
     ISavedPlanStore plans,
     IEnvironmentLockService locks,
     IFileHistoryStore fileHistory,
+    IGitService git,
     ILogger<TerraformApplyService> logger) : ITerraformApplyService
 {
     private const string DefaultExecutable = "terraform";
@@ -38,6 +41,7 @@ public sealed class TerraformApplyService(
     private readonly ISavedPlanStore _plans = plans;
     private readonly IEnvironmentLockService _locks = locks;
     private readonly IFileHistoryStore _fileHistory = fileHistory;
+    private readonly IGitService _git = git;
     private readonly ILogger<TerraformApplyService> _logger = logger;
 
     public async Task<ApplyPreflight> PreflightAsync(Guid savedPlanId, CancellationToken ct = default)
@@ -101,13 +105,18 @@ public sealed class TerraformApplyService(
         checks.Add(new PreflightCheck("Environment not locked", lockFree, PreflightSeverity.Blocker,
             lockFree ? null : $"Locked by a {active!.Operation} operation (pid {active.ProcessId})."));
 
-        // Warnings (non-blocking). Git branch/uncommitted warnings arrive in Phase 5.
+        // Warnings (non-blocking).
         if (plan.HasDeletions)
             checks.Add(new PreflightCheck($"{plan.DestroyCount} resource(s) will be destroyed", false, PreflightSeverity.Warning));
         if (plan.HasReplacements)
             checks.Add(new PreflightCheck($"{plan.ReplaceCount} resource(s) will be replaced", false, PreflightSeverity.Warning));
         if (plan.IsProductionTarget)
             checks.Add(new PreflightCheck("This targets a PRODUCTION environment", false, PreflightSeverity.Warning));
+
+        // Git provenance warnings (Phase 5): the branch/HEAD moved or the tree is dirty since the plan was
+        // reviewed. Non-blocking — the saved plan still applies exactly, but the reviewer should know the
+        // repository no longer matches what they looked at (docs/06-plan-apply-safety.md, docs/08-git-engine.md).
+        await AddGitProvenanceWarningsAsync(plan, checks, ct);
 
         var preview = BuildApplyPreview(plan, environment, installation);
         var canApply = checks.Where(c => c.Severity == PreflightSeverity.Blocker).All(c => c.Passed);
@@ -193,6 +202,54 @@ public sealed class TerraformApplyService(
     }
 
     // ---- helpers ----
+
+    /// <summary>
+    /// Compares the plan's recorded Git provenance to the current working tree and appends non-blocking
+    /// warnings when the branch changed, HEAD moved, or there are uncommitted changes. Only runs when the
+    /// plan captured provenance (the project is a repository). See docs/08-git-engine.md.
+    /// </summary>
+    private async Task AddGitProvenanceWarningsAsync(SavedPlan plan, List<PreflightCheck> checks, CancellationToken ct)
+    {
+        // No recorded provenance → the project wasn't a repo at plan time; nothing to compare.
+        if (plan.GitCommitSha is null && plan.GitBranch is null && plan.GitTreeDirty is null)
+            return;
+
+        GitProvenance current;
+        try
+        {
+            current = await _git.ReadProvenanceAsync(plan.WorkingDirectory, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read Git provenance for apply preflight of plan {PlanId}.", plan.Id);
+            return;
+        }
+
+        if (!current.IsRepository)
+            return;
+
+        if (plan.GitBranch is not null && current.Branch is not null &&
+            !string.Equals(plan.GitBranch, current.Branch, StringComparison.Ordinal))
+        {
+            checks.Add(new PreflightCheck("Branch changed since the plan was created", false, PreflightSeverity.Warning,
+                $"Planned on '{plan.GitBranch}', now on '{current.Branch}'."));
+        }
+
+        if (plan.GitCommitSha is not null && current.CommitSha is not null &&
+            !string.Equals(plan.GitCommitSha, current.CommitSha, StringComparison.Ordinal))
+        {
+            checks.Add(new PreflightCheck("HEAD moved since the plan was created", false, PreflightSeverity.Warning,
+                $"Planned at {Short(plan.GitCommitSha)}, now at {Short(current.CommitSha)}."));
+        }
+
+        if (current.IsDirty)
+        {
+            checks.Add(new PreflightCheck("Uncommitted changes in the working tree", false, PreflightSeverity.Warning,
+                "The repository has changes that are not committed."));
+        }
+
+        static string Short(string sha) => sha.Length > 8 ? sha[..8] : sha;
+    }
 
     private CommandPreview BuildApplyPreview(SavedPlan plan, ProjectEnvironment? environment, TerraformInstallation? installation)
     {

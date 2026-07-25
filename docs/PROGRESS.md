@@ -141,14 +141,31 @@ pages, SQLite DB + workspace tree created on first launch._
 - [ ] _Deferred to Phase 5:_ Git provenance in plan metadata (commit/branch/uncommitted warnings) — `SavedPlan` has the nullable fields; populated once the Git engine lands
 - [ ] _Follow-ups:_ structured `apply -json` progress covers per-resource status/timing but not the dependency-ordering annotations from doc 25's worked example; config hashing covers the working-dir subtree + `modules/` only (modules referenced from elsewhere aren't tracked); deployment recording is Phase 9.5
 
-## Phase 5 — Git core
+## Phase 5 — Git core  ✅ core complete
 
-- [ ] Repository detection · init · clone ([08](08-git-engine.md))
-- [ ] Status (`--porcelain=v2 -z`) parsing
-- [ ] Stage/unstage · commit · fetch/pull/push
-- [ ] Git command preview on every action ([23](23-command-transparency.md))
-- [ ] Branch management · history · diff viewer
-- [ ] Stash · merge · conflict detection
+> **Build/migration note.** Phase 5 adds **no new database schema** — the `SavedPlan` Git-provenance columns
+> (`GitCommitSha`/`GitBranch`/`GitTreeDirty`) already shipped in the Phase 4 `AddSavedPlans` migration, and
+> `CommandRun` already carries a `Tool` discriminator (now written as `git`). So after pulling these changes
+> you can build and run without generating a migration. Git must be on `PATH` (or set `git.executable` in
+> Settings). Redacted Git history is recorded like Terraform; raw git output goes to `Logs/git/<runId>.log`.
+> **Remote posture this phase is local-only:** fetch/pull/push run non-interactively (`GIT_TERMINAL_PROMPT=0`)
+> against already-configured credentials (Git Credential Manager) and fail fast instead of prompting — no
+> in-app credential UX yet.
+>
+> The five parsers (status `--porcelain=v2 -z`, `log` NUL+0x1e records, unified diff, branch, stash) were
+> cross-checked against **real `git` 2.34.1 output** via a reference port (38 assertions over temp repos:
+> rename token-consumption, unmerged `u` records, ahead/behind, merge parents, rename diffs, line numbering)
+> since MAUI can't be compiled in the authoring environment.
+
+- [x] Repository detection · init · clone ([08](08-git-engine.md)) — `GitService.DetectAsync`/`ResolveContextAsync` (`rev-parse --show-toplevel`); `git init` runs **automatically on project creation** (`GitRepositoryInitializer` → `ProjectService.CreateAsync`, sets `RepositoryRootPath`) and on demand for existing projects via the **Initialise repository** button; `CloneAsync` (streamed) with a VS-style clone dialog — URL + location/name for a **new project** (auto-imported via the scanner, name-collision validated against existing projects) or **existing project** + environment (clone into a subfolder)
+- [x] Status (`--porcelain=v2 -z`) parsing — `GitStatusParser` (ordinary/rename/unmerged/untracked/ignored records; rename's original path is the following NUL token; branch/upstream/ahead-behind headers)
+- [x] Stage/unstage · commit · fetch/pull/push — `GitService` (`add`/`reset`/`restore`, `commit` +stage-all/amend/sign-off, `fetch --all --prune`/`pull`/`push`); Changes tab groups staged/unstaged/untracked/conflicts with per-file stage/unstage/discard
+- [x] Git command preview on every action ([23](23-command-transparency.md)) — `GitCommandCatalog` is the single `ArgumentList` source (preview == execution); `GitCommandPreviewBuilder` builds the redacted `CommandPreview` (reuses the shared `CommandPreviewPanel`); remote-URL credentials redacted (`GitUrlRedactor`); commit/branch/clone dialogs and every destructive confirm show the exact command
+- [x] Branch management · history · diff viewer — `GitBranchParser`/`GitLogParser`/`GitDiffParser`; Branches tab (create/checkout/rename via catalog, merge, delete with confirm, ahead/behind, remote-tracking checkout), History tab (log + copy-hash + per-commit diff), read-only unified `GitDiffView`
+- [x] Stash · merge · conflict detection — stash push (incl. untracked)/apply/pop/drop; `MergeAsync` detects a non-zero merge, re-reads status for conflicted paths, surfaces them and offers `merge --abort` (the interactive conflict **editor** is Phase 6)
+- [x] Phase 4 deferred — Git provenance in plan metadata — `TerraformPlanService` captures commit/branch/dirty into `SavedPlan`; `TerraformApplyService` preflight adds non-blocking **branch-changed**, **HEAD-moved**, and **uncommitted-changes** warnings
+- [x] Scalable project selection — shared `ProjectCard`, a searchable **`ProjectPickerDialog`** (opened from the Source control "Select a project" button) and a reworked **Projects** page (search by name/path, status active/archived/all, location in-workspace/linked, sort recent/name/created) — both use Blazor `Virtualize` so they stay fast with thousands of projects (client/tag grouping deferred to Phase 8)
+- [ ] _Follow-ups (Phase 6+ / noted):_ remote credential UX + auth-failure guidance; per-environment sparse clone (currently a full clone into a subfolder); partial/line staging + conflict editor; tags/reset/rebase/reflog/blame; commit templates; history search/paging; process runner still lives under the Terraform contracts namespace (shared `ProcessStartRequest`)
 
 ## Phase 6 — Advanced Git
 

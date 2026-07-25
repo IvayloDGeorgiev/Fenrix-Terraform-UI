@@ -1,5 +1,6 @@
 using Fenrix.IaCStudio.Application.Abstractions;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
+using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Application.Files;
 using Fenrix.IaCStudio.Contracts.Files;
@@ -22,6 +23,7 @@ public sealed class ProjectService(
     IProjectScaffolder scaffolder,
     IProjectManifestStore manifestStore,
     IFileHistoryStore history,
+    IGitRepositoryInitializer gitInitializer,
     IWorkspacePaths paths,
     ILogger<ProjectService> logger) : IProjectService
 {
@@ -29,6 +31,7 @@ public sealed class ProjectService(
     private readonly IProjectScaffolder _scaffolder = scaffolder;
     private readonly IProjectManifestStore _manifestStore = manifestStore;
     private readonly IFileHistoryStore _history = history;
+    private readonly IGitRepositoryInitializer _gitInitializer = gitInitializer;
     private readonly IWorkspacePaths _paths = paths;
     private readonly ILogger<ProjectService> _logger = logger;
 
@@ -49,10 +52,17 @@ public sealed class ProjectService(
 
         await _scaffolder.ScaffoldAsync(projectRoot, request, ct);
 
+        // Initialise a Git repository for the new project (docs/08-git-engine.md). Non-fatal: if Git is
+        // unavailable the project is still created and can be initialised later from Source control.
+        string? repositoryRoot = null;
+        if (request.InitializeGit && await _gitInitializer.InitializeAsync(projectRoot, ct))
+            repositoryRoot = projectRoot;
+
         var project = new InfrastructureProject
         {
             Name = request.Name.Trim(),
             RootPath = projectRoot,
+            RepositoryRootPath = repositoryRoot,
             Description = request.Description,
             RequiredTerraformVersion = request.RequiredTerraformVersion,
             IsLinked = !IsUnderProjectsDirectory(projectRoot),
