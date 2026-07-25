@@ -15,28 +15,45 @@
 @inject IJSRuntime JS
 @inject NavigationManager Nav
 
-<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-    <div style="flex:1;">
-        <h1 class="fx-page-title" style="margin:0;">Source control</h1>
-        <div class="fx-page-sub" style="margin:2px 0 0;">Git status, commits and branches. Remote operations run locally against configured credentials.</div>
-    </div>
-    <button class="fx-btn" @onclick="() => _showPicker = true" disabled="@_busy" title="Choose a project" style="min-width:200px;justify-content:space-between;">
-        <span style="display:flex;align-items:center;gap:6px;overflow:hidden;">
-            <span class="fx-ico"><Icon Name="folder" Size="14" /></span>
-            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">@(_project?.Name ?? "Select a project…")</span>
-        </span>
-        <span class="fx-ico" style="color:var(--fx-faint);"><Icon Name="chevron-down" Size="14" /></span>
-    </button>
-    <button class="fx-btn" @onclick="OpenCloneDialog" title="Clone a remote repository">
-        <span class="fx-ico"><Icon Name="download" Size="14" /></span> Clone
-    </button>
-    @if (_ctx is not null)
-    {
-        <button class="fx-btn" @onclick="RefreshAsync" title="Refresh Git state" disabled="@_busy">
-            <span class="fx-ico"><Icon Name="refresh" Size="14" /></span> Refresh
+@if (_project is not null)
+{
+    <ProjectHeader ProjectId="_projectId" Name="@_project.Name" Active="ProjectHeader.ProjectPage.SourceControl"
+                   Trail="@(_ctx is { IsRepository: true } ? _status.Branch : null)">
+        <Actions>
+            <button class="fx-btn sm" @onclick="() => _showPicker = true" disabled="@_busy" title="Switch project">
+                <span class="fx-ico"><Icon Name="folder" Size="13" /></span> Switch
+            </button>
+            <button class="fx-btn sm" @onclick="OpenCloneDialog" title="Clone a remote repository">
+                <span class="fx-ico"><Icon Name="download" Size="13" /></span> Clone
+            </button>
+            @if (_ctx is not null)
+            {
+                <button class="fx-btn sm" @onclick="RefreshAsync" title="Refresh Git state" disabled="@_busy">
+                    <span class="fx-ico"><Icon Name="refresh" Size="13" /></span> Refresh
+                </button>
+            }
+        </Actions>
+    </ProjectHeader>
+}
+else
+{
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <div style="flex:1;">
+            <h1 class="fx-page-title" style="margin:0;">Source control</h1>
+            <div class="fx-page-sub" style="margin:2px 0 0;">Git status, commits and branches. Remote operations run locally against configured credentials.</div>
+        </div>
+        <button class="fx-btn" @onclick="() => _showPicker = true" disabled="@_busy" title="Choose a project" style="min-width:200px;justify-content:space-between;">
+            <span style="display:flex;align-items:center;gap:6px;overflow:hidden;">
+                <span class="fx-ico"><Icon Name="folder" Size="14" /></span>
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Select a project…</span>
+            </span>
+            <span class="fx-ico" style="color:var(--fx-faint);"><Icon Name="chevron-down" Size="14" /></span>
         </button>
-    }
-</div>
+        <button class="fx-btn" @onclick="OpenCloneDialog" title="Clone a remote repository">
+            <span class="fx-ico"><Icon Name="download" Size="14" /></span> Clone
+        </button>
+    </div>
+}
 
 @if (_project is null)
 {
@@ -100,13 +117,28 @@ else
         </button>
     </div>
 
-    @if (_status.HasConflicts)
+    @if (_sequencer.InProgress)
     {
-        <div class="fx-card" style="border-color:var(--fx-danger);margin-bottom:14px;padding:12px 14px;">
-            <div style="display:flex;align-items:center;gap:8px;">
-                <span class="fx-ico" style="color:var(--fx-danger);"><Icon Name="alert" Size="15" /></span>
-                <span style="flex:1;font-size:13px;">A merge is in progress with conflicts. Resolve the files, stage them, and commit — or abort the merge.</span>
-                <button class="fx-btn sm danger" @onclick="AbortMergeAsync" disabled="@_busy">Abort merge</button>
+        <div class="fx-card" style="border-color:@(_sequencer.HasConflicts ? "var(--fx-danger)" : "var(--fx-warn)");margin-bottom:14px;padding:12px 14px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span class="fx-ico" style="color:@(_sequencer.HasConflicts ? "var(--fx-danger)" : "var(--fx-warn)");"><Icon Name="alert" Size="15" /></span>
+                <span style="flex:1;min-width:200px;font-size:13px;">
+                    <strong>@SequencerLabel(_sequencer.Operation) in progress.</strong>
+                    @if (_sequencer.HasConflicts)
+                    {
+                        @($" {_sequencer.ConflictedPaths.Count} conflicted file(s) — resolve them, stage, then continue.")
+                    }
+                    else
+                    {
+                        @(" Continue when ready, or abort to unwind.")
+                    }
+                </span>
+                <button class="fx-btn sm accent" @onclick="() => RunSequencerAsync(SequencerAction.Continue)" disabled="@(_busy || _sequencer.HasConflicts)" title="Proceed with the next step">Continue</button>
+                @if (_sequencer.Operation is not GitSequencerOperation.Merge)
+                {
+                    <button class="fx-btn sm" @onclick="() => RunSequencerAsync(SequencerAction.Skip)" disabled="@_busy" title="Skip the current commit">Skip</button>
+                }
+                <button class="fx-btn sm danger" @onclick="() => RunSequencerAsync(SequencerAction.Abort)" disabled="@_busy" title="Restore the pre-operation state">Abort</button>
             </div>
         </div>
     }
@@ -172,6 +204,7 @@ else
                             <div class="fx-row @(_selectedKey == $"w:{e.Path}" ? "sel" : "")">
                                 <span class="fx-code fail">@e.Code</span>
                                 <button class="grow path" @onclick="() => SelectFileAsync(e, false)"><span class="fx-mono">@e.Path</span></button>
+                                <button class="fx-btn sm" title="Open the 3-way conflict editor" @onclick="() => OpenConflictAsync(e.Path)" disabled="@_busy"><Icon Name="git-merge" Size="12" /> Resolve</button>
                                 <button class="fx-iconbtn" title="Stage (mark resolved)" @onclick="() => StageAsync(e)"><Icon Name="plus" Size="14" /></button>
                             </div>
                         }
@@ -189,6 +222,7 @@ else
                                     <span class="fx-mono">@e.Path</span>
                                     @if (e.OriginalPath is not null) { <span class="fx-faint fx-mono"> ← @e.OriginalPath</span> }
                                 </button>
+                                @if (_lfs.IsTracked(e.Path)) { <span class="fx-pill muted" style="padding:0 5px;" title="Tracked by Git LFS">LFS</span> }
                                 <button class="fx-iconbtn" title="Unstage" @onclick="() => UnstageAsync(e)"><Icon Name="minus" Size="14" /></button>
                             </div>
                         }
@@ -203,6 +237,7 @@ else
                             <div class="fx-row @(_selectedKey == $"w:{e.Path}" ? "sel" : "")">
                                 <span class="fx-code warn">@e.Code</span>
                                 <button class="grow path" @onclick="() => SelectFileAsync(e, false)"><span class="fx-mono">@e.Path</span></button>
+                                @if (_lfs.IsTracked(e.Path)) { <span class="fx-pill muted" style="padding:0 5px;" title="Tracked by Git LFS">LFS</span> }
                                 <button class="fx-iconbtn" title="Stage" @onclick="() => StageAsync(e)"><Icon Name="plus" Size="14" /></button>
                                 <button class="fx-iconbtn danger" title="Discard changes" @onclick="() => ConfirmDiscard(e)"><Icon Name="restore" Size="14" /></button>
                             </div>
@@ -218,6 +253,7 @@ else
                             <div class="fx-row @(_selectedKey == $"w:{e.Path}" ? "sel" : "")">
                                 <span class="fx-code muted">@e.Code</span>
                                 <button class="grow path" @onclick="() => SelectFileAsync(e, false)"><span class="fx-mono">@e.Path</span></button>
+                                @if (_lfs.IsTracked(e.Path)) { <span class="fx-pill muted" style="padding:0 5px;" title="Tracked by Git LFS">LFS</span> }
                                 <button class="fx-iconbtn" title="Stage" @onclick="() => StageAsync(e)"><Icon Name="plus" Size="14" /></button>
                                 <button class="fx-iconbtn danger" title="Delete file" @onclick="() => ConfirmDiscard(e)"><Icon Name="trash" Size="14" /></button>
                             </div>
@@ -228,7 +264,17 @@ else
             else if (_tab == Tab.History)
             {
                 <div class="fx-card">
-                    <div class="fx-group-head">History (@_commits.Count)</div>
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                        <span style="flex:1;" class="fx-group-head">History (@_commits.Count)</span>
+                        <span class="fx-hint">Rebase last</span>
+                        <input class="fx-input" type="number" min="1" max="50" style="width:56px;" @bind="_rebaseCount" @bind:after="StateHasChanged" />
+                        <button class="fx-btn sm" @onclick="OpenRebaseAsync" disabled="@(_busy || _sequencer.InProgress)" title="Interactive rebase">
+                            <span class="fx-ico"><Icon Name="git-branch" Size="12" /></span> Rebase
+                        </button>
+                        <button class="fx-btn sm" @onclick="OptimizeCommitGraphAsync" disabled="@_busy" title="git commit-graph write — speed up history operations">
+                            <span class="fx-ico"><Icon Name="zap" Size="12" /></span> Optimise
+                        </button>
+                    </div>
                     @if (_commits.Count == 0)
                     {
                         <div class="fx-hint">No commits yet.</div>
@@ -244,10 +290,49 @@ else
                                 </span>
                                 <span class="meta">@c.Author · @c.Date.LocalDateTime.ToString("g")</span>
                             </button>
+                            <button class="fx-iconbtn" title="Cherry-pick onto current branch" @onclick="() => ConfirmCherryPick(c)" disabled="@_busy"><Icon Name="git-commit" Size="13" /></button>
+                            <button class="fx-iconbtn" title="Revert this commit" @onclick="() => ConfirmRevert(c)" disabled="@_busy"><Icon Name="restore" Size="13" /></button>
+                            <button class="fx-iconbtn" title="Reset current branch to here" @onclick="() => OpenResetDialog(c)" disabled="@_busy"><Icon Name="history" Size="13" /></button>
                             <button class="fx-iconbtn" title="Copy hash" @onclick="() => CopyAsync(c.Sha)"><Icon Name="copy" Size="13" /></button>
                         </div>
                     }
                 </div>
+            }
+            else if (_tab == Tab.Reflog)
+            {
+                <div class="fx-card">
+                    <div class="fx-group-head">Reflog (@_reflog.Count)</div>
+                    <p class="fx-hint" style="margin:0 0 8px;">Where HEAD has been — recover commits lost to a reset or rebase by resetting back to one of these.</p>
+                    @if (_reflog.Count == 0)
+                    {
+                        <div class="fx-hint">No reflog entries.</div>
+                    }
+                    @foreach (var r in _reflog)
+                    {
+                        <div class="fx-row">
+                            <span class="fx-mono fx-faint" style="min-width:74px;">@r.Selector</span>
+                            <span class="grow" style="min-width:0;">
+                                <span class="fx-pill muted" style="padding:0 5px;">@r.Action</span>
+                                <span class="fx-mono fx-faint" style="margin:0 6px;">@r.ShortSha</span>
+                                <span style="overflow:hidden;text-overflow:ellipsis;">@r.Description</span>
+                            </span>
+                            <button class="fx-iconbtn" title="Reset current branch to @r.ShortSha" @onclick="() => OpenResetDialog(r.Sha, r.Description)" disabled="@_busy"><Icon Name="history" Size="13" /></button>
+                            <button class="fx-iconbtn" title="Copy hash" @onclick="() => CopyAsync(r.Sha)"><Icon Name="copy" Size="13" /></button>
+                        </div>
+                    }
+                </div>
+            }
+            else if (_tab == Tab.Tags)
+            {
+                @TagsTab
+            }
+            else if (_tab == Tab.Worktrees)
+            {
+                @WorktreesTab
+            }
+            else if (_tab == Tab.Submodules)
+            {
+                @SubmodulesTab
             }
             else if (_tab == Tab.Branches)
             {
@@ -326,7 +411,31 @@ else
                 </div>
             }
             <div class="fx-card" style="min-height:200px;">
-                <GitDiffView File="_diffFile" Loading="_diffLoading" EmptyText="@_diffEmpty" />
+                @if (_blamePath is not null)
+                {
+                    <div class="fx-tabs" style="margin-bottom:10px;">
+                        <button class="fx-tab @(_rightView == RightView.Diff ? "active" : "")" @onclick="() => _rightView = RightView.Diff">Diff</button>
+                        <button class="fx-tab @(_rightView == RightView.Blame ? "active" : "")" @onclick="ShowBlameAsync">Blame</button>
+                    </div>
+                }
+                @if (_rightView == RightView.Blame && _blamePath is not null)
+                {
+                    <GitBlameView Blame="_blame" Loading="_blameLoading" />
+                }
+                else
+                {
+                    @if (_diffSelectable && _diffFile is { IsBinary: false } && _diffFile.Hunks.Count > 0)
+                    {
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                            <span class="fx-hint" style="flex:1;">@_selectedLines.Count line(s) selected — click lines to choose.</span>
+                            <button class="fx-btn sm accent" @onclick="ApplySelectedLinesAsync" disabled="@(_busy || _selectedLines.Count == 0)">
+                                @(_diffIsStaged ? "Unstage selected lines" : "Stage selected lines")
+                            </button>
+                        </div>
+                    }
+                    <GitDiffView File="_diffFile" Loading="_diffLoading" EmptyText="@_diffEmpty"
+                                 Selectable="_diffSelectable" SelectedLines="_selectedLines" OnToggleLine="ToggleLine" />
+                }
             </div>
         </div>
     </div>
@@ -424,6 +533,84 @@ else
     </Modal>
 }
 
+@if (_showReset)
+{
+    <Modal Title="Reset branch" IconName="history" OnClose="() => _showReset = false">
+        <ChildContent>
+        <p style="font-size:13px;margin:0 0 10px;">
+            Move <span class="fx-mono">@(_status.Branch ?? "HEAD")</span> to
+            <span class="fx-mono">@ShortTarget(_resetTarget)</span>@(string.IsNullOrEmpty(_resetSubject) ? "" : $" — {_resetSubject}").
+        </p>
+        <div class="fx-field">
+            <label>Mode</label>
+            <label class="fx-check"><input type="radio" name="resetmode" checked="@(_resetMode == GitResetMode.Soft)" @onchange="() => _resetMode = GitResetMode.Soft" /> Soft <span class="hint">keep index &amp; working tree (changes staged)</span></label>
+            <label class="fx-check"><input type="radio" name="resetmode" checked="@(_resetMode == GitResetMode.Mixed)" @onchange="() => _resetMode = GitResetMode.Mixed" /> Mixed <span class="hint">reset index, keep working tree (changes unstaged)</span></label>
+            <label class="fx-check"><input type="radio" name="resetmode" checked="@(_resetMode == GitResetMode.Hard)" @onchange="() => _resetMode = GitResetMode.Hard" /> Hard <span class="hint" style="color:var(--fx-danger);">discard all uncommitted changes</span></label>
+        </div>
+        @if (_resetMode == GitResetMode.Hard)
+        {
+            <div class="fx-hint" style="color:var(--fx-danger);margin:4px 0;"><span class="fx-ico"><Icon Name="alert" Size="13" /></span> A hard reset permanently discards uncommitted work. Recover via the reflog if needed.</div>
+        }
+        <div style="margin-top:10px;"><CommandPreviewPanel Preview="ResetPreview()" /></div>
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn" @onclick="() => _showReset = false" disabled="@_busy">Cancel</button>
+            <button class="fx-btn @(_resetMode == GitResetMode.Hard ? "danger" : "accent")" @onclick="ApplyResetAsync" disabled="@_busy">Reset (@_resetMode.ToString().ToLowerInvariant())</button>
+        </Footer>
+    </Modal>
+}
+
+@if (_showTag)
+{
+    <Modal Title="New tag" IconName="bookmark" OnClose="() => _showTag = false">
+        <ChildContent>
+        <div class="fx-field">
+            <label>Tag name</label>
+            <input class="fx-input fx-mono" placeholder="v1.0.0" @bind="_tagName" @bind:after="StateHasChanged" @bind:event="oninput" />
+        </div>
+        <label class="fx-check"><input type="checkbox" @bind="_tagAnnotated" @bind:after="StateHasChanged" /> Annotated <span class="hint">-a -m … (recommended for releases)</span></label>
+        @if (_tagAnnotated)
+        {
+            <div class="fx-field">
+                <label>Message</label>
+                <input class="fx-input" placeholder="Release 1.0.0" @bind="_tagMessage" @bind:after="StateHasChanged" @bind:event="oninput" />
+            </div>
+        }
+        <div class="fx-field">
+            <label>Target</label>
+            <input class="fx-input fx-mono" placeholder="HEAD or a commit SHA" @bind="_tagTarget" @bind:after="StateHasChanged" @bind:event="oninput" />
+        </div>
+        <div style="margin-top:10px;"><CommandPreviewPanel Preview="TagPreview()" /></div>
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn" @onclick="() => _showTag = false" disabled="@_busy">Cancel</button>
+            <button class="fx-btn accent" @onclick="CreateTagAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_tagName))">Create tag</button>
+        </Footer>
+    </Modal>
+}
+
+@if (_showWorktree)
+{
+    <Modal Title="Add worktree" IconName="folder" OnClose="() => _showWorktree = false">
+        <ChildContent>
+        <div class="fx-field">
+            <label>Location</label>
+            <input class="fx-input fx-mono" placeholder="C:\path\to\new-worktree" @bind="_worktreePath" @bind:after="StateHasChanged" @bind:event="oninput" />
+        </div>
+        <label class="fx-check"><input type="checkbox" @bind="_worktreeNewBranch" @bind:after="StateHasChanged" /> Create a new branch</label>
+        <div class="fx-field">
+            <label>@(_worktreeNewBranch ? "New branch name" : "Branch / commit to check out")</label>
+            <input class="fx-input fx-mono" placeholder="@(_worktreeNewBranch ? "feature/x" : "main")" @bind="_worktreeBranch" @bind:after="StateHasChanged" @bind:event="oninput" />
+        </div>
+        <div style="margin-top:10px;"><CommandPreviewPanel Preview="WorktreePreview()" /></div>
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn" @onclick="() => _showWorktree = false" disabled="@_busy">Cancel</button>
+            <button class="fx-btn accent" @onclick="AddWorktreeAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_worktreePath))">Add worktree</button>
+        </Footer>
+    </Modal>
+}
+
 @if (_confirm is not null)
 {
     <Modal Title="@_confirm.Title" IconName="alert" OnClose="CancelConfirm">
@@ -441,6 +628,18 @@ else
     </Modal>
 }
 
+@if (_showRebase)
+{
+    <RebaseDialog Base="_rebaseBase" Steps="_rebaseSteps" Busy="_busy" Preview="_rebasePreview"
+                  OnClose="() => _showRebase = false" OnApply="StartRebaseAsync" />
+}
+
+@if (_showConflict && _conflict is not null)
+{
+    <ConflictEditor File="_conflict" Busy="_busy"
+                    OnClose="() => _showConflict = false" OnResolve="ResolveConflictAsync" OnTakeSide="TakeConflictSideAsync" />
+}
+
 @if (_showPicker)
 {
     <ProjectPickerDialog Projects="_projectList" SelectedId="_projectId" OnSelect="OnPickProject" OnClose="() => _showPicker = false" />
@@ -449,9 +648,11 @@ else
 @code {
     [Parameter] public Guid ProjectId { get; set; }
 
-    private enum Tab { Changes, History, Branches, Stashes }
+    private enum Tab { Changes, History, Branches, Tags, Stashes, Reflog, Worktrees, Submodules }
     private enum RemoteOp { Fetch, Pull, Push }
-    private static readonly Tab[] _tabs = [Tab.Changes, Tab.History, Tab.Branches, Tab.Stashes];
+    private enum RightView { Diff, Blame }
+    private static readonly Tab[] _tabs =
+        [Tab.Changes, Tab.History, Tab.Branches, Tab.Tags, Tab.Stashes, Tab.Reflog, Tab.Worktrees, Tab.Submodules];
 
     private List<ProjectSummary> _projectList = [];
     private Guid _projectId;
@@ -461,6 +662,12 @@ else
     private List<GitBranch> _branches = [];
     private List<GitCommit> _commits = [];
     private List<GitStash> _stashes = [];
+    private List<GitReflogEntry> _reflog = [];
+    private List<GitTag> _tags = [];
+    private List<GitWorktree> _worktrees = [];
+    private List<GitSubmodule> _submodules = [];
+    private GitSequencerState _sequencer = GitSequencerState.Idle;
+    private GitLfsInfo _lfs = GitLfsInfo.NotInstalled;
 
     private Tab _tab = Tab.Changes;
     private bool _busy;
@@ -469,11 +676,50 @@ else
 
     private readonly List<ProcessOutputEvent> _output = [];
 
-    // diff panel
+    // diff / blame panel
+    private RightView _rightView = RightView.Diff;
     private GitDiffFile? _diffFile;
     private bool _diffLoading;
     private string _diffEmpty = "Select a file to see its changes.";
     private string? _selectedKey;
+    private GitBlame? _blame;
+    private bool _blameLoading;
+    private string? _blamePath;
+
+    // reset dialog
+    private bool _showReset;
+    private GitResetMode _resetMode = GitResetMode.Mixed;
+    private string _resetTarget = "HEAD";
+    private string _resetSubject = "";
+
+    // tag dialog
+    private bool _showTag;
+    private string _tagName = "";
+    private string _tagMessage = "";
+    private bool _tagAnnotated = true;
+    private string _tagTarget = "HEAD";
+
+    // worktree dialog
+    private bool _showWorktree;
+    private string _worktreePath = "";
+    private string _worktreeBranch = "";
+    private bool _worktreeNewBranch = true;
+
+    // line staging
+    private bool _diffSelectable;
+    private bool _diffIsStaged;
+    private readonly HashSet<(int Hunk, int Line)> _selectedLines = [];
+
+    // rebase dialog
+    private bool _showRebase;
+    private int _rebaseCount = 5;
+    private string _rebaseBase = "HEAD";
+    private List<GitRebaseStep> _rebaseSteps = [];
+    private CommandPreview? _rebasePreview;
+
+    // conflict editor
+    private bool _showConflict;
+    private GitConflictFile? _conflict;
 
     // commit box
     private string _commitMessage = "";
@@ -543,6 +789,8 @@ else
         {
             _ctx = await Git.ResolveContextAsync(_projectId) ?? _ctx;
             _status = await Git.GetStatusAsync(_projectId);
+            _sequencer = await Git.GetSequencerStateAsync(_projectId);
+            _lfs = await Git.GetLfsInfoAsync(_projectId);
             await LoadTabAsync(_tab);
             await RefreshDiffAsync();
         }
@@ -557,6 +805,10 @@ else
             case Tab.History: _commits = (await Git.GetHistoryAsync(_projectId, 100)).ToList(); break;
             case Tab.Branches: _branches = (await Git.GetBranchesAsync(_projectId)).ToList(); break;
             case Tab.Stashes: _stashes = (await Git.GetStashesAsync(_projectId)).ToList(); break;
+            case Tab.Tags: _tags = (await Git.GetTagsAsync(_projectId)).ToList(); break;
+            case Tab.Reflog: _reflog = (await Git.GetReflogAsync(_projectId, 100)).ToList(); break;
+            case Tab.Worktrees: _worktrees = (await Git.GetWorktreesAsync(_projectId)).ToList(); break;
+            case Tab.Submodules: _submodules = (await Git.GetSubmodulesAsync(_projectId)).ToList(); break;
         }
     }
 
@@ -572,7 +824,9 @@ else
     {
         _status = GitStatus.NotARepository;
         _branches = []; _commits = []; _stashes = [];
-        _diffFile = null; _selectedKey = null; _output.Clear();
+        _reflog = []; _tags = []; _worktrees = []; _submodules = [];
+        _sequencer = GitSequencerState.Idle; _lfs = GitLfsInfo.NotInstalled;
+        _diffFile = null; _blame = null; _selectedKey = null; _rightView = RightView.Diff; _output.Clear();
         _commitMessage = ""; _commitAmend = false; _commitSignOff = false; _commitStageAll = false;
     }
 
@@ -736,6 +990,12 @@ else
     {
         var key = $"{(staged ? "s" : "w")}:{entry.Path}";
         _selectedKey = key;
+        _rightView = RightView.Diff;
+        _blame = null;
+        _blamePath = entry.IsUntracked ? null : entry.Path;   // blame only makes sense for tracked files
+        _selectedLines.Clear();
+        _diffIsStaged = staged;
+        _diffSelectable = !entry.IsUntracked && !entry.IsConflicted;   // partial staging for tracked, non-conflicted files
         _diffLoading = true; _diffFile = null; StateHasChanged();
 
         var source = entry.IsUntracked ? GitDiffSource.Untracked : staged ? GitDiffSource.Staged : GitDiffSource.WorkTree;
@@ -749,9 +1009,21 @@ else
         finally { _diffLoading = false; }
     }
 
+    private async Task ShowBlameAsync()
+    {
+        if (_blamePath is null) return;
+        _rightView = RightView.Blame;
+        if (_blame?.Path == _blamePath) return;
+        _blameLoading = true; _blame = null; StateHasChanged();
+        try { _blame = await Git.GetBlameAsync(_projectId, _blamePath); }
+        finally { _blameLoading = false; }
+    }
+
     private async Task SelectCommitAsync(GitCommit commit)
     {
         _selectedKey = commit.Sha;
+        _rightView = RightView.Diff;
+        _diffSelectable = false; _blamePath = null; _selectedLines.Clear();
         _diffLoading = true; _diffFile = null; StateHasChanged();
         try
         {
@@ -882,27 +1154,387 @@ else
         finally { _busy = false; }
     }
 
+    // ---- Phase 6: history rewriting & sequencer ----
+
+    private void ConfirmCherryPick(GitCommit c) =>
+        _confirm = new ConfirmState(
+            "Cherry-pick commit",
+            $"Apply commit {c.ShortSha} ({c.Subject}) onto '{_status.Branch}'? This may pause on conflicts.",
+            "Cherry-pick",
+            Preview(GitCommandCatalog.CherryPick([c.Sha])),
+            () => MutateAsync(() => Git.CherryPickAsync(_projectId, [c.Sha])));
+
+    private void ConfirmRevert(GitCommit c) =>
+        _confirm = new ConfirmState(
+            "Revert commit",
+            $"Create a new commit that undoes {c.ShortSha} ({c.Subject})? This may pause on conflicts.",
+            "Revert",
+            Preview(GitCommandCatalog.Revert([c.Sha])),
+            () => MutateAsync(() => Git.RevertAsync(_projectId, [c.Sha])));
+
+    private void OpenResetDialog(GitCommit c) => OpenResetDialog(c.Sha, c.Subject);
+
+    private void OpenResetDialog(string sha, string subject)
+    {
+        _resetTarget = sha;
+        _resetSubject = subject;
+        _resetMode = GitResetMode.Mixed;
+        _showReset = true;
+    }
+
+    private async Task ApplyResetAsync()
+    {
+        _showReset = false;
+        await MutateAsync(() => Git.ResetAsync(_projectId, _resetMode, _resetTarget), reloadBranches: true);
+    }
+
+    private CommandPreview? ResetPreview() => Preview(GitCommandCatalog.Reset(_resetMode, _resetTarget));
+
+    private Task RunSequencerAsync(SequencerAction action)
+    {
+        if (action == SequencerAction.Abort)
+            return MutateAsync(() => Git.RunSequencerAsync(_projectId, _sequencer.Operation, action), reloadBranches: true);
+        return MutateAsync(() => Git.RunSequencerAsync(_projectId, _sequencer.Operation, action), reloadBranches: true);
+    }
+
+    private Task OptimizeCommitGraphAsync() => MutateAsync(() => Git.OptimizeCommitGraphAsync(_projectId));
+
+    private static string SequencerLabel(GitSequencerOperation op) => op switch
+    {
+        GitSequencerOperation.Merge => "Merge",
+        GitSequencerOperation.CherryPick => "Cherry-pick",
+        GitSequencerOperation.Revert => "Revert",
+        GitSequencerOperation.Rebase => "Rebase",
+        _ => "Operation"
+    };
+
+    // ---- Phase 6: tags ----
+
+    private RenderFragment TagsTab => @<div class="fx-card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="flex:1;" class="fx-group-head">Tags (@_tags.Count)</span>
+            @if (_tags.Count > 0)
+            {
+                <button class="fx-btn sm" @onclick="() => PushAllTagsAsync()" disabled="@_busy" title="git push origin --tags">Push all</button>
+            }
+            <button class="fx-btn sm accent" @onclick="OpenTagDialog" disabled="@_busy"><span class="fx-ico"><Icon Name="plus" Size="12" /></span> New</button>
+        </div>
+        @if (_tags.Count == 0)
+        {
+            <div class="fx-hint">No tags yet.</div>
+        }
+        @foreach (var t in _tags)
+        {
+            <div class="fx-row">
+                <span class="fx-ico" style="color:var(--fx-faint);"><Icon Name="bookmark" Size="13" /></span>
+                <span class="grow" style="min-width:0;">
+                    <span class="fx-mono" style="font-weight:600;">@t.Name</span>
+                    <span class="fx-pill muted" style="padding:0 5px;margin-left:6px;">@(t.IsAnnotated ? "annotated" : "lightweight")</span>
+                    <span class="fx-mono fx-faint" style="margin-left:6px;">@ShortTarget(t.TargetSha)</span>
+                    @if (!string.IsNullOrEmpty(t.Subject)) { <span class="fx-faint" style="margin-left:6px;">@t.Subject</span> }
+                </span>
+                <button class="fx-btn sm" @onclick="() => PushTagAsync(t)" disabled="@_busy" title="Push this tag to origin"><Icon Name="arrow-up" Size="12" /></button>
+                <button class="fx-iconbtn" @onclick="() => ConfirmDeleteRemoteTag(t)" disabled="@_busy" title="Delete tag on origin"><Icon Name="cloud" Size="13" /></button>
+                <button class="fx-iconbtn danger" @onclick="() => ConfirmDeleteTag(t)" disabled="@_busy" title="Delete local tag"><Icon Name="trash" Size="13" /></button>
+            </div>
+        }
+    </div>;
+
+    private void OpenTagDialog()
+    {
+        _tagName = ""; _tagMessage = ""; _tagAnnotated = true; _tagTarget = "HEAD"; _showTag = true;
+    }
+
+    private GitTagRequest CurrentTagRequest() =>
+        new(_tagName.Trim(), _tagAnnotated,
+            _tagAnnotated ? (string.IsNullOrWhiteSpace(_tagMessage) ? _tagName.Trim() : _tagMessage.Trim()) : null,
+            string.IsNullOrWhiteSpace(_tagTarget) || _tagTarget.Trim() == "HEAD" ? null : _tagTarget.Trim());
+
+    private CommandPreview? TagPreview() =>
+        string.IsNullOrWhiteSpace(_tagName) ? null : Preview(GitCommandCatalog.TagCreate(CurrentTagRequest()));
+
+    private async Task CreateTagAsync()
+    {
+        _showTag = false;
+        await MutateAsync(() => Git.CreateTagAsync(_projectId, CurrentTagRequest()), reloadTags: true);
+    }
+
+    private Task PushTagAsync(GitTag t) =>
+        RunRemoteTagAsync(p => Git.PushTagAsync(_projectId, t.Name, null, p), $"Pushed tag '{t.Name}'.");
+
+    private Task PushAllTagsAsync() =>
+        RunRemoteTagAsync(p => Git.PushAllTagsAsync(_projectId, null, p), "Pushed all tags.");
+
+    private void ConfirmDeleteTag(GitTag t) =>
+        _confirm = new ConfirmState(
+            "Delete local tag",
+            $"Delete local tag '{t.Name}'? This does not affect the remote.",
+            "Delete",
+            Preview(GitCommandCatalog.TagDelete(t.Name)),
+            () => MutateAsync(() => Git.DeleteTagAsync(_projectId, t.Name), reloadTags: true));
+
+    private void ConfirmDeleteRemoteTag(GitTag t) =>
+        _confirm = new ConfirmState(
+            "Delete tag on origin",
+            $"Delete tag '{t.Name}' on the remote 'origin'? This removes it for everyone.",
+            "Delete on origin",
+            Preview(GitCommandCatalog.TagDeleteRemote("origin", t.Name)),
+            () => RunRemoteTagAsync(p => Git.DeleteRemoteTagAsync(_projectId, t.Name, null, p), $"Deleted '{t.Name}' on origin."));
+
+    private async Task RunRemoteTagAsync(Func<IProgress<ProcessOutputEvent>, Task<GitOperationResult>> action, string ok)
+    {
+        _busy = true; _error = null; _notice = null; _output.Clear();
+        var progress = new Progress<ProcessOutputEvent>(OnLine);
+        try
+        {
+            var r = await action(progress);
+            if (!r.Succeeded) _error = r.Error ?? "Tag push failed.";
+            else _notice = ok;
+            await RefreshAfterMutationAsync(reloadTags: true);
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    // ---- Phase 6: worktrees ----
+
+    private RenderFragment WorktreesTab => @<div class="fx-card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="flex:1;" class="fx-group-head">Worktrees (@_worktrees.Count)</span>
+            <button class="fx-btn sm" @onclick="PruneWorktreesAsync" disabled="@_busy" title="git worktree prune">Prune</button>
+            <button class="fx-btn sm accent" @onclick="OpenWorktreeDialog" disabled="@_busy"><span class="fx-ico"><Icon Name="plus" Size="12" /></span> Add</button>
+        </div>
+        <p class="fx-hint" style="margin:0 0 8px;">Additional checkouts of this repository, each on its own branch.</p>
+        @foreach (var w in _worktrees)
+        {
+            <div class="fx-row">
+                <span class="fx-ico" style="color:@(w.IsMain ? "var(--fx-accent)" : "var(--fx-faint)");"><Icon Name="folder" Size="13" /></span>
+                <span class="grow" style="min-width:0;">
+                    <span class="fx-mono">@w.Path</span>
+                    @if (w.IsMain) { <span class="fx-pill muted" style="padding:0 5px;margin-left:6px;">main</span> }
+                    <span class="fx-faint" style="margin-left:6px;">@(w.IsDetached ? "(detached)" : w.Branch ?? "—")</span>
+                    @if (w.IsLocked) { <span class="fx-pill warn" style="padding:0 5px;margin-left:6px;">locked</span> }
+                </span>
+                @if (!w.IsMain)
+                {
+                    <button class="fx-iconbtn danger" @onclick="() => ConfirmRemoveWorktree(w)" disabled="@_busy" title="Remove worktree"><Icon Name="trash" Size="13" /></button>
+                }
+            </div>
+        }
+    </div>;
+
+    private void OpenWorktreeDialog()
+    {
+        _worktreePath = ""; _worktreeBranch = ""; _worktreeNewBranch = true; _showWorktree = true;
+    }
+
+    private CommandPreview? WorktreePreview() =>
+        string.IsNullOrWhiteSpace(_worktreePath) ? null
+            : Preview(GitCommandCatalog.WorktreeAdd(_worktreePath.Trim(), string.IsNullOrWhiteSpace(_worktreeBranch) ? null : _worktreeBranch.Trim(), _worktreeNewBranch));
+
+    private async Task AddWorktreeAsync()
+    {
+        _showWorktree = false;
+        await MutateAsync(() => Git.AddWorktreeAsync(_projectId, _worktreePath.Trim(),
+            string.IsNullOrWhiteSpace(_worktreeBranch) ? null : _worktreeBranch.Trim(), _worktreeNewBranch), reloadWorktrees: true);
+    }
+
+    private void ConfirmRemoveWorktree(GitWorktree w) =>
+        _confirm = new ConfirmState(
+            "Remove worktree",
+            $"Remove the worktree at '{w.Path}'? Uncommitted changes there would be lost (force).",
+            "Remove",
+            Preview(GitCommandCatalog.WorktreeRemove(w.Path, force: false)),
+            () => MutateAsync(() => Git.RemoveWorktreeAsync(_projectId, w.Path, force: true), reloadWorktrees: true));
+
+    private Task PruneWorktreesAsync() => MutateAsync(() => Git.PruneWorktreesAsync(_projectId), reloadWorktrees: true);
+
+    // ---- Phase 6: submodules ----
+
+    private RenderFragment SubmodulesTab => @<div class="fx-card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="flex:1;" class="fx-group-head">Submodules (@_submodules.Count)</span>
+            @if (_submodules.Count > 0)
+            {
+                <button class="fx-btn sm" @onclick="SyncSubmodulesAsync" disabled="@_busy" title="git submodule sync --recursive">Sync</button>
+                <button class="fx-btn sm accent" @onclick="() => UpdateSubmodulesAsync()" disabled="@_busy" title="git submodule update --init --recursive">Update</button>
+            }
+        </div>
+        @if (_submodules.Count == 0)
+        {
+            <div class="fx-hint">No submodules in this repository.</div>
+        }
+        @foreach (var s in _submodules)
+        {
+            <div class="fx-row">
+                <span class="fx-code @SubmoduleClass(s.State)" title="@s.State">@SubmoduleGlyph(s.State)</span>
+                <span class="grow" style="min-width:0;">
+                    <span class="fx-mono">@s.Path</span>
+                    <span class="fx-mono fx-faint" style="margin-left:6px;">@ShortTarget(s.Sha)</span>
+                    @if (!string.IsNullOrEmpty(s.Describe)) { <span class="fx-faint" style="margin-left:6px;">@s.Describe</span> }
+                </span>
+                <span class="fx-faint">@SubmoduleLabel(s.State)</span>
+            </div>
+        }
+    </div>;
+
+    private Task UpdateSubmodulesAsync() =>
+        RunRemoteTagAsync(p => Git.UpdateSubmodulesAsync(_projectId, init: true, recursive: true, p), "Submodules updated.");
+
+    private Task SyncSubmodulesAsync() => MutateAsync(() => Git.SyncSubmodulesAsync(_projectId), reloadSubmodules: true);
+
+    private static string SubmoduleClass(GitSubmoduleState s) => s switch
+    {
+        GitSubmoduleState.InSync => "add",
+        GitSubmoduleState.Uninitialised => "muted",
+        GitSubmoduleState.Conflicted => "fail",
+        _ => "warn"
+    };
+
+    private static string SubmoduleGlyph(GitSubmoduleState s) => s switch
+    {
+        GitSubmoduleState.InSync => "✓",
+        GitSubmoduleState.Uninitialised => "-",
+        GitSubmoduleState.Conflicted => "U",
+        _ => "+"
+    };
+
+    private static string SubmoduleLabel(GitSubmoduleState s) => s switch
+    {
+        GitSubmoduleState.InSync => "in sync",
+        GitSubmoduleState.Uninitialised => "not initialised",
+        GitSubmoduleState.Conflicted => "conflicts",
+        _ => "out of sync"
+    };
+
+    // ---- Phase 6: partial / line staging ----
+
+    private void ToggleLine((int Hunk, int Line) key)
+    {
+        if (!_selectedLines.Add(key)) _selectedLines.Remove(key);
+        StateHasChanged();
+    }
+
+    private async Task ApplySelectedLinesAsync()
+    {
+        if (_diffFile is null || _selectedLines.Count == 0) return;
+        _busy = true; _error = null; _notice = null;
+        try
+        {
+            var r = await Git.ApplySelectedLinesAsync(_projectId, _diffFile, new HashSet<(int, int)>(_selectedLines), unstage: _diffIsStaged);
+            if (!r.Succeeded) { _error = r.Error ?? "Could not apply the selected lines."; return; }
+            _notice = _diffIsStaged ? "Unstaged the selected lines." : "Staged the selected lines.";
+            _selectedLines.Clear();
+            await RefreshAfterMutationAsync();
+            // Reload the current file diff so the remaining changes are shown.
+            var files = await Git.GetDiffAsync(_projectId, new GitDiffSpec(_diffIsStaged ? GitDiffSource.Staged : GitDiffSource.WorkTree, Path: _diffFile.Path));
+            _diffFile = files.FirstOrDefault();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    // ---- Phase 6: interactive rebase ----
+
+    private async Task OpenRebaseAsync()
+    {
+        _busy = true; _error = null;
+        try
+        {
+            var count = Math.Clamp(_rebaseCount, 1, 50);
+            var commits = await Git.GetRebaseCommitsAsync(_projectId, count);
+            if (commits.Count == 0) { _error = "No commits to rebase."; return; }
+            _rebaseSteps = commits.Select(c => new GitRebaseStep(c.Sha, c.ShortSha, c.Subject, RebaseAction.Pick)).ToList();
+            _rebaseBase = $"HEAD~{commits.Count}";
+            UpdateRebasePreview();
+            _showRebase = true;
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private void UpdateRebasePreview() =>
+        _rebasePreview = Preview(GitCommandCatalog.RebaseInteractive(_rebaseBase, autosquash: false));
+
+    private async Task StartRebaseAsync(GitRebasePlan plan)
+    {
+        _showRebase = false;
+        _busy = true; _error = null; _notice = null; _output.Clear();
+        var progress = new Progress<ProcessOutputEvent>(OnLine);
+        try
+        {
+            var r = await Git.StartInteractiveRebaseAsync(_projectId, plan, progress);
+            _sequencer = await Git.GetSequencerStateAsync(_projectId);
+            if (!r.Succeeded && !_sequencer.InProgress)
+                _error = r.Error ?? "Rebase failed.";
+            else if (_sequencer.InProgress)
+                _error = "Rebase paused — resolve and continue from the banner.";
+            else
+                _notice = "Rebase complete.";
+            await RefreshAfterMutationAsync(reloadBranches: true);
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    // ---- Phase 6: conflict editor ----
+
+    private async Task OpenConflictAsync(string path)
+    {
+        _busy = true; _error = null;
+        try
+        {
+            _conflict = await Git.GetConflictAsync(_projectId, path);
+            _showConflict = true;
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task ResolveConflictAsync(string content)
+    {
+        if (_conflict is null) return;
+        _showConflict = false;
+        await MutateAsync(() => Git.ResolveConflictAsync(_projectId, _conflict.Path, content));
+    }
+
+    private async Task TakeConflictSideAsync(GitConflictSide side)
+    {
+        if (_conflict is null) return;
+        _showConflict = false;
+        await MutateAsync(() => Git.TakeConflictSideAsync(_projectId, _conflict.Path, side));
+    }
+
     // ---- shared helpers ----
 
-    private async Task MutateAsync(Func<Task<GitOperationResult>> action, bool reloadBranches = false, bool reloadStashes = false)
+    private async Task MutateAsync(Func<Task<GitOperationResult>> action,
+        bool reloadBranches = false, bool reloadStashes = false,
+        bool reloadTags = false, bool reloadWorktrees = false, bool reloadSubmodules = false)
     {
         _busy = true; _error = null; _notice = null;
         try
         {
             var r = await action();
             if (!r.Succeeded) _error = r.Error ?? "Git command failed.";
-            await RefreshAfterMutationAsync(reloadBranches, reloadStashes);
+            await RefreshAfterMutationAsync(reloadBranches, reloadStashes, reloadTags, reloadWorktrees, reloadSubmodules);
         }
         catch (Exception ex) { _error = ex.Message; }
         finally { _busy = false; }
     }
 
-    private async Task RefreshAfterMutationAsync(bool reloadBranches = false, bool reloadStashes = false)
+    private async Task RefreshAfterMutationAsync(
+        bool reloadBranches = false, bool reloadStashes = false,
+        bool reloadTags = false, bool reloadWorktrees = false, bool reloadSubmodules = false)
     {
         _status = await Git.GetStatusAsync(_projectId);
+        _sequencer = await Git.GetSequencerStateAsync(_projectId);
         if (reloadBranches || _tab == Tab.Branches) _branches = (await Git.GetBranchesAsync(_projectId)).ToList();
         if (reloadStashes || _tab == Tab.Stashes) _stashes = (await Git.GetStashesAsync(_projectId)).ToList();
+        if (reloadTags || _tab == Tab.Tags) _tags = (await Git.GetTagsAsync(_projectId)).ToList();
+        if (reloadWorktrees || _tab == Tab.Worktrees) _worktrees = (await Git.GetWorktreesAsync(_projectId)).ToList();
+        if (reloadSubmodules || _tab == Tab.Submodules) _submodules = (await Git.GetSubmodulesAsync(_projectId)).ToList();
         if (_tab == Tab.History) _commits = (await Git.GetHistoryAsync(_projectId, 100)).ToList();
+        if (_tab == Tab.Reflog) _reflog = (await Git.GetReflogAsync(_projectId, 100)).ToList();
     }
 
     private void OnLine(ProcessOutputEvent e)
@@ -937,6 +1569,8 @@ else
     private void CancelConfirm() => _confirm = null;
 
     private static string SafeName(string s) => s.Trim();
+    private static string ShortTarget(string target) =>
+        target.Length == 40 && target.All(Uri.IsHexDigit) ? target[..8] : target;
     private static string LocalName(string remoteBranch)
     {
         var slash = remoteBranch.IndexOf('/');

@@ -31,6 +31,12 @@ public static class GitCommandCatalog
     /// <summary>Stash selector + reflog subject, NUL-delimited.</summary>
     public const string StashFormat = "%gd%x00%gs";
 
+    /// <summary>Reflog fields: full sha, short sha, selector (HEAD@{n}), subject, author, ISO date; 0x1e record end.</summary>
+    public const string ReflogFormat = "%H%x00%h%x00%gd%x00%gs%x00%an%x00%aI%x1e";
+
+    /// <summary>Tag fields: refname:short, target object, tagger/creator date, and (annotated) subject; NUL-delimited.</summary>
+    public const string TagFormat = "%(refname:short)%00%(objecttype)%00%(objectname)%00%(*objectname)%00%(creatordate:iso-strict)%00%(contents:subject)";
+
     // ---- repository ----
 
     public static GitCommandDefinition Version() =>
@@ -199,6 +205,200 @@ public static class GitCommandCatalog
 
     public static GitCommandDefinition StashDrop(int index) =>
         new(GitCommandKind.StashDrop, "stash", ["stash", "drop", StashRef(index)], GitOperationRisk.Destructive);
+
+    // ---- Phase 6: inspection & local history rewriting ----
+
+    public static GitCommandDefinition RevParseGitDir() =>
+        new(GitCommandKind.RevParseGitDir, "rev-parse", ["rev-parse", "--absolute-git-dir"], GitOperationRisk.ReadOnly);
+
+    public static GitCommandDefinition Reflog(int limit) =>
+        new(GitCommandKind.Reflog, "reflog",
+            ["reflog", $"--format={ReflogFormat}", $"--max-count={Math.Max(1, limit)}"], GitOperationRisk.ReadOnly);
+
+    public static GitCommandDefinition Blame(string path, string? revision = null)
+    {
+        var args = new List<string> { "blame", "--line-porcelain" };
+        if (!string.IsNullOrWhiteSpace(revision)) args.Add(revision);
+        args.Add("--");
+        args.Add(path);
+        return new(GitCommandKind.Blame, "blame", args, GitOperationRisk.ReadOnly);
+    }
+
+    /// <summary><c>reset --hard</c> overwrites the working tree → destructive; soft/mixed are reversible.</summary>
+    public static GitCommandDefinition Reset(GitResetMode mode, string target)
+    {
+        var flag = mode switch
+        {
+            GitResetMode.Soft => "--soft",
+            GitResetMode.Hard => "--hard",
+            _ => "--mixed"
+        };
+        var risk = mode == GitResetMode.Hard ? GitOperationRisk.Destructive : GitOperationRisk.StateChanging;
+        return new(GitCommandKind.Reset, "reset", ["reset", flag, target], risk);
+    }
+
+    public static GitCommandDefinition CherryPick(IReadOnlyList<string> commitIshes)
+    {
+        var args = new List<string> { "cherry-pick" };
+        args.AddRange(commitIshes);
+        return new(GitCommandKind.CherryPick, "cherry-pick", args, GitOperationRisk.StateChanging);
+    }
+
+    /// <summary><c>revert --no-edit</c> so it never blocks on an editor; still records a new commit per revert.</summary>
+    public static GitCommandDefinition Revert(IReadOnlyList<string> commitIshes)
+    {
+        var args = new List<string> { "revert", "--no-edit" };
+        args.AddRange(commitIshes);
+        return new(GitCommandKind.Revert, "revert", args, GitOperationRisk.StateChanging);
+    }
+
+    /// <summary>Drives the sequencer (cherry-pick/revert/rebase) forward or unwinds it.</summary>
+    public static GitCommandDefinition Sequencer(string verb, SequencerAction action)
+    {
+        var flag = action switch
+        {
+            SequencerAction.Continue => "--continue",
+            SequencerAction.Abort => "--abort",
+            SequencerAction.Skip => "--skip",
+            _ => "--quit"
+        };
+        // Abort restores the pre-operation state → safe; continue/skip advance and may re-conflict.
+        var risk = action == SequencerAction.Abort ? GitOperationRisk.Safe : GitOperationRisk.StateChanging;
+        return new(GitCommandKind.Sequencer, verb, [verb, flag], risk);
+    }
+
+    /// <summary>Writes/updates the commit-graph for faster history walks — an on-disk optimisation, no refs move.</summary>
+    public static GitCommandDefinition CommitGraphWrite() =>
+        new(GitCommandKind.CommitGraph, "commit-graph",
+            ["commit-graph", "write", "--reachable", "--changed-paths"], GitOperationRisk.Safe);
+
+    // ---- Phase 6: tags ----
+
+    public static GitCommandDefinition TagList() =>
+        new(GitCommandKind.TagList, "for-each-ref",
+            ["for-each-ref", $"--format={TagFormat}", "--sort=-creatordate", "refs/tags"], GitOperationRisk.ReadOnly);
+
+    public static GitCommandDefinition TagCreate(GitTagRequest req)
+    {
+        var args = new List<string> { "tag" };
+        if (req.Annotated)
+        {
+            args.Add("-a");
+            args.Add(req.Name);
+            args.Add("-m");
+            args.Add(req.Message ?? req.Name);
+        }
+        else
+        {
+            args.Add(req.Name);
+        }
+        if (!string.IsNullOrWhiteSpace(req.Target)) args.Add(req.Target);
+        return new(GitCommandKind.TagCreate, "tag", args, GitOperationRisk.Safe);
+    }
+
+    public static GitCommandDefinition TagDelete(string name) =>
+        new(GitCommandKind.TagDelete, "tag", ["tag", "-d", name], GitOperationRisk.Destructive);
+
+    public static GitCommandDefinition TagPush(string remote, string name) =>
+        new(GitCommandKind.TagPush, "push", ["push", remote, $"refs/tags/{name}"], GitOperationRisk.StateChanging, TargetsRemote: true);
+
+    public static GitCommandDefinition TagPushAll(string remote) =>
+        new(GitCommandKind.TagPushAll, "push", ["push", remote, "--tags"], GitOperationRisk.StateChanging, TargetsRemote: true);
+
+    public static GitCommandDefinition TagDeleteRemote(string remote, string name) =>
+        new(GitCommandKind.TagDeleteRemote, "push", ["push", remote, "--delete", $"refs/tags/{name}"], GitOperationRisk.Destructive, TargetsRemote: true);
+
+    // ---- Phase 6: worktrees ----
+
+    public static GitCommandDefinition WorktreeList() =>
+        new(GitCommandKind.WorktreeList, "worktree", ["worktree", "list", "--porcelain"], GitOperationRisk.ReadOnly);
+
+    public static GitCommandDefinition WorktreeAdd(string path, string? branch, bool newBranch)
+    {
+        var args = new List<string> { "worktree", "add" };
+        if (newBranch && !string.IsNullOrWhiteSpace(branch)) { args.Add("-b"); args.Add(branch); }
+        args.Add(path);
+        if (!newBranch && !string.IsNullOrWhiteSpace(branch)) args.Add(branch);
+        return new(GitCommandKind.WorktreeAdd, "worktree", args, GitOperationRisk.StateChanging);
+    }
+
+    /// <summary>Removing a worktree with uncommitted changes needs <c>--force</c> → destructive.</summary>
+    public static GitCommandDefinition WorktreeRemove(string path, bool force)
+    {
+        var args = new List<string> { "worktree", "remove" };
+        if (force) args.Add("--force");
+        args.Add(path);
+        return new(GitCommandKind.WorktreeRemove, "worktree", args,
+            force ? GitOperationRisk.Destructive : GitOperationRisk.StateChanging);
+    }
+
+    public static GitCommandDefinition WorktreePrune() =>
+        new(GitCommandKind.WorktreePrune, "worktree", ["worktree", "prune"], GitOperationRisk.Safe);
+
+    // ---- Phase 6: submodules ----
+
+    public static GitCommandDefinition SubmoduleStatus() =>
+        new(GitCommandKind.SubmoduleStatus, "submodule", ["submodule", "status"], GitOperationRisk.ReadOnly);
+
+    public static GitCommandDefinition SubmoduleUpdate(bool init, bool recursive)
+    {
+        var args = new List<string> { "submodule", "update" };
+        if (init) args.Add("--init");
+        if (recursive) args.Add("--recursive");
+        return new(GitCommandKind.SubmoduleUpdate, "submodule", args, GitOperationRisk.StateChanging, TargetsRemote: true);
+    }
+
+    public static GitCommandDefinition SubmoduleSync(bool recursive)
+    {
+        var args = new List<string> { "submodule", "sync" };
+        if (recursive) args.Add("--recursive");
+        return new(GitCommandKind.SubmoduleSync, "submodule", args, GitOperationRisk.Safe);
+    }
+
+    // ---- Phase 6: Git LFS (indicators only) ----
+
+    public static GitCommandDefinition LfsVersion() =>
+        new(GitCommandKind.LfsStatus, "lfs", ["lfs", "version"], GitOperationRisk.ReadOnly);
+
+    public static GitCommandDefinition LfsTrack() =>
+        new(GitCommandKind.LfsTrack, "lfs", ["lfs", "track"], GitOperationRisk.ReadOnly);
+
+    // ---- Phase 6: partial / line staging ----
+
+    /// <summary>Applies a reconstructed partial patch to the index; <paramref name="reverse"/> unstages.</summary>
+    public static GitCommandDefinition ApplyPatch(string patchFilePath, bool reverse)
+    {
+        var args = new List<string> { "apply", "--cached", "--whitespace=nowarn" };
+        if (reverse) args.Add("--reverse");
+        args.Add(patchFilePath);
+        return new(GitCommandKind.ApplyPatch, "apply", args, GitOperationRisk.Safe);
+    }
+
+    // ---- Phase 6: interactive rebase ----
+
+    /// <summary>Rewrites history from <paramref name="onto"/> — destructive; driven non-interactively via env editors.</summary>
+    public static GitCommandDefinition RebaseInteractive(string onto, bool autosquash)
+    {
+        var args = new List<string> { "rebase", "-i" };
+        if (autosquash) args.Add("--autosquash");
+        args.Add(onto);
+        return new(GitCommandKind.RebaseInteractive, "rebase", args, GitOperationRisk.Destructive);
+    }
+
+    // ---- Phase 6: conflict editor ----
+
+    /// <summary>Reads a specific merge stage of a conflicted path (<c>1</c>=base, <c>2</c>=ours, <c>3</c>=theirs).</summary>
+    public static GitCommandDefinition ShowStage(int stage, string path) =>
+        new(GitCommandKind.ShowObject, "show", ["show", $":{stage}:{path}"], GitOperationRisk.ReadOnly);
+
+    /// <summary>Reads a blob at a revision (<c>&lt;rev&gt;:&lt;path&gt;</c>).</summary>
+    public static GitCommandDefinition ShowBlob(string revision, string path) =>
+        new(GitCommandKind.ShowObject, "show", ["show", $"{revision}:{path}"], GitOperationRisk.ReadOnly);
+
+    /// <summary>Takes one whole side of a conflict (<c>--ours</c>/<c>--theirs</c>) for a path.</summary>
+    public static GitCommandDefinition CheckoutConflictSide(GitConflictSide side, string path) =>
+        new(GitCommandKind.Checkout2, "checkout",
+            ["checkout", side == GitConflictSide.Ours ? "--ours" : "--theirs", "--", path], GitOperationRisk.StateChanging);
 
     // ---- helpers ----
 

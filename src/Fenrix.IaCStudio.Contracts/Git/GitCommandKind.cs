@@ -47,5 +47,52 @@ public enum GitCommandKind
     StashPush,
     StashApply,
     StashPop,
-    StashDrop
+    StashDrop,
+
+    // --- Phase 6: advanced ---
+
+    // Inspection & local history rewriting
+    Reflog,
+    Blame,
+    Reset,
+    CherryPick,
+    Revert,
+    Sequencer,      // --continue / --abort / --skip / --quit for cherry-pick/revert/rebase
+    CommitGraph,
+    RevParseGitDir,
+
+    // Tags
+    TagList,
+    TagCreate,
+    TagDelete,
+    TagPush,
+    TagPushAll,
+    TagDeleteRemote,
+
+    // Worktrees
+    WorktreeList,
+    WorktreeAdd,
+    WorktreeRemove,
+    WorktreePrune,
+
+    // Submodules
+    SubmoduleStatus,
+    SubmoduleUpdate,
+    SubmoduleSync,
+    SubmoduleAdd,
+
+    // Git LFS
+    LfsStatus,
+    LfsTrack,
+
+    // Interactive rebase
+    Rebase,
+    RebaseInteractive,
+
+    // Partial / line staging
+    ApplyPatch,
+
+    // Conflict editor
+    Checkout2,      // checkout --ours/--theirs for a conflicted path
+    ShowObject      // show a blob at a stage or revision (base/ours/theirs content)
 }

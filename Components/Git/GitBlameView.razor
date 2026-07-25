@@ -1,0 +1,57 @@
+@* Read-only blame gutter: per-line commit attribution grouped into hunks. See docs/08-git-engine.md. *@
+@using Fenrix.IaCStudio.Contracts.Git
+
+@if (Loading)
+{
+    <div class="fx-hint" style="padding:16px;">Loading blame…</div>
+}
+else if (Blame is null || Blame.Lines.Count == 0)
+{
+    <div class="fx-diff-empty">
+        <span class="fx-ico"><Icon Name="history" Size="20" /></span>
+        <span>@EmptyText</span>
+    </div>
+}
+else
+{
+    <div class="fx-diff">
+        <div class="fx-diff-head">
+            <span class="fx-ico"><Icon Name="history" Size="13" /></span>
+            <span class="path fx-mono">@Blame.Path</span>
+            <span class="fx-faint" style="margin-left:auto;">@Blame.Lines.Count lines</span>
+        </div>
+        <div class="fx-blame-body fx-mono">
+            @{
+                string? prev = null;
+            }
+            @foreach (var line in Blame.Lines)
+            {
+                var newGroup = line.Sha != prev;
+                prev = line.Sha;
+                <div class="fx-blame-line @(newGroup ? "grp" : "")">
+                    <span class="bl-sha" title="@BlameTitle(line)">
+                        @if (newGroup)
+                        {
+                            @(line.IsUncommitted ? "•uncommitted" : line.ShortSha)
+                        }
+                    </span>
+                    <span class="bl-meta">@(newGroup ? Meta(line) : "")</span>
+                    <span class="bl-ln">@line.LineNumber</span>
+                    <span class="bl-txt">@line.Content</span>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public GitBlame? Blame { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public string EmptyText { get; set; } = "Select a tracked file to see its blame.";
+
+    private static string Meta(GitBlameLine l) =>
+        l.IsUncommitted ? "Not committed yet" : $"{l.Author}, {l.Date.LocalDateTime:d}";
+
+    private static string BlameTitle(GitBlameLine l) =>
+        l.IsUncommitted ? "Not committed yet" : $"{l.ShortSha} · {l.Author} · {l.Date.LocalDateTime:g}\n{l.Summary}";
+}

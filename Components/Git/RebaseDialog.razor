@@ -1,0 +1,111 @@
+@* Interactive-rebase todo builder: reorder commits and choose pick/reword/squash/fixup/edit/drop. See docs/08-git-engine.md. *@
+@using Fenrix.IaCStudio.Application.Git
+@using Fenrix.IaCStudio.Contracts.Git
+@using Fenrix.IaCStudio.Contracts.Terraform
+
+<Modal Title="Interactive rebase" IconName="git-branch" OnClose="OnClose" Wide="true">
+    <ChildContent>
+    <p style="font-size:13px;margin:0 0 10px;color:var(--fx-dim);">
+        Rewriting the last @Steps.Count commit(s) onto <span class="fx-mono">@Base</span>.
+        Reorder with the arrows and choose an action per commit. Order shown is oldest → newest (rebase order).
+    </p>
+
+    <label class="fx-check" style="margin-bottom:8px;">
+        <input type="checkbox" @bind="_autosquash" @bind:after="StateHasChanged" />
+        Autosquash <span class="hint">let Git auto-order fixup!/squash! commits (ignores the list below)</span>
+    </label>
+
+    @if (!_autosquash)
+    {
+        <div class="fx-card" style="padding:6px;max-height:340px;overflow:auto;">
+            @for (var i = 0; i < Steps.Count; i++)
+            {
+                var idx = i;
+                var step = Steps[idx];
+                <div class="fx-row" style="align-items:flex-start;">
+                    <div style="display:flex;flex-direction:column;gap:1px;">
+                        <button class="fx-iconbtn" disabled="@(idx == 0)" @onclick="() => Move(idx, -1)" title="Move up"><Icon Name="arrow-up" Size="12" /></button>
+                        <button class="fx-iconbtn" disabled="@(idx == Steps.Count - 1)" @onclick="() => Move(idx, 1)" title="Move down"><Icon Name="arrow-down" Size="12" /></button>
+                    </div>
+                    <select class="fx-select" style="width:96px;" value="@step.Action" @onchange="e => SetAction(idx, e)">
+                        @foreach (var a in _actions)
+                        {
+                            <option value="@a">@a.ToString().ToLowerInvariant()</option>
+                        }
+                    </select>
+                    <span class="grow" style="min-width:0;">
+                        <span class="fx-mono fx-faint">@step.ShortSha</span>
+                        <span style="margin-left:6px;@(step.Action == RebaseAction.Drop ? "text-decoration:line-through;opacity:.5;" : "")">@step.Subject</span>
+                        @if (step.Action == RebaseAction.Reword)
+                        {
+                            <input class="fx-input" style="margin-top:4px;" placeholder="New commit message" value="@step.NewMessage"
+                                   @onchange="e => SetMessage(idx, e)" />
+                        }
+                    </span>
+                </div>
+            }
+        </div>
+        <p class="fx-hint" style="margin:8px 0 0;">
+            <strong>squash</strong>/<strong>fixup</strong> meld into the commit above. <strong>edit</strong> pauses the rebase so you can amend, then continue from the banner.
+        </p>
+    }
+
+    <div style="margin-top:10px;"><CommandPreviewPanel Preview="Preview" /></div>
+    </ChildContent>
+    <Footer>
+        <button class="fx-btn" @onclick="OnClose" disabled="@Busy">Cancel</button>
+        <button class="fx-btn danger" @onclick="Apply" disabled="@(Busy || !CanApply)">Start rebase</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public string Base { get; set; } = "HEAD";
+    [Parameter] public List<GitRebaseStep> Steps { get; set; } = [];
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public CommandPreview? Preview { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<GitRebasePlan> OnApply { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private bool _autosquash;
+    private static readonly RebaseAction[] _actions =
+        [RebaseAction.Pick, RebaseAction.Reword, RebaseAction.Edit, RebaseAction.Squash, RebaseAction.Fixup, RebaseAction.Drop];
+
+    // At least one commit must survive, and the first step cannot squash/fixup into a non-existent parent.
+    private bool CanApply => _autosquash ||
+        (Steps.Any(s => s.Action is not RebaseAction.Drop) &&
+         Steps[0].Action is not (RebaseAction.Squash or RebaseAction.Fixup));
+
+    private void Move(int index, int delta)
+    {
+        var target = index + delta;
+        if (target < 0 || target >= Steps.Count) return;
+        (Steps[index], Steps[target]) = (Steps[target], Steps[index]);
+        Notify();
+    }
+
+    private void SetAction(int index, ChangeEventArgs e)
+    {
+        if (Enum.TryParse<RebaseAction>(e.Value?.ToString(), out var action))
+            Steps[index] = Steps[index] with { Action = action };
+        Notify();
+    }
+
+    private void SetMessage(int index, ChangeEventArgs e)
+    {
+        Steps[index] = Steps[index] with { NewMessage = e.Value?.ToString() };
+        Notify();
+    }
+
+    private void Notify()
+    {
+        StateHasChanged();
+        if (OnChanged.HasDelegate) OnChanged.InvokeAsync();
+    }
+
+    private async Task Apply()
+    {
+        if (!CanApply) return;
+        await OnApply.InvokeAsync(new GitRebasePlan(Base, Steps.ToList(), _autosquash));
+    }
+}

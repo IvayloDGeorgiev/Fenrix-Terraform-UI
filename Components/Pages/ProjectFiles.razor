@@ -17,31 +17,20 @@
 }
 else
 {
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-        <button class="fx-iconbtn" title="Back to projects" @onclick='() => Nav.NavigateTo("/projects")'><Icon Name="arrow-left" Size="16" /></button>
-        <div style="flex:1;">
-            <h1 class="fx-page-title" style="margin:0;">@_project.Name</h1>
-            <div class="fx-page-sub fx-mono" style="margin:2px 0 0;">@_project.RootPath</div>
-        </div>
-        @if (_recoverable.Count > 0)
-        {
-            <button class="fx-btn @(_mode == Mode.Recoverable ? "accent" : "")" @onclick="ShowRecoverable">
-                <span class="fx-ico"><Icon Name="restore" Size="14" /></span> Recoverable (@_recoverable.Count)
+    <ProjectHeader ProjectId="ProjectId" Name="@_project.Name" Active="ProjectHeader.ProjectPage.Files"
+                   Trail="@(_mode == Mode.Editor ? _selectedPath : null)">
+        <Actions>
+            @if (_recoverable.Count > 0)
+            {
+                <button class="fx-btn sm @(_mode == Mode.Recoverable ? "accent" : "")" @onclick="ShowRecoverable">
+                    <span class="fx-ico"><Icon Name="restore" Size="13" /></span> Recoverable (@_recoverable.Count)
+                </button>
+            }
+            <button class="fx-btn sm" @onclick="ReloadAllAsync" title="Rescan from disk">
+                <span class="fx-ico"><Icon Name="refresh" Size="13" /></span> Rescan
             </button>
-        }
-        <button class="fx-btn" @onclick="ReloadAllAsync" title="Rescan from disk">
-            <span class="fx-ico"><Icon Name="refresh" Size="14" /></span> Rescan
-        </button>
-        <button class="fx-btn accent" @onclick='() => Nav.NavigateTo($"/projects/{ProjectId}/terraform")' title="Run Terraform commands">
-            <span class="fx-ico"><Icon Name="terminal" Size="14" /></span> Terraform
-        </button>
-        <button class="fx-btn accent" @onclick='() => Nav.NavigateTo($"/projects/{ProjectId}/plan")' title="Plan, review, and apply changes safely">
-            <span class="fx-ico"><Icon Name="shield" Size="14" /></span> Plan &amp; apply
-        </button>
-        <button class="fx-btn accent" @onclick='() => Nav.NavigateTo($"/projects/{ProjectId}/source-control")' title="Git status, commits, branches">
-            <span class="fx-ico"><Icon Name="git-branch" Size="14" /></span> Source control
-        </button>
-    </div>
+        </Actions>
+    </ProjectHeader>
 
     <div class="fx-split">
         <div class="fx-card" style="padding:12px;">

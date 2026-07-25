@@ -162,8 +162,15 @@ a:hover { color: var(--fx-accent-strong); }
   color: var(--fx-dim);
   font-size: 11.5px;
   white-space: nowrap;
+  max-width: 100%;
+  min-width: 0;
 }
-.fx-chip .fx-ico { font-size: 13px; }
+/* Long chip values (paths, URLs) truncate instead of overflowing the container. */
+.fx-chip .val { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fx-chip .fx-ico { font-size: 13px; flex-shrink: 0; }
+.fx-chip.copyable { padding-right: 4px; }
+.fx-chip-copy { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; background: transparent; border: 0; margin-left: 2px; padding: 2px 4px; border-radius: 4px; color: var(--fx-faint); cursor: pointer; }
+.fx-chip-copy:hover { color: var(--fx-accent); background: rgba(127, 127, 127, 0.14); }
 .fx-spacer { flex: 1; }
 
 /* ---- Status bar ---- */
@@ -229,6 +236,9 @@ a:hover { color: var(--fx-accent-strong); }
 }
 
 .fx-mono { font-family: var(--fx-font-mono); }
+/* Long unbreakable mono strings (paths, hashes, URLs) wrap instead of overflowing.
+   Ignored where white-space is pre/nowrap (diff view, single-line rows). */
+.fx-mono { overflow-wrap: anywhere; }
 
 /* ---- Motion / animation ---- */
 .fx-main > * { animation: fx-rise var(--fx-dur-base) var(--fx-ease); }
@@ -630,6 +640,46 @@ a:hover { color: var(--fx-accent-strong); }
 .fx-diff-line.del .sign { color: var(--fx-danger); }
 .fx-diff-line.hunk { color: var(--fx-cyan); background: rgba(127, 127, 127, 0.07); }
 .fx-diff-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--fx-faint); padding: 40px; font-size: 13px; text-align: center; }
+
+/* ---- Project header: action ribbon + breadcrumbs (shared across sub-pages) ---- */
+.fx-projhdr { margin-bottom: 16px; }
+.fx-ribbon { display: flex; align-items: center; gap: 10px; padding: 7px 10px; background: var(--fx-panel, rgba(127, 127, 127, 0.06)); border: 1px solid var(--fx-border); border-radius: 10px; flex-wrap: wrap; }
+.fx-ribbon-nav { display: inline-flex; align-items: center; gap: 2px; padding: 2px; background: rgba(127, 127, 127, 0.10); border-radius: 8px; }
+.fx-ribbon-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 13px; color: var(--fx-dim); background: transparent; border: 0; border-radius: 6px; cursor: pointer; white-space: nowrap; transition: background 0.12s, color 0.12s; }
+.fx-ribbon-btn:hover { color: var(--fx-text); background: rgba(127, 127, 127, 0.12); }
+.fx-ribbon-btn.active { color: var(--fx-text); background: var(--fx-bg, rgba(0, 0, 0, 0.25)); box-shadow: inset 0 0 0 1px var(--fx-accent); }
+.fx-ribbon-btn.active .fx-ico, .fx-ribbon-btn.active svg { color: var(--fx-accent); }
+.fx-ribbon-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.fx-breadcrumb { display: flex; align-items: center; gap: 6px; margin: 8px 2px 0; font-size: 12.5px; color: var(--fx-dim); flex-wrap: wrap; }
+.fx-breadcrumb .crumb { background: none; border: 0; padding: 0; color: var(--fx-dim); cursor: default; font-size: 12.5px; }
+.fx-breadcrumb button.crumb { cursor: pointer; }
+.fx-breadcrumb button.crumb:hover { color: var(--fx-accent); text-decoration: underline; }
+.fx-breadcrumb .crumb.current { color: var(--fx-text); font-weight: 600; }
+.fx-breadcrumb .crumb.trail { color: var(--fx-faint); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-breadcrumb .sep { display: inline-flex; color: var(--fx-faint); }
+
+/* ---- Phase 6: line-staging selection ---- */
+.fx-diff-line .ln.pick { width: 22px; padding: 0 2px; text-align: center; }
+.fx-diff-line .ln.pick input { margin: 0; vertical-align: middle; cursor: pointer; }
+.fx-diff-line.sel { cursor: pointer; }
+.fx-diff-line.sel:hover { outline: 1px solid var(--fx-accent); outline-offset: -1px; }
+
+/* ---- Phase 6: blame gutter ---- */
+.fx-blame-body { max-height: 520px; overflow: auto; font-size: 12px; line-height: 1.55; }
+.fx-blame-line { display: flex; white-space: pre; align-items: baseline; }
+.fx-blame-line.grp { border-top: 1px solid var(--fx-border); }
+.fx-blame-line .bl-sha { width: 96px; flex-shrink: 0; color: var(--fx-cyan); padding: 0 6px; user-select: none; overflow: hidden; text-overflow: ellipsis; }
+.fx-blame-line .bl-meta { width: 150px; flex-shrink: 0; color: var(--fx-faint); padding: 0 6px; overflow: hidden; text-overflow: ellipsis; }
+.fx-blame-line .bl-ln { width: 44px; flex-shrink: 0; text-align: right; padding: 0 8px; color: var(--fx-faint); user-select: none; }
+.fx-blame-line .bl-txt { flex: 1; padding-right: 10px; }
+
+/* ---- Phase 6: 3-way conflict editor ---- */
+.fx-conflict-3 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.fx-conflict-pane { border: 1px solid var(--fx-border); border-radius: 6px; overflow: hidden; }
+.fx-conflict-head { font-size: 12px; font-weight: 600; padding: 5px 10px; background: rgba(127, 127, 127, 0.08); }
+.fx-conflict-head.ours { color: var(--fx-success); }
+.fx-conflict-head.theirs { color: var(--fx-cyan); }
+.fx-conflict-body { margin: 0; max-height: 220px; overflow: auto; padding: 8px 10px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 
 /* ---- Project cards, filter bar & picker (scales to many projects) ---- */
 .fx-tag.warn { color: var(--fx-warn); border-color: var(--fx-warn); }

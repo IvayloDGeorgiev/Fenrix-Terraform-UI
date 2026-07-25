@@ -1,4 +1,4 @@
-@* Read-only unified diff viewer. The interactive conflict/line-staging editor is Phase 6. See docs/08-git-engine.md. *@
+@* Unified diff viewer. When Selectable, changed lines get checkboxes for partial (line) staging. See docs/08-git-engine.md. *@
 @using Fenrix.IaCStudio.Contracts.Git
 
 @if (Loading)
@@ -48,11 +48,25 @@ else
         else
         {
             <div class="fx-diff-body fx-mono">
-                @foreach (var hunk in File.Hunks)
+                @for (var h = 0; h < File.Hunks.Count; h++)
                 {
-                    @foreach (var line in hunk.Lines)
+                    var hunk = File.Hunks[h];
+                    var hi = h;
+                    @for (var i = 0; i < hunk.Lines.Count; i++)
                     {
-                        <div class="fx-diff-line @LineClass(line.Kind)">
+                        var line = hunk.Lines[i];
+                        var li = i;
+                        var changeable = Selectable && (line.Kind == GitDiffLineKind.Added || line.Kind == GitDiffLineKind.Removed);
+                        <div class="fx-diff-line @LineClass(line.Kind) @(changeable ? "sel" : "")" @onclick="() => OnLineClick(hi, li, changeable)">
+                            @if (Selectable)
+                            {
+                                <span class="ln pick">
+                                    @if (changeable)
+                                    {
+                                        <input type="checkbox" checked="@(SelectedLines?.Contains((hi, li)) == true)" tabindex="-1" />
+                                    }
+                                </span>
+                            }
                             <span class="ln old">@(line.Kind == GitDiffLineKind.Hunk ? "" : line.OldLine?.ToString())</span>
                             <span class="ln new">@(line.Kind == GitDiffLineKind.Hunk ? "" : line.NewLine?.ToString())</span>
                             <span class="sign">@Sign(line.Kind)</span>
@@ -69,6 +83,17 @@ else
     [Parameter] public GitDiffFile? File { get; set; }
     [Parameter] public bool Loading { get; set; }
     [Parameter] public string EmptyText { get; set; } = "Select a file to see its changes.";
+
+    /// <summary>When true, changed lines show a checkbox and clicking a line toggles it for partial staging.</summary>
+    [Parameter] public bool Selectable { get; set; }
+    [Parameter] public HashSet<(int Hunk, int Line)>? SelectedLines { get; set; }
+    [Parameter] public EventCallback<(int Hunk, int Line)> OnToggleLine { get; set; }
+
+    private async Task OnLineClick(int hunk, int line, bool changeable)
+    {
+        if (changeable && OnToggleLine.HasDelegate)
+            await OnToggleLine.InvokeAsync((hunk, line));
+    }
 
     private static string LineClass(GitDiffLineKind kind) => kind switch
     {

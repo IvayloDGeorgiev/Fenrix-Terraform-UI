@@ -16,14 +16,24 @@
         <div class="fx-tf-cmd">
             <span class="exe">@Preview.ExecutableDisplayName</span>@foreach (var arg in Preview.Arguments)
             {
-                <text> </text><span class="@(arg.StartsWith('-') ? "flag" : "")">@arg</span>
+                <span class="@(arg.StartsWith('-') ? "flag" : "")">@($" {arg}")</span>
             }
         </div>
 
         <div class="fx-tf-chips">
             @foreach (var chip in Preview.Chips)
             {
-                <span class="fx-chip" title="@chip.Label"><strong style="color:var(--fx-dim);font-weight:500;">@chip.Label:</strong>&nbsp;@chip.Value</span>
+                var isPath = chip.Label is "Working dir";
+                <span class="fx-chip @(isPath ? "copyable" : "")" title="@($"{chip.Label}: {chip.Value}")">
+                    <strong style="color:var(--fx-dim);font-weight:500;">@chip.Label:</strong>
+                    <span class="val">@chip.Value</span>
+                    @if (isPath)
+                    {
+                        <button class="fx-chip-copy" title="Copy path" @onclick="() => CopyTextAsync(chip.Value)">
+                            <Icon Name="@(_copiedChip == chip.Value ? "check" : "copy")" Size="11" />
+                        </button>
+                    }
+                </span>
             }
         </div>
     </div>
@@ -33,6 +43,7 @@
     [Parameter] public CommandPreview? Preview { get; set; }
 
     private bool _copied;
+    private string? _copiedChip;
 
     private async Task CopyAsync()
     {
@@ -48,6 +59,22 @@
         catch
         {
             // Clipboard unavailable (rare in the hosted WebView) — silently ignore.
+        }
+    }
+
+    private async Task CopyTextAsync(string text)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            _copiedChip = text;
+            StateHasChanged();
+            await Task.Delay(1400);
+            _copiedChip = null;
+        }
+        catch
+        {
+            // Clipboard unavailable — silently ignore.
         }
     }
 }

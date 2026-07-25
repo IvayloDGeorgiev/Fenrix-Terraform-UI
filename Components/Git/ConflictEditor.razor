@@ -1,0 +1,72 @@
+@* Full 3-way conflict editor: base/ours/theirs panes + an editable merged result that stages on resolve. See docs/08-git-engine.md. *@
+@using Fenrix.IaCStudio.Contracts.Git
+
+<Modal Title="@($"Resolve conflict — {File.Path}")" IconName="git-merge" OnClose="OnClose" Wide="true">
+    <ChildContent>
+    <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+        <span class="fx-chip">Base @(File.HasBase ? "" : "(none — added on both sides)")</span>
+        <div style="flex:1;"></div>
+        <button class="fx-btn sm" @onclick="() => Load(File.Ours)" disabled="@Busy" title="Replace the editor with our version">Use ours</button>
+        <button class="fx-btn sm" @onclick="() => Load(File.Theirs)" disabled="@Busy" title="Replace the editor with their version">Use theirs</button>
+        @if (File.HasBase)
+        {
+            <button class="fx-btn sm" @onclick="() => Load(File.Base)" disabled="@Busy" title="Replace the editor with the common ancestor">Use base</button>
+        }
+    </div>
+
+    <div class="fx-conflict-3">
+        <div class="fx-conflict-pane">
+            <div class="fx-conflict-head ours">Ours (current branch)</div>
+            <pre class="fx-conflict-body fx-mono">@File.Ours</pre>
+        </div>
+        <div class="fx-conflict-pane">
+            <div class="fx-conflict-head theirs">Theirs (incoming)</div>
+            <pre class="fx-conflict-body fx-mono">@File.Theirs</pre>
+        </div>
+    </div>
+
+    <div class="fx-field" style="margin-top:12px;">
+        <label>Merged result <span class="hint">edit freely, then mark resolved — remaining &lt;&lt;&lt; markers block resolution</span></label>
+        <textarea class="fx-input fx-mono" rows="12" @bind="_merged" @bind:after="StateHasChanged" @bind:event="oninput"></textarea>
+    </div>
+    @if (HasMarkers)
+    {
+        <div class="fx-hint" style="color:var(--fx-warn);"><span class="fx-ico"><Icon Name="alert" Size="13" /></span> The merged text still contains conflict markers (&lt;&lt;&lt;&lt;, ====, &gt;&gt;&gt;&gt;).</div>
+    }
+    </ChildContent>
+    <Footer>
+        <button class="fx-btn" @onclick="OnClose" disabled="@Busy">Cancel</button>
+        <button class="fx-btn" @onclick="() => OnTakeSide.InvokeAsync(GitConflictSide.Ours)" disabled="@Busy">Take ours &amp; stage</button>
+        <button class="fx-btn" @onclick="() => OnTakeSide.InvokeAsync(GitConflictSide.Theirs)" disabled="@Busy">Take theirs &amp; stage</button>
+        <button class="fx-btn accent" @onclick="Resolve" disabled="@(Busy || HasMarkers)">Mark resolved &amp; stage</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public GitConflictFile File { get; set; } = default!;
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<string> OnResolve { get; set; }
+    [Parameter] public EventCallback<GitConflictSide> OnTakeSide { get; set; }
+
+    private string _merged = "";
+
+    protected override void OnParametersSet() => _merged = File.Merged;
+
+    private bool HasMarkers =>
+        _merged.Contains("<<<<<<<", StringComparison.Ordinal) ||
+        _merged.Contains("=======", StringComparison.Ordinal) ||
+        _merged.Contains(">>>>>>>", StringComparison.Ordinal);
+
+    private void Load(string? content)
+    {
+        _merged = content ?? "";
+        StateHasChanged();
+    }
+
+    private async Task Resolve()
+    {
+        if (HasMarkers) return;
+        await OnResolve.InvokeAsync(_merged);
+    }
+}

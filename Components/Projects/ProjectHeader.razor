@@ -1,0 +1,64 @@
+@* Consistent project action ribbon + breadcrumbs, shared by all project sub-pages. See docs/24-visual-design-language.md. *@
+@inject NavigationManager Nav
+
+<div class="fx-projhdr">
+    <div class="fx-ribbon">
+        <button class="fx-iconbtn" title="Back to projects" @onclick='() => Nav.NavigateTo("/projects")'>
+            <Icon Name="arrow-left" Size="16" />
+        </button>
+        <nav class="fx-ribbon-nav" aria-label="Project sections">
+            <button class="fx-ribbon-btn @(Active == ProjectPage.Files ? "active" : "")" @onclick='() => Go("")' title="Files">
+                <Icon Name="folder" Size="14" /> <span>Files</span>
+            </button>
+            <button class="fx-ribbon-btn @(Active == ProjectPage.Terraform ? "active" : "")" @onclick='() => Go("/terraform")' title="Terraform commands">
+                <Icon Name="terminal" Size="14" /> <span>Terraform</span>
+            </button>
+            <button class="fx-ribbon-btn @(Active == ProjectPage.Plan ? "active" : "")" @onclick='() => Go("/plan")' title="Plan &amp; apply">
+                <Icon Name="shield" Size="14" /> <span>Plan &amp; apply</span>
+            </button>
+            <button class="fx-ribbon-btn @(Active == ProjectPage.SourceControl ? "active" : "")" @onclick='() => Go("/source-control")' title="Source control">
+                <Icon Name="git-branch" Size="14" /> <span>Source control</span>
+            </button>
+        </nav>
+        <div class="fx-ribbon-actions">
+            @Actions
+        </div>
+    </div>
+    <div class="fx-breadcrumb">
+        <button class="crumb" @onclick='() => Nav.NavigateTo("/projects")'>Projects</button>
+        <span class="sep"><Icon Name="chevron-right" Size="12" /></span>
+        <span class="crumb current">@Name</span>
+        <span class="sep"><Icon Name="chevron-right" Size="12" /></span>
+        <span class="crumb">@ActiveLabel</span>
+        @if (!string.IsNullOrWhiteSpace(Trail))
+        {
+            <span class="sep"><Icon Name="chevron-right" Size="12" /></span>
+            <span class="crumb trail fx-mono">@Trail</span>
+        }
+    </div>
+</div>
+
+@code {
+    public enum ProjectPage { Files, Terraform, Plan, SourceControl }
+
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public string Name { get; set; } = "";
+    [Parameter] public ProjectPage Active { get; set; }
+
+    /// <summary>Optional trailing breadcrumb segment (e.g. the selected file path or environment).</summary>
+    [Parameter] public string? Trail { get; set; }
+
+    /// <summary>Page-specific ribbon actions (chips + buttons), rendered right-aligned and uniformly styled.</summary>
+    [Parameter] public RenderFragment? Actions { get; set; }
+
+    private void Go(string suffix) => Nav.NavigateTo($"/projects/{ProjectId}{suffix}");
+
+    private string ActiveLabel => Active switch
+    {
+        ProjectPage.Files => "Files",
+        ProjectPage.Terraform => "Terraform",
+        ProjectPage.Plan => "Plan & apply",
+        ProjectPage.SourceControl => "Source control",
+        _ => ""
+    };
+}

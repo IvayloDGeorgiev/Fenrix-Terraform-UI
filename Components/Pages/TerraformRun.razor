@@ -21,23 +21,17 @@
 }
 else
 {
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-        <button class="fx-iconbtn" title="Back to project files" @onclick="GoToFiles"><Icon Name="arrow-left" Size="16" /></button>
-        <div style="flex:1;">
-            <h1 class="fx-page-title" style="margin:0;">@_project.Name — Terraform</h1>
-            <div class="fx-page-sub fx-mono" style="margin:2px 0 0;">@_workingDir</div>
-        </div>
-        <span class="fx-chip" title="Resolved Terraform binary">
-            <span class="fx-ico"><Icon Name="hexagon" Size="13" /></span>
-            @(_installation?.Version?.ToString() ?? "not found")
-        </span>
-        <button class="fx-btn sm" @onclick="RefreshBinaryAsync" title="Re-detect the Terraform binary">
-            <span class="fx-ico"><Icon Name="refresh" Size="13" /></span> Detect
-        </button>
-        <button class="fx-btn sm accent" @onclick="GoToPlan" title="Plan, review, and apply changes safely">
-            <span class="fx-ico"><Icon Name="shield" Size="13" /></span> Plan &amp; apply
-        </button>
-    </div>
+    <ProjectHeader ProjectId="ProjectId" Name="@_project.Name" Active="ProjectHeader.ProjectPage.Terraform" Trail="@_workingDir">
+        <Actions>
+            <span class="fx-chip" title="Resolved Terraform binary">
+                <span class="fx-ico"><Icon Name="hexagon" Size="13" /></span>
+                @(_installation?.Version?.ToString() ?? "not found")
+            </span>
+            <button class="fx-btn sm" @onclick="RefreshBinaryAsync" title="Re-detect the Terraform binary">
+                <span class="fx-ico"><Icon Name="refresh" Size="13" /></span> Detect
+            </button>
+        </Actions>
+    </ProjectHeader>
 
     <div class="fx-split">
         <div style="display:flex;flex-direction:column;gap:16px;">
