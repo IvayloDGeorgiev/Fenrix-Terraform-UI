@@ -195,6 +195,15 @@ public sealed class ProjectService(
         await _db.SaveChangesAsync(ct);
     }
 
+    public async Task SetRepositoryConnectionAsync(Guid projectId, Guid? repositoryConnectionId, CancellationToken ct = default)
+    {
+        var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == projectId, ct);
+        if (project is null)
+            return;
+        project.RepositoryConnectionId = repositoryConnectionId;
+        await _db.SaveChangesAsync(ct);
+    }
+
     public async Task RemoveAsync(Guid projectId, CancellationToken ct = default)
     {
         var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == projectId, ct);

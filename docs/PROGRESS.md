@@ -178,7 +178,7 @@ pages, SQLite DB + workspace tree created on first launch._
 
 ## Phase 7 — Provider integrations
 
-_In progress — foundation + all six adapters (code) + Connections hub landed; SourceControl provider panels, credential UX, sparse clone, and fixtures still to come._
+_✅ Complete. Full provider stack — abstraction, six adapters, secret backbone, Connections hub, SourceControl provider panel, repo-connection binding, both Git follow-ups, and fixture/redaction verification. Cloud sign-in stays in Phase 8._
 
 - [x] `IRepositoryProvider` abstraction + `ProviderCapabilities` flags + `IRepositoryProviderFactory` (fall-back-to-Generic-Git) ([09](09-provider-integrations.md))
 - [x] Generic Git · GitHub · Azure DevOps · Bitbucket · GitLab · AWS CodeCommit adapters (raw `HttpClient`, `ProviderResult<T>` typed errors)
@@ -186,9 +186,10 @@ _In progress — foundation + all six adapters (code) + Connections hub landed; 
 - [x] Self-hosted / self-managed base-URL support (GitHub Enterprise, GitLab self-managed, Azure DevOps Server)
 - [x] Secret backbone pulled forward from Phase 8: `ISecretStore` → Windows Credential Manager (P/Invoke); only a `SecretReference` in SQLite
 - [x] Global **Connections hub** (two sections: Git providers + cloud accounts): search, favorites, archive, test, add/edit; virtualized list; `IConnectionService` (EF CRUD + usage-guard)
-- [ ] Surface repo browse/create · PR/MR · pipeline status · branch policies in the **SourceControl** UI (adapters are ready; panels not wired yet)
-- [ ] Bind a repository connection to a project (project settings / new-project) + Git follow-ups: remote credential UX + auth-failure guidance, per-environment sparse clone
-- [ ] Provider JSON fixtures + contract-test cross-check (like the Phase 5/6 git-parser pass); token-leakage/redaction tests
+- [x] **SourceControl provider panel** (`ProviderPanel`, new Provider tab): repo browse/create · PR/MR list+create · pipeline status · branch policy, gated by each adapter's capability flags, with `ProviderResult<T>` guidance surfaced
+- [x] **Repo-connection binding** on a project (`InfrastructureProject.RepositoryConnectionId` via `IProjectService.SetRepositoryConnectionAsync`; bind/change from the Provider tab); host repo id derived from the Git remote via `RepoUrlParser` + `IRepositoryHostService`
+- [x] Git follow-ups: **remote credential UX + auth-failure guidance** (`GitRemoteError` enriches failed remote ops with next steps) and **per-environment sparse clone** (`--filter=blob:none --sparse` + `sparse-checkout set`, path field in the clone dialog)
+- [x] Provider JSON fixtures + contract cross-check (`tests/provider-fixtures/`, 106/106 key-presence + 11/11 `RepoUrlParser` via Python reference port); token-leakage/redaction checks (tokens confined to the secret-store path, never logged/persisted)
 - [ ] Full cloud-connection sign-in (Azure login, AWS SSO, Google ADC) + per-environment binding → **Phase 8**
 
 ## Phase 8 — Cloud connections
@@ -235,6 +236,30 @@ _In progress — foundation + all six adapters (code) + Connections hub landed; 
 - [ ] Provider-schema cache ([07](07-visual-builder.md))
 - [ ] Provider/resource browser · schema forms · HCL preview · generation · templates
 - [ ] Form authoring for all config-side files (providers, versions, variables, outputs, locals, tfvars, backends, data, modules) ([22](22-terraform-files-model.md))
+
+## Phase 10.5 — Terraform-aware code editor
+
+Turn the plain `<textarea>` file editor on the project Files page into a professional, Terraform-focused code editor. Everything runs through the existing process runner + command preview (no shell strings); `fmt`/`validate` use the resolved Terraform binary. The editor foundation + `fmt`/`validate` ribbon are independent of provider/cloud work and can be pulled earlier as a quality pass; the schema-aware completion reuses the Phase 10 provider-schema cache (hence the placement).
+
+**Editor foundation**
+
+- [ ] Replace the textarea with a bundled, **offline** code-editor component — recommend **CodeMirror 6** (lightweight, HCL/Terraform language support; Monaco is the heavier fallback). Blazor↔JS interop wrapper; assets bundled in `wwwroot` (no CDN).
+- [ ] **Line numbers** + current-line highlight + gutter; HCL **syntax highlighting** (blocks, strings, comments, `${…}` interpolations); bracket matching + auto-close; 2-space indent; whitespace/EOL normalization; word-wrap toggle; adjustable font size.
+- [ ] Dark/Light themes matched to the app tokens; reduced-motion aware.
+
+**Editor ribbon (Terraform-specific)**
+
+- [ ] **Format ("Beautify")** — run `terraform fmt -` (stdin→stdout) on the buffer via the command catalog and replace the buffer with canonical formatting; optional **format-on-save** (Settings).
+- [ ] **Validate** — run validate for the environment and surface diagnostics **inline** (gutter markers + squiggles), reusing the Phase 3 validate pipeline/parser.
+- [ ] Comment/uncomment toggle (`#`); find & replace in file; go-to-line.
+- [ ] **Snippet palette** — insert scaffolded HCL blocks (resource, variable, output, provider, module, backend, data, locals).
+- [ ] **Outline / go-to-symbol** — jump to resource/variable/output/module blocks in the current file.
+- [ ] **Reference helpers** — quick-insert `var.` / `local.` / `module.` / `data.` references (schema-aware once the Phase 10 cache exists).
+
+**Safety & consistency**
+
+- [ ] Editor writes go through the same atomic-write + file-history + command-preview path as today (unsaved-changes guard, dirty indicator preserved).
+- [ ] No new secrets/shell strings; `fmt`/`validate` runs recorded as redacted history like other Terraform commands.
 
 ## Phase 11 — Enterprise capability
 

@@ -34,6 +34,9 @@ public interface IGitService
     /// <summary>Reads Git provenance (commit/branch/dirty) for a working directory, for saved-plan metadata.</summary>
     Task<GitProvenance> ReadProvenanceAsync(string workingDirectory, CancellationToken ct = default);
 
+    /// <summary>Reads a remote's URL (default <c>origin</c>), redaction-safe for the caller. Null when none.</summary>
+    Task<string?> GetRemoteUrlAsync(Guid projectId, string? remote = null, CancellationToken ct = default);
+
     // ---- working tree ----
 
     Task<GitStatus> GetStatusAsync(Guid projectId, CancellationToken ct = default);

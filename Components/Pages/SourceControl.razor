@@ -334,6 +334,10 @@ else
             {
                 @SubmodulesTab
             }
+            else if (_tab == Tab.Provider)
+            {
+                <ProviderPanel ProjectId="_projectId" OnBindingChanged="RefreshAsync" />
+            }
             else if (_tab == Tab.Branches)
             {
                 <div class="fx-card">
@@ -495,6 +499,12 @@ else
             </div>
         }
 
+        <div class="fx-field">
+            <label>Sparse checkout <span style="color:var(--fx-faint);">(optional — one path per line, e.g. environments/dev)</span></label>
+            <textarea class="fx-textarea fx-mono" rows="2" placeholder="environments/dev" @bind="_cloneSparsePaths"></textarea>
+            <div class="fx-hint">Leave blank for a full clone. Paths listed here do a partial + sparse checkout of just those directories.</div>
+        </div>
+
         @if (_cloneValidation is not null)
         {
             <div class="fx-hint" style="color:var(--fx-warn);margin-top:4px;"><span class="fx-ico"><Icon Name="alert" Size="13" /></span> @_cloneValidation</div>
@@ -648,11 +658,11 @@ else
 @code {
     [Parameter] public Guid ProjectId { get; set; }
 
-    private enum Tab { Changes, History, Branches, Tags, Stashes, Reflog, Worktrees, Submodules }
+    private enum Tab { Changes, History, Branches, Tags, Stashes, Reflog, Worktrees, Submodules, Provider }
     private enum RemoteOp { Fetch, Pull, Push }
     private enum RightView { Diff, Blame }
     private static readonly Tab[] _tabs =
-        [Tab.Changes, Tab.History, Tab.Branches, Tab.Tags, Tab.Stashes, Tab.Reflog, Tab.Worktrees, Tab.Submodules];
+        [Tab.Changes, Tab.History, Tab.Branches, Tab.Tags, Tab.Stashes, Tab.Reflog, Tab.Worktrees, Tab.Submodules, Tab.Provider];
 
     private List<ProjectSummary> _projectList = [];
     private Guid _projectId;
@@ -728,7 +738,7 @@ else
     // dialogs
     private bool _showPicker;
     private bool _showClone;
-    private string _cloneUrl = "", _cloneName = "", _cloneLocation = "";
+    private string _cloneUrl = "", _cloneName = "", _cloneLocation = "", _cloneSparsePaths = "";
     private bool _cloneToExisting;
     private Guid _cloneExistingId;
     private List<ProjectEnvironment> _cloneEnvironments = [];
@@ -1045,7 +1055,7 @@ else
 
     private async Task OpenCloneDialog()
     {
-        _cloneUrl = ""; _cloneName = ""; _cloneValidation = null; _clonePreview = null;
+        _cloneUrl = ""; _cloneName = ""; _cloneSparsePaths = ""; _cloneValidation = null; _clonePreview = null;
         _cloneToExisting = false; _cloneExistingId = Guid.Empty; _cloneEnvironments = []; _cloneEnvironment = "";
         _cloneLocation = _project is not null ? (Path.GetDirectoryName(_project.RootPath.TrimEnd(Path.DirectorySeparatorChar)) ?? "") : "";
         _output.Clear();
@@ -1106,7 +1116,8 @@ else
     private CommandPreview? BuildClonePreview()
     {
         var folder = string.IsNullOrWhiteSpace(_cloneName) ? FolderFromUrl(_cloneUrl) : _cloneName.Trim();
-        var def = GitCommandCatalog.Clone(_cloneUrl.Trim(), folder);
+        var sparse = !string.IsNullOrWhiteSpace(_cloneSparsePaths);
+        var def = GitCommandCatalog.Clone(_cloneUrl.Trim(), folder, sparse);
         var exe = _ctx?.ExecutablePath ?? "git";
         var parent = CloneParent();
         var req = GitCommandPreviewBuilder.BuildRequest(def, Guid.Empty, exe, parent);
@@ -1132,7 +1143,11 @@ else
         var progress = new Progress<ProcessOutputEvent>(OnLine);
         try
         {
-            var r = await Git.CloneAsync(new GitCloneRequest(_cloneUrl.Trim(), parent, folder), progress);
+            var sparse = _cloneSparsePaths
+                .Split(['\n', '\r', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList();
+            var r = await Git.CloneAsync(
+                new GitCloneRequest(_cloneUrl.Trim(), parent, folder, sparse.Count > 0 ? sparse : null), progress);
             if (!r.Succeeded) { _error = r.Error ?? "Clone failed."; return; }
 
             if (!_cloneToExisting)

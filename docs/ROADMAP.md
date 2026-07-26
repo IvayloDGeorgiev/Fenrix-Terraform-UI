@@ -37,6 +37,9 @@ Deployment board (which version is live per environment) · `Deployment` records
 ### Phase 10 — Visual resource builder
 Provider-schema cache · provider/resource browser · schema-generated forms · required & optional attributes · HCL preview · new-resource generation · simple existing-resource editing · reusable templates · **form-based authoring for every config-side file type** — providers, versions, variables, outputs, locals, tfvars, backends, data sources, modules ([22-terraform-files-model.md](22-terraform-files-model.md)).
 
+### Phase 10.5 — Terraform-aware code editor
+Replace the plain textarea file editor with a professional, offline code editor (recommend CodeMirror 6): line numbers · HCL syntax highlighting · bracket matching · a **Terraform ribbon** — **Format ("Beautify")** via `terraform fmt -` (stdin→stdout), inline **Validate** diagnostics, comment toggle, find/replace, **snippet palette** for HCL blocks, **outline/go-to-symbol**, and `var.`/`local.`/`module.`/`data.` reference helpers. Foundation + fmt/validate are independent of provider/cloud work and can be pulled earlier; schema-aware completion reuses the Phase 10 provider-schema cache. Everything runs through the existing process runner + command preview (no shell strings) and the same atomic-write/file-history path. See [PROGRESS.md](PROGRESS.md#phase-105--terraform-aware-code-editor).
+
 ### Phase 11 — Enterprise capability
 SQL Server metadata database · shared policies · shared templates · central audit · team configuration · role-based restrictions · remote Fenrix execution agent · approval workflows · organisation-controlled Terraform versions · **central agent-run deployment pipelines** with role-based approvals ([20-pipelines-deployments.md](20-pipelines-deployments.md)).
 

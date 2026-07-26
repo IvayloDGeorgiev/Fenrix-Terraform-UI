@@ -103,10 +103,36 @@ public sealed class GitService(
             return GitOperationResult.Fail($"The destination '{request.DestinationPath}' already exists and is not empty.");
 
         Directory.CreateDirectory(request.DestinationParent);
-        var def = GitCommandCatalog.Clone(request.Url, request.FolderName);
+        var def = GitCommandCatalog.Clone(request.Url, request.FolderName, request.IsSparse);
         var req = Request(def, Guid.Empty, install.ExecutablePath, request.DestinationParent);
         var run = await _coordinator.RunAsync(req, output, captureLog: true, ct);
-        return ToResult(run);
+        var result = ToResult(run);
+        if (!result.Succeeded)
+            return result;
+
+        // Sparse: narrow the working tree to the requested environment directories inside the fresh clone.
+        if (request.IsSparse)
+        {
+            var sparseReq = Request(
+                GitCommandCatalog.SparseCheckoutSet(request.SparsePaths!),
+                Guid.Empty, install.ExecutablePath, request.DestinationPath);
+            var sparseRun = await _coordinator.RunAsync(sparseReq, output, captureLog: true, ct);
+            if (!sparseRun.Succeeded)
+                return ToResult(sparseRun);
+        }
+        return result;
+    }
+
+    public async Task<string?> GetRemoteUrlAsync(Guid projectId, string? remote = null, CancellationToken ct = default)
+    {
+        var ctx = await ResolveContextAsync(projectId, ct);
+        if (ctx is null || !ctx.IsRepository)
+            return null;
+        var r = await RunSilentAsync(Request(GitCommandCatalog.RemoteGetUrl(remote), projectId, ctx.ExecutablePath, ctx.WorkingDirectory), ct);
+        if (!r.Result.Succeeded)
+            return null;
+        var url = r.StdOut.Trim();
+        return string.IsNullOrEmpty(url) ? null : url;
     }
 
     public async Task<GitProvenance> ReadProvenanceAsync(string workingDirectory, CancellationToken ct = default)
@@ -720,9 +746,14 @@ public sealed class GitService(
 
     private static GitOperationResult ToResult(GitProcessCoordinator.CoordinatedRun run)
     {
-        var error = run.Succeeded
-            ? null
-            : string.IsNullOrWhiteSpace(run.StandardError) ? run.FullOutput.Trim() : run.StandardError.Trim();
+        if (run.Succeeded)
+            return new GitOperationResult(true, run.Process.ExitCode, run.RunId, run.FullOutput, null);
+
+        var error = string.IsNullOrWhiteSpace(run.StandardError) ? run.FullOutput.Trim() : run.StandardError.Trim();
+        // Enrich recognised remote auth/access failures with actionable guidance (non-remote ops won't match).
+        var guidance = GitRemoteError.Guidance(run.FullOutput);
+        if (guidance is not null)
+            error = string.IsNullOrWhiteSpace(error) ? guidance : $"{error}\n\n{guidance}";
         return new GitOperationResult(run.Succeeded, run.Process.ExitCode, run.RunId, run.FullOutput, error);
     }
 

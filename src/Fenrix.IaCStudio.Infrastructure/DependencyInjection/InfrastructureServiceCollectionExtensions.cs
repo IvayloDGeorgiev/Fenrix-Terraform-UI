@@ -101,6 +101,7 @@ public static class InfrastructureServiceCollectionExtensions
 
         services.AddScoped<IRepositoryProviderFactory, RepositoryProviderFactory>();
         services.AddScoped<IConnectionService, ConnectionService>();
+        services.AddScoped<IRepositoryHostService, RepositoryHostService>();
 
         return services;
     }

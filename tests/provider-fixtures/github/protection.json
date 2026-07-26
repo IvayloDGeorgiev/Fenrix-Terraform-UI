@@ -1,0 +1,1 @@
+{"required_pull_request_reviews":{"required_approving_review_count":2},"required_status_checks":{"strict":true,"contexts":["build","test"]},"required_linear_history":{"enabled":true},"allow_force_pushes":{"enabled":false},"enforce_admins":{"enabled":true}}

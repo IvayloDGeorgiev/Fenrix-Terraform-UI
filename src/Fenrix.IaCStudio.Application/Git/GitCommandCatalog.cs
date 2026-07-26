@@ -45,9 +45,24 @@ public static class GitCommandCatalog
     public static GitCommandDefinition Init() =>
         new(GitCommandKind.Init, "init", ["init"], GitOperationRisk.Safe);
 
-    public static GitCommandDefinition Clone(string url, string folderName) =>
-        new(GitCommandKind.Clone, "clone", ["clone", "--progress", url, folderName],
-            GitOperationRisk.StateChanging, TargetsRemote: true);
+    public static GitCommandDefinition Clone(string url, string folderName, bool sparse = false)
+    {
+        var args = new List<string> { "clone", "--progress" };
+        if (sparse)
+        {
+            // Partial + sparse: fetch no blobs up front and check out only top-level files until
+            // sparse-checkout narrows to the requested directories (cone mode, git 2.25+).
+            args.Add("--filter=blob:none");
+            args.Add("--sparse");
+        }
+        args.Add(url);
+        args.Add(folderName);
+        return new(GitCommandKind.Clone, "clone", args, GitOperationRisk.StateChanging, TargetsRemote: true);
+    }
+
+    /// <summary>Narrows a sparse checkout to the given directories (cone mode). Run inside the cloned repo.</summary>
+    public static GitCommandDefinition SparseCheckoutSet(IReadOnlyList<string> paths) =>
+        new(GitCommandKind.Checkout, "sparse-checkout", Concat(["sparse-checkout", "set"], paths), GitOperationRisk.Safe);
 
     public static GitCommandDefinition RevParseTopLevel() =>
         new(GitCommandKind.RevParseTopLevel, "rev-parse", ["rev-parse", "--show-toplevel"], GitOperationRisk.ReadOnly);
@@ -57,6 +72,11 @@ public static class GitCommandCatalog
 
     public static GitCommandDefinition CurrentBranch() =>
         new(GitCommandKind.RevParseTopLevel, "rev-parse", ["rev-parse", "--abbrev-ref", "HEAD"], GitOperationRisk.ReadOnly);
+
+    /// <summary>Reads a remote's fetch URL (default <c>origin</c>) so the host repo id can be derived.</summary>
+    public static GitCommandDefinition RemoteGetUrl(string? remote) =>
+        new(GitCommandKind.RevParseTopLevel, "remote",
+            ["remote", "get-url", string.IsNullOrWhiteSpace(remote) ? "origin" : remote], GitOperationRisk.ReadOnly);
 
     // ---- working tree ----
 

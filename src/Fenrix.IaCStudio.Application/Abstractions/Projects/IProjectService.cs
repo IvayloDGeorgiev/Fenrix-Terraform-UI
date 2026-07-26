@@ -30,6 +30,9 @@ public interface IProjectService
     /// <summary>Archives or unarchives a project (kept for history; hidden from the default list).</summary>
     Task SetArchivedAsync(Guid projectId, bool archived, CancellationToken ct = default);
 
+    /// <summary>Binds (or clears, when null) the repository connection a project maps to. See docs/26-connections.md.</summary>
+    Task SetRepositoryConnectionAsync(Guid projectId, Guid? repositoryConnectionId, CancellationToken ct = default);
+
     /// <summary>Unregisters a project from Fenrix. Never deletes files on disk.</summary>
     Task RemoveAsync(Guid projectId, CancellationToken ct = default);
 }

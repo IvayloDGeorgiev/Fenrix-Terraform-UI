@@ -1,0 +1,490 @@
+@using Fenrix.IaCStudio.Application.Abstractions.Connections
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Abstractions.Providers
+@using Fenrix.IaCStudio.Contracts.Connections
+@using Fenrix.IaCStudio.Contracts.Providers
+@using Fenrix.IaCStudio.Domain.Cloud
+@using Fenrix.IaCStudio.Domain.Common
+@using Fenrix_Terraform_UI.Components.Connections
+@inject IRepositoryHostService Host
+@inject IConnectionService Connections
+@inject IProjectService Projects
+
+@if (_loading)
+{
+    <div class="fx-card" style="padding:24px;text-align:center;color:var(--fx-dim);">Loading…</div>
+}
+else if (!_binding.HasConnection)
+{
+    <div class="fx-card">
+        <div class="fx-group-head" style="margin-bottom:6px;">Repository host</div>
+        <p class="fx-hint" style="margin-top:0;">
+            Bind a Git host connection to this project to browse repositories, open pull/merge requests,
+            and see pipeline status and branch policies. Core Git works without one.
+        </p>
+
+        @if (_connOptions.Count == 0)
+        {
+            <div class="fx-hint">No repository connections yet. Add one in <a href="/connections">Connections</a>.</div>
+        }
+        else
+        {
+            <div style="display:flex;gap:8px;align-items:center;">
+                <select class="fx-input" @bind="_selectedConn" style="flex:1;">
+                    <option value="">Select a connection…</option>
+                    @foreach (var c in _connOptions)
+                    {
+                        <option value="@c.Id">@c.DisplayName — @ConnectionLabels.Repo(c.ProviderType)</option>
+                    }
+                </select>
+                <button class="fx-btn accent" @onclick="BindAsync" disabled="@(string.IsNullOrEmpty(_selectedConn) || _busy)">Bind</button>
+            </div>
+        }
+    </div>
+}
+else
+{
+    <div class="fx-card" style="margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+            <div class="fx-conn-icon"><Icon Name="git-branch" Size="18" /></div>
+            <div style="flex:1;min-width:0;">
+                <div class="fx-conn-name">@_binding.ConnectionName</div>
+                <div class="fx-conn-meta">
+                    <span class="fx-tag">@ConnectionLabels.Repo(_binding.ProviderType)</span>
+                    @if (!string.IsNullOrEmpty(_binding.RepositoryId)) { <span class="fx-mono">@_binding.RepositoryId</span> }
+                    else { <span style="color:var(--fx-faint);">repo not derived from remote</span> }
+                    @if (!_binding.HasToken) { <span class="fx-connstatus fail">no token</span> }
+                </div>
+            </div>
+            <button class="fx-btn sm" @onclick="ChangeConnectionAsync" disabled="@_busy" title="Bind a different connection">Change</button>
+        </div>
+
+        @if (_binding.ProviderType == RepositoryProviderType.GenericGit || _binding.Capabilities == ProviderCapabilities.None)
+        {
+            <div class="fx-hint" style="margin-top:10px;">
+                This provider has no host API (or is generic Git). Core Git operations still work from the other tabs.
+            </div>
+        }
+    </div>
+
+    @if (_binding.Capabilities != ProviderCapabilities.None)
+    {
+        <div class="fx-tabs" style="margin-bottom:12px;">
+            @foreach (var t in _subTabs)
+            {
+                <button class="fx-tab @(_subTab == t ? "active" : "")" @onclick="() => SwitchSub(t)">@SubLabel(t)</button>
+            }
+        </div>
+
+        @if (_message is not null)
+        {
+            <div class="fx-card @(_messageOk ? "" : "")" style="margin-bottom:12px;padding:10px 14px;font-size:13px;border-color:@(_messageOk ? "var(--fx-accent)" : "var(--fx-danger)");color:@(_messageOk ? "var(--fx-text)" : "var(--fx-danger)");">
+                @_message
+            </div>
+        }
+
+        @if (_subTab == Sub.Repositories)
+        {
+            <div class="fx-card">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                    <span class="fx-group-head" style="flex:1;">Repositories</span>
+                    @if (Cap(ProviderCapabilities.CreateRepository))
+                    {
+                        <button class="fx-btn sm accent" @onclick="() => _showCreateRepo = true" disabled="@_busy"><span class="fx-ico"><Icon Name="plus" Size="12" /></span> New repository</button>
+                    }
+                    <button class="fx-btn sm" @onclick="LoadReposAsync" disabled="@_busy">@(_busy ? "…" : "Reload")</button>
+                </div>
+                @if (_repos.Count == 0)
+                {
+                    <div class="fx-hint">@(_reposLoaded ? "No repositories." : "Reload to list repositories.")</div>
+                }
+                else
+                {
+                    @foreach (var r in _repos)
+                    {
+                        <div class="fx-row">
+                            <span class="lead" style="color:var(--fx-accent);"><Icon Name="git-branch" Size="15" /></span>
+                            <div class="grow">
+                                <div class="title">@r.FullName @if (r.IsPrivate) { <span class="fx-tag muted">private</span> }</div>
+                                @if (!string.IsNullOrEmpty(r.Description)) { <div class="meta">@r.Description</div> }
+                            </div>
+                            @if (!string.IsNullOrEmpty(r.WebUrl)) { <a class="fx-btn sm" href="@r.WebUrl" target="_blank" rel="noopener">Open</a> }
+                        </div>
+                    }
+                }
+            </div>
+        }
+        else if (_subTab == Sub.PullRequests)
+        {
+            <div class="fx-card">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                    <span class="fx-group-head" style="flex:1;">@PrLabelPlural</span>
+                    @if (Cap(ProviderCapabilities.CreatePullRequest))
+                    {
+                        <button class="fx-btn sm accent" @onclick="() => _showCreatePr = true" disabled="@(_busy || string.IsNullOrWhiteSpace(_repoId))"><span class="fx-ico"><Icon Name="git-pull-request" Size="12" /></span> New @PrLabel</button>
+                    }
+                    <button class="fx-btn sm" @onclick="LoadPrsAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_repoId))">@(_busy ? "…" : "Reload")</button>
+                </div>
+                <div class="fx-field" style="margin-bottom:10px;">
+                    <label style="font-size:12px;">Repository id
+                        @if (string.IsNullOrEmpty(_binding.RepositoryId)) { <span style="color:var(--fx-faint);">(couldn't derive from remote — enter e.g. owner/repo)</span> }
+                    </label>
+                    <input class="fx-input" @bind="_repoId" placeholder="owner/repo" />
+                </div>
+                @if (_prs.Count == 0)
+                {
+                    <div class="fx-hint">No @PrLabelPlural.ToLower() loaded.</div>
+                }
+                else
+                {
+                    @foreach (var pr in _prs)
+                    {
+                        <div class="fx-row">
+                            <span class="lead" style="color:var(--fx-accent);"><Icon Name="git-pull-request" Size="15" /></span>
+                            <div class="grow">
+                                <div class="title">#@pr.Number · @pr.Title</div>
+                                <div class="meta">@pr.SourceBranch → @pr.TargetBranch · @pr.State@(pr.Author is null ? "" : $" · {pr.Author}")</div>
+                            </div>
+                            @if (!string.IsNullOrEmpty(pr.WebUrl)) { <a class="fx-btn sm" href="@pr.WebUrl" target="_blank" rel="noopener">Open</a> }
+                        </div>
+                    }
+                }
+            </div>
+        }
+        else if (_subTab == Sub.Pipelines)
+        {
+            <div class="fx-card">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                    <span class="fx-group-head" style="flex:1;">Pipeline status</span>
+                    <input class="fx-input" style="max-width:180px;" placeholder="branch (optional)" @bind="_branch" />
+                    <button class="fx-btn sm" @onclick="LoadPipelinesAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_repoId))">@(_busy ? "…" : "Reload")</button>
+                </div>
+                <div class="fx-field" style="margin-bottom:10px;">
+                    <label style="font-size:12px;">Repository id
+                        @if (string.IsNullOrEmpty(_binding.RepositoryId)) { <span style="color:var(--fx-faint);">(couldn't derive from remote — enter e.g. owner/repo)</span> }
+                    </label>
+                    <input class="fx-input" @bind="_repoId" placeholder="owner/repo" />
+                </div>
+                @if (_pipelines.Count == 0)
+                {
+                    <div class="fx-hint">No runs loaded.</div>
+                }
+                else
+                {
+                    @foreach (var run in _pipelines)
+                    {
+                        <div class="fx-row">
+                            <span class="lead" style="color:@PipelineColor(run.Status);"><Icon Name="@PipelineIcon(run.Status)" Size="15" /></span>
+                            <div class="grow">
+                                <div class="title">@run.Name</div>
+                                <div class="meta">@run.Status@(run.Branch is null ? "" : $" · {run.Branch}")@(run.StartedAt is null ? "" : $" · {run.StartedAt.Value.LocalDateTime:g}")</div>
+                            </div>
+                            @if (!string.IsNullOrEmpty(run.WebUrl)) { <a class="fx-btn sm" href="@run.WebUrl" target="_blank" rel="noopener">Open</a> }
+                        </div>
+                    }
+                }
+            </div>
+        }
+        else if (_subTab == Sub.Policy)
+        {
+            <div class="fx-card">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                    <span class="fx-group-head" style="flex:1;">Branch policy</span>
+                    <input class="fx-input" style="max-width:180px;" placeholder="branch" @bind="_branch" />
+                    <button class="fx-btn sm" @onclick="LoadPolicyAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_repoId) || string.IsNullOrWhiteSpace(_branch))">@(_busy ? "…" : "Check")</button>
+                </div>
+                <div class="fx-field" style="margin-bottom:10px;">
+                    <label style="font-size:12px;">Repository id
+                        @if (string.IsNullOrEmpty(_binding.RepositoryId)) { <span style="color:var(--fx-faint);">(couldn't derive from remote — enter e.g. owner/repo)</span> }
+                    </label>
+                    <input class="fx-input" @bind="_repoId" placeholder="owner/repo" />
+                </div>
+                @if (_policy is null)
+                {
+                    <div class="fx-hint">Enter a branch and check its protection rules.</div>
+                }
+                else
+                {
+                    <div style="font-size:13px;line-height:1.9;">
+                        <div><b>@_policy.Branch</b></div>
+                        <div>@Flag(_policy.RequirePullRequest) Require @PrLabel to merge@(_policy.RequiredApprovals > 0 ? $" · {_policy.RequiredApprovals} approval(s)" : "")</div>
+                        <div>@Flag(_policy.RequireStatusChecks) Require status checks@(_policy.RequireUpToDate ? " (up to date)" : "")</div>
+                        <div>@Flag(_policy.RequireLinearHistory) Require linear history</div>
+                        <div>@Flag(_policy.BlockForcePush) Block force-push</div>
+                        <div>@Flag(_policy.EnforceForAdmins) Enforced for admins</div>
+                        @if (_policy.RequiredStatusChecks.Count > 0)
+                        {
+                            <div class="fx-hint" style="margin-top:6px;">Checks: @string.Join(", ", _policy.RequiredStatusChecks)</div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    }
+}
+
+@if (_showCreateRepo)
+{
+    <Modal Title="New repository" IconName="git-branch" OnClose="() => _showCreateRepo = false">
+        <ChildContent>
+            <div class="fx-field"><label>Name</label><input class="fx-input" @bind="_newRepoName" /></div>
+            <div class="fx-field"><label>Description <span style="color:var(--fx-faint);">(optional)</span></label><input class="fx-input" @bind="_newRepoDesc" /></div>
+            <label style="display:flex;align-items:center;gap:7px;font-size:13px;"><input type="checkbox" @bind="_newRepoPrivate" /> Private</label>
+            @if (_createError is not null) { <div class="fx-error">@_createError</div> }
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn ghost" @onclick="() => _showCreateRepo = false">Cancel</button>
+            <button class="fx-btn accent" @onclick="CreateRepoAsync" disabled="@_busy">@(_busy ? "Creating…" : "Create")</button>
+        </Footer>
+    </Modal>
+}
+
+@if (_showCreatePr)
+{
+    <Modal Title="@($"New {PrLabel}")" IconName="git-pull-request" OnClose="() => _showCreatePr = false">
+        <ChildContent>
+            <div class="fx-field"><label>Title</label><input class="fx-input" @bind="_prTitle" /></div>
+            <div class="fx-grid-2">
+                <div class="fx-field"><label>Source branch</label><input class="fx-input" @bind="_prSource" /></div>
+                <div class="fx-field"><label>Target branch</label><input class="fx-input" @bind="_prTarget" /></div>
+            </div>
+            <div class="fx-field"><label>Description <span style="color:var(--fx-faint);">(optional)</span></label><textarea class="fx-textarea" @bind="_prBody"></textarea></div>
+            <label style="display:flex;align-items:center;gap:7px;font-size:13px;"><input type="checkbox" @bind="_prDraft" /> Draft</label>
+            @if (_createError is not null) { <div class="fx-error">@_createError</div> }
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn ghost" @onclick="() => _showCreatePr = false">Cancel</button>
+            <button class="fx-btn accent" @onclick="CreatePrAsync" disabled="@_busy">@(_busy ? "Opening…" : $"Open {PrLabel}")</button>
+        </Footer>
+    </Modal>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public EventCallback OnBindingChanged { get; set; }
+
+    private enum Sub { Repositories, PullRequests, Pipelines, Policy }
+
+    private ProjectHostBinding _binding = ProjectHostBinding.None;
+    private bool _loading = true;
+    private bool _busy;
+    private string? _message;
+    private bool _messageOk;
+
+    private List<RepositoryConnection> _connOptions = [];
+    private string _selectedConn = "";
+
+    private Sub _subTab = Sub.Repositories;
+    private List<RemoteRepository> _repos = [];
+    private bool _reposLoaded;
+    private List<PullRequestSummary> _prs = [];
+    private List<PipelineRun> _pipelines = [];
+    private BranchPolicy? _policy;
+
+    private string _repoId = "";
+    private string _branch = "";
+
+    // create repo
+    private bool _showCreateRepo;
+    private string _newRepoName = "", _newRepoDesc = "";
+    private bool _newRepoPrivate = true;
+    // create PR
+    private bool _showCreatePr;
+    private string _prTitle = "", _prSource = "", _prTarget = "main", _prBody = "";
+    private bool _prDraft;
+    private string? _createError;
+
+    private Guid _loadedProject;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ProjectId != _loadedProject)
+        {
+            _loadedProject = ProjectId;
+            await ReloadAsync();
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        _message = null;
+        _binding = await Host.DescribeAsync(ProjectId);
+        if (!_binding.HasConnection)
+            _connOptions = (await Connections.GetRepositoryConnectionsAsync(new ConnectionFilter(Take: 500))).ToList();
+        else
+        {
+            _repoId = _binding.RepositoryId ?? "";
+            _branch = _binding.CurrentBranch ?? "";
+            _subTab = FirstAvailableSub();
+        }
+        _loading = false;
+    }
+
+    private bool Cap(ProviderCapabilities c) => _binding.Capabilities.HasFlag(c);
+    private bool Mr => Cap(ProviderCapabilities.UsesMergeRequestTerminology);
+    private string PrLabel => Mr ? "merge request" : "pull request";
+    private string PrLabelPlural => Mr ? "Merge requests" : "Pull requests";
+
+    private IEnumerable<Sub> _subTabs
+    {
+        get
+        {
+            if (Cap(ProviderCapabilities.BrowseRepositories)) yield return Sub.Repositories;
+            if (Cap(ProviderCapabilities.ListPullRequests) || Cap(ProviderCapabilities.CreatePullRequest)) yield return Sub.PullRequests;
+            if (Cap(ProviderCapabilities.PipelineStatus)) yield return Sub.Pipelines;
+            if (Cap(ProviderCapabilities.BranchPolicies)) yield return Sub.Policy;
+        }
+    }
+
+    private Sub FirstAvailableSub() => _subTabs.DefaultIfEmpty(Sub.Repositories).First();
+
+    private string SubLabel(Sub s) => s switch
+    {
+        Sub.Repositories => "Repositories",
+        Sub.PullRequests => PrLabelPlural,
+        Sub.Pipelines => "Pipelines",
+        Sub.Policy => "Branch policy",
+        _ => s.ToString()
+    };
+
+    private void SwitchSub(Sub s) { _subTab = s; _message = null; }
+
+    private async Task BindAsync()
+    {
+        if (!Guid.TryParse(_selectedConn, out var id)) return;
+        _busy = true;
+        try
+        {
+            await Projects.SetRepositoryConnectionAsync(ProjectId, id);
+            await ReloadAsync();
+            await OnBindingChanged.InvokeAsync();
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task ChangeConnectionAsync()
+    {
+        await Projects.SetRepositoryConnectionAsync(ProjectId, null);
+        await ReloadAsync();
+        await OnBindingChanged.InvokeAsync();
+    }
+
+    private async Task LoadReposAsync()
+    {
+        _busy = true; _message = null;
+        try
+        {
+            var r = await Host.GetRepositoriesAsync(ProjectId);
+            _reposLoaded = true;
+            if (r.Succeeded) _repos = r.Value!.ToList();
+            else ShowFail(r);
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task LoadPrsAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_repoId)) return;
+        _busy = true; _message = null;
+        try
+        {
+            var r = await Host.GetPullRequestsAsync(ProjectId, _repoId.Trim());
+            if (r.Succeeded) _prs = r.Value!.ToList();
+            else ShowFail(r);
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task LoadPipelinesAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_repoId)) return;
+        _busy = true; _message = null;
+        try
+        {
+            var r = await Host.GetPipelineRunsAsync(ProjectId, _repoId.Trim(), string.IsNullOrWhiteSpace(_branch) ? null : _branch.Trim());
+            if (r.Succeeded) _pipelines = r.Value!.ToList();
+            else ShowFail(r);
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task LoadPolicyAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_repoId) || string.IsNullOrWhiteSpace(_branch)) return;
+        _busy = true; _message = null; _policy = null;
+        try
+        {
+            var r = await Host.GetBranchPolicyAsync(ProjectId, _repoId.Trim(), _branch.Trim());
+            if (r.Succeeded) _policy = r.Value;
+            else ShowFail(r);
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task CreateRepoAsync()
+    {
+        _createError = null;
+        if (string.IsNullOrWhiteSpace(_newRepoName)) { _createError = "A name is required."; return; }
+        _busy = true;
+        try
+        {
+            var r = await Host.CreateRepositoryAsync(ProjectId, new CreateRepositoryRequest(
+                _newRepoName.Trim(), string.IsNullOrWhiteSpace(_newRepoDesc) ? null : _newRepoDesc, _newRepoPrivate));
+            if (r.Succeeded)
+            {
+                _showCreateRepo = false;
+                _newRepoName = _newRepoDesc = "";
+                ShowOk($"Created {r.Value!.FullName}.");
+                await LoadReposAsync();
+            }
+            else { _createError = r.Guidance ?? r.ErrorMessage; }
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task CreatePrAsync()
+    {
+        _createError = null;
+        if (string.IsNullOrWhiteSpace(_prTitle) || string.IsNullOrWhiteSpace(_prSource) || string.IsNullOrWhiteSpace(_prTarget))
+        { _createError = "Title, source and target are required."; return; }
+        _busy = true;
+        try
+        {
+            var r = await Host.CreatePullRequestAsync(ProjectId, _repoId.Trim(), new CreatePullRequestRequest(
+                _prTitle.Trim(), _prSource.Trim(), _prTarget.Trim(),
+                string.IsNullOrWhiteSpace(_prBody) ? null : _prBody, _prDraft));
+            if (r.Succeeded)
+            {
+                _showCreatePr = false;
+                _prTitle = _prBody = "";
+                ShowOk($"Opened #{r.Value!.Number}.");
+                await LoadPrsAsync();
+            }
+            else { _createError = r.Guidance ?? r.ErrorMessage; }
+        }
+        finally { _busy = false; }
+    }
+
+    private void ShowFail<T>(ProviderResult<T> r) { _message = r.Guidance ?? r.ErrorMessage; _messageOk = false; }
+    private void ShowOk(string msg) { _message = msg; _messageOk = true; }
+
+    private static string Flag(bool on) => on ? "✓" : "—";
+
+    private static string PipelineIcon(PipelineStatus s) => s switch
+    {
+        PipelineStatus.Succeeded => "check",
+        PipelineStatus.Failed => "x",
+        PipelineStatus.Running => "refresh",
+        PipelineStatus.Cancelled => "stop",
+        _ => "circle-dot"
+    };
+
+    private static string PipelineColor(PipelineStatus s) => s switch
+    {
+        PipelineStatus.Succeeded => "var(--fx-success)",
+        PipelineStatus.Failed => "var(--fx-danger)",
+        PipelineStatus.Running => "var(--fx-accent)",
+        _ => "var(--fx-dim)"
+    };
+}

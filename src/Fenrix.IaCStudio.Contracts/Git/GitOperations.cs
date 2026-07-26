@@ -7,11 +7,18 @@ public sealed record GitCommitRequest(
     bool Amend = false,
     bool SignOff = false);
 
-/// <summary>A request to clone a remote into a destination folder. See docs/08-git-engine.md.</summary>
-public sealed record GitCloneRequest(string Url, string DestinationParent, string FolderName)
+/// <summary>
+/// A request to clone a remote into a destination folder. When <see cref="SparsePaths"/> is non-empty the
+/// clone is a partial + sparse checkout (<c>--filter=blob:none --sparse</c>) that materialises only those
+/// directories — used to check out a single environment's path. See docs/08-git-engine.md.
+/// </summary>
+public sealed record GitCloneRequest(
+    string Url, string DestinationParent, string FolderName, IReadOnlyList<string>? SparsePaths = null)
 {
     /// <summary>The full destination path the clone will be created at.</summary>
     public string DestinationPath => System.IO.Path.Combine(DestinationParent, FolderName);
+
+    public bool IsSparse => SparsePaths is { Count: > 0 };
 }
 
 /// <summary>
