@@ -29,6 +29,23 @@
     </label>
 </div>
 
+<div class="fx-card" style="margin-bottom:16px;">
+    <h2 style="font-size:15px;margin:0 0 4px;">Security</h2>
+    <p style="font-size:12.5px;color:var(--fx-dim);margin:0 0 12px;">
+        Files on disk are the source of truth. Deletes always go to the Recycle Bin and stay recoverable from history.
+    </p>
+
+    <label style="display:flex;align-items:flex-start;gap:9px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" checked="@_allowInAppDelete" @onchange="OnAllowDeleteChanged" style="margin-top:2px;" />
+        <span>
+            Allow in-app deletion of tracked files
+            <span style="display:block;color:var(--fx-faint);font-size:12px;margin-top:2px;">
+                Off by default. When off, tracked files can only be deleted from Explorer (still recoverable).
+            </span>
+        </span>
+    </label>
+</div>
+
 <div class="fx-card">
     <h2 style="font-size:15px;margin:0 0 12px;">Workspace</h2>
     <div style="font-size:13px;line-height:1.9;">
@@ -43,11 +60,15 @@
 
 @code {
     private bool _reducedMotion;
+    private bool _allowInAppDelete;
 
     protected override void OnInitialized() => Theme.Changed += OnChanged;
 
     protected override async Task OnInitializedAsync()
-        => _reducedMotion = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.ReducedMotion, false);
+    {
+        _reducedMotion = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.ReducedMotion, false);
+        _allowInAppDelete = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.AllowInAppDelete, false);
+    }
 
     private string Active(string theme) => Theme.Theme == theme ? "accent" : "";
 
@@ -58,6 +79,12 @@
         _reducedMotion = e.Value is true;
         await SettingsSvc.SetAsync(FenrixSettingKeys.ReducedMotion, _reducedMotion.ToString());
         await JS.InvokeVoidAsync("fenrix.setReducedMotion", _reducedMotion);
+    }
+
+    private async Task OnAllowDeleteChanged(ChangeEventArgs e)
+    {
+        _allowInAppDelete = e.Value is true;
+        await SettingsSvc.SetAsync(FenrixSettingKeys.AllowInAppDelete, _allowInAppDelete.ToString());
     }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);

@@ -1,13 +1,19 @@
 using Fenrix.IaCStudio.Application.Abstractions;
+using Fenrix.IaCStudio.Application.Abstractions.Connections;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
+using Fenrix.IaCStudio.Application.Abstractions.Providers;
+using Fenrix.IaCStudio.Application.Abstractions.Security;
 using Fenrix.IaCStudio.Application.Abstractions.Terraform;
+using Fenrix.IaCStudio.Infrastructure.Connections;
 using Fenrix.IaCStudio.Infrastructure.Files;
 using Fenrix.IaCStudio.Infrastructure.Git;
 using Fenrix.IaCStudio.Infrastructure.Persistence;
 using Fenrix.IaCStudio.Infrastructure.Processes;
 using Fenrix.IaCStudio.Infrastructure.Projects;
+using Fenrix.IaCStudio.Infrastructure.Providers;
+using Fenrix.IaCStudio.Infrastructure.Security;
 using Fenrix.IaCStudio.Infrastructure.Terraform;
 using Fenrix.IaCStudio.Infrastructure.Workspace;
 using Microsoft.EntityFrameworkCore;
@@ -76,6 +82,25 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<GitProcessCoordinator>();
         services.AddScoped<IGitRepositoryInitializer, GitRepositoryInitializer>();
         services.AddScoped<IGitService, GitService>();
+
+        // Provider integrations, secrets & the Connections library (Phase 7). Secret backends are stateless
+        // singletons; the secret-store facade dispatches by provider. Repository-host adapters are registered
+        // as IRepositoryProvider and resolved by the (scoped) factory, which reads tokens from the store
+        // just-in-time. The connection service touches the DB and is scoped. Host adapters use typed
+        // HttpClients from the factory. See docs/09-provider-integrations.md, docs/11-secrets.md, docs/26-connections.md.
+        services.AddHttpClient();
+        services.AddSingleton<WindowsCredentialManagerStore>();
+        services.AddSingleton<ISecretStore, SecretStore>();
+
+        services.AddSingleton<IRepositoryProvider, GenericGitProvider>();
+        services.AddSingleton<IRepositoryProvider, GitHubProvider>();
+        services.AddSingleton<IRepositoryProvider, AzureDevOpsProvider>();
+        services.AddSingleton<IRepositoryProvider, BitbucketProvider>();
+        services.AddSingleton<IRepositoryProvider, GitLabProvider>();
+        services.AddSingleton<IRepositoryProvider, AwsCodeCommitProvider>();
+
+        services.AddScoped<IRepositoryProviderFactory, RepositoryProviderFactory>();
+        services.AddScoped<IConnectionService, ConnectionService>();
 
         return services;
     }

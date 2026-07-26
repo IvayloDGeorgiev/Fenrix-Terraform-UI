@@ -121,6 +121,12 @@ else
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
                     <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="restore" Size="16" /></span>
                     <span style="flex:1;font-size:14px;font-weight:500;">Recoverable items</span>
+                    @if (_recoverable.Count > 0)
+                    {
+                        <button class="fx-btn sm danger" @onclick="ConfirmClearAll" title="Permanently discard all recoverable items">
+                            <span class="fx-ico"><Icon Name="trash" Size="13" /></span> Clear all
+                        </button>
+                    }
                 </div>
                 <p class="fx-hint" style="margin-top:0;">Files removed from disk (in Fenrix or externally). Their last content is retained here.</p>
                 @foreach (var r in _recoverable)
@@ -132,6 +138,7 @@ else
                             <div class="meta">deleted @r.DeletedAt.LocalDateTime.ToString("g") · @FormatSize(r.SizeBytes)</div>
                         </div>
                         <button class="fx-btn sm accent" @onclick="() => RestoreAsync(r.FileVersionId, r.RelativePath)"><span class="fx-ico"><Icon Name="restore" Size="13" /></span> Restore</button>
+                        <button class="fx-iconbtn danger" title="Discard permanently" @onclick="() => ConfirmPurgeItem(r)"><Icon Name="x" Size="15" /></button>
                     </div>
                 }
                 @if (_recoverable.Count == 0)
@@ -409,6 +416,31 @@ else
             if (_selectedPath == node.RelativePath) { _selectedPath = null; _mode = Mode.Welcome; }
             await ReloadTreeAsync();
             await ReloadRecoverableAsync();
+        };
+        _confirmOpen = true;
+    }
+
+    private void ConfirmPurgeItem(RecoverableFile r)
+    {
+        _confirmMessage = $"Permanently discard the recoverable content for '{r.RelativePath}'? This can't be undone.";
+        _confirmAction = async () =>
+        {
+            await History.PurgeRecoverableItemAsync(r.FileIdentityId);
+            await ReloadRecoverableAsync();
+            if (_recoverable.Count == 0 && _mode == Mode.Recoverable)
+                _mode = Mode.Welcome;
+        };
+        _confirmOpen = true;
+    }
+
+    private void ConfirmClearAll()
+    {
+        _confirmMessage = $"Permanently discard all {_recoverable.Count} recoverable item(s)? Their retained content will be gone for good. Files currently on disk are not affected.";
+        _confirmAction = async () =>
+        {
+            await History.PurgeAllRecoverableAsync(ProjectId);
+            await ReloadRecoverableAsync();
+            _mode = Mode.Welcome;
         };
         _confirmOpen = true;
     }

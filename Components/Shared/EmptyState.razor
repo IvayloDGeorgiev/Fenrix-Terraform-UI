@@ -1,0 +1,18 @@
+@* Reusable empty-state card. *@
+
+<div class="fx-card fx-empty">
+    <div class="fx-empty-icon"><Icon Name="@IconName" Size="28" /></div>
+    <h2>@Title</h2>
+    @if (!string.IsNullOrEmpty(Text))
+    {
+        <p>@Text</p>
+    }
+    @ChildContent
+</div>
+
+@code {
+    [Parameter] public string IconName { get; set; } = "plug";
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public string? Text { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

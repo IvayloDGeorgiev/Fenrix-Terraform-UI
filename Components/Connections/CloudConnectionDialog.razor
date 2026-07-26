@@ -1,0 +1,156 @@
+@using Fenrix.IaCStudio.Application.Abstractions.Connections
+@using Fenrix.IaCStudio.Contracts.Connections
+@using Fenrix.IaCStudio.Domain.Common
+@inject IConnectionService Connections
+
+<Modal Title="@(_isNew ? "New cloud connection" : "Edit cloud connection")" IconName="cloud" Wide="true" OnClose="Cancel">
+    <ChildContent>
+        <div class="fx-field">
+            <label>Provider</label>
+            <select class="fx-input" @bind="_providerType">
+                @foreach (var pt in new[] { CloudProviderType.Azure, CloudProviderType.Aws, CloudProviderType.GoogleCloud })
+                {
+                    <option value="@pt">@ConnectionLabels.Cloud(pt)</option>
+                }
+            </select>
+        </div>
+
+        <div class="fx-field">
+            <label>Display name</label>
+            <input class="fx-input" @bind="_displayName" placeholder="e.g. Acme Prod (Azure)" />
+        </div>
+
+        <div class="fx-field">
+            <label>Description <span style="color:var(--fx-faint);">(optional)</span></label>
+            <input class="fx-input" @bind="_description" />
+        </div>
+
+        <div class="fx-grid-2">
+            <div class="fx-field">
+                <label>@AccountLabel <span style="color:var(--fx-faint);">(optional)</span></label>
+                <input class="fx-input" @bind="_tenantOrAccount" />
+            </div>
+            <div class="fx-field">
+                <label>@SubscriptionLabel <span style="color:var(--fx-faint);">(optional)</span></label>
+                <input class="fx-input" @bind="_subscriptionOrProject" />
+            </div>
+        </div>
+
+        <div class="fx-grid-2">
+            <div class="fx-field">
+                <label>Region <span style="color:var(--fx-faint);">(optional)</span></label>
+                <input class="fx-input" @bind="_region" placeholder="e.g. eu-west-1" />
+            </div>
+            <div class="fx-field">
+                <label>Profile <span style="color:var(--fx-faint);">(optional)</span></label>
+                <input class="fx-input" @bind="_profile" placeholder="AWS profile / gcloud config" />
+            </div>
+        </div>
+
+        <div class="fx-hint" style="margin-top:2px;">
+            Deeper sign-in (Azure login, AWS SSO, Google ADC) and per-environment binding land with Phase 8.
+            This stores identifying metadata plus an optional secret reference — never a secret value.
+        </div>
+
+        <label style="display:flex;align-items:center;gap:7px;font-size:13px;margin-top:8px;">
+            <input type="checkbox" @bind="_isFavorite" /> Favorite
+        </label>
+
+        @if (_error is not null)
+        {
+            <div class="fx-error">@_error</div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="fx-btn ghost" @onclick="Cancel" disabled="@_busy">Cancel</button>
+        <button class="fx-btn accent" @onclick="SaveAsync" disabled="@_busy">@(_busy ? "Saving…" : "Save")</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public Guid? ConnectionId { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private bool _isNew => ConnectionId is null;
+    private CloudProviderType _providerType = CloudProviderType.Azure;
+    private string _displayName = "";
+    private string? _description;
+    private string? _tenantOrAccount;
+    private string? _subscriptionOrProject;
+    private string? _region;
+    private string? _profile;
+    private bool _isFavorite;
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ConnectionId is { } id)
+        {
+            var c = await Connections.GetCloudConnectionAsync(id);
+            if (c is not null)
+            {
+                _providerType = c.ProviderType == CloudProviderType.Unknown ? CloudProviderType.Azure : c.ProviderType;
+                _displayName = c.DisplayName;
+                _description = c.Description;
+                _tenantOrAccount = c.TenantOrAccountId;
+                _subscriptionOrProject = c.SubscriptionOrProjectId;
+                _region = c.Region;
+                _profile = c.ProfileName;
+                _isFavorite = c.IsFavorite;
+            }
+        }
+    }
+
+    private string AccountLabel => _providerType switch
+    {
+        CloudProviderType.Azure => "Tenant ID",
+        CloudProviderType.Aws => "Account ID",
+        CloudProviderType.GoogleCloud => "Organisation",
+        _ => "Account"
+    };
+    private string SubscriptionLabel => _providerType switch
+    {
+        CloudProviderType.Azure => "Subscription ID",
+        CloudProviderType.Aws => "(n/a)",
+        CloudProviderType.GoogleCloud => "Project ID",
+        _ => "Subscription / project"
+    };
+
+    private Task Cancel() => OnClose.InvokeAsync();
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_displayName))
+        {
+            _error = "Please enter a display name.";
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var request = new SaveCloudConnectionRequest(
+                ConnectionId,
+                _providerType,
+                _displayName.Trim(),
+                _description,
+                ClientId: null,
+                _tenantOrAccount,
+                _subscriptionOrProject,
+                _region,
+                _profile,
+                Tags: null,
+                _isFavorite);
+            await Connections.SaveCloudConnectionAsync(request);
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _busy = false;
+        }
+    }
+}

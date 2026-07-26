@@ -25,4 +25,16 @@ public interface IFileHistoryStore
 
     /// <summary>Writes a version's content back to disk atomically and records a Restored version.</summary>
     Task RestoreAsync(Guid fileVersionId, string targetFullPath, CancellationToken ct = default);
+
+    /// <summary>
+    /// Permanently discards the recoverable content for one deleted file (its identity + versions, freeing any
+    /// blobs no longer referenced). Only affects an already-deleted item; live-file history is untouched.
+    /// </summary>
+    Task PurgeRecoverableItemAsync(Guid fileIdentityId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Permanently discards every recoverable (deleted) file for a project. Returns how many were purged.
+    /// Live files and their history are untouched.
+    /// </summary>
+    Task<int> PurgeAllRecoverableAsync(Guid projectId, CancellationToken ct = default);
 }

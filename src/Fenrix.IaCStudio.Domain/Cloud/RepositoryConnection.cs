@@ -11,6 +11,7 @@ public sealed class RepositoryConnection
     public Guid Id { get; init; } = Guid.NewGuid();
     public RepositoryProviderType ProviderType { get; set; } = RepositoryProviderType.GenericGit;
     public string DisplayName { get; set; } = string.Empty;
+    public string? Description { get; set; }
 
     public Guid? ClientId { get; set; }
 
@@ -23,4 +24,8 @@ public sealed class RepositoryConnection
     public List<string> Tags { get; set; } = [];
     public bool IsFavorite { get; set; }
     public bool IsArchived { get; set; }
+
+    public ConnectionStatus LastStatus { get; set; } = ConnectionStatus.Untested;
+    public DateTimeOffset? LastTestedAt { get; set; }
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 }

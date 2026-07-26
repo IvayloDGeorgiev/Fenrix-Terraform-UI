@@ -217,6 +217,65 @@ public sealed class FileHistoryStore(
         _logger.LogInformation("Restored {Path} from version {Version}", targetFullPath, fileVersionId);
     }
 
+    public async Task PurgeRecoverableItemAsync(Guid fileIdentityId, CancellationToken ct = default)
+    {
+        var identity = await _db.FileIdentities.FirstOrDefaultAsync(i => i.Id == fileIdentityId, ct);
+        // Only purge a genuinely-deleted (recoverable) item; never touch a live file's history.
+        if (identity is null || !identity.IsDeleted)
+            return;
+        await PurgeIdentitiesAsync([fileIdentityId], ct);
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task<int> PurgeAllRecoverableAsync(Guid projectId, CancellationToken ct = default)
+    {
+        var deletedIdentityIds = await _db.FileIdentities
+            .Where(i => i.ProjectId == projectId && i.IsDeleted)
+            .Select(i => i.Id)
+            .ToListAsync(ct);
+
+        if (deletedIdentityIds.Count == 0)
+            return 0;
+
+        await PurgeIdentitiesAsync(deletedIdentityIds, ct);
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation("Purged {Count} recoverable item(s) for project {Project}", deletedIdentityIds.Count, projectId);
+        return deletedIdentityIds.Count;
+    }
+
+    /// <summary>
+    /// Removes the versions + identities for the given deleted files, decrementing each referenced blob's
+    /// refcount and deleting blobs that drop to zero (they may be shared via SHA-256 dedup). Caller saves.
+    /// </summary>
+    private async Task PurgeIdentitiesAsync(IReadOnlyList<Guid> identityIds, CancellationToken ct)
+    {
+        var versions = await _db.FileVersions
+            .Where(v => identityIds.Contains(v.FileIdentityId))
+            .ToListAsync(ct);
+
+        var blobDecrements = versions
+            .Where(v => v.BlobId != null)
+            .GroupBy(v => v.BlobId!.Value)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        _db.FileVersions.RemoveRange(versions);
+
+        if (blobDecrements.Count > 0)
+        {
+            var blobIds = blobDecrements.Keys.ToList();
+            var blobs = await _db.FileBlobs.Where(b => blobIds.Contains(b.Id)).ToListAsync(ct);
+            foreach (var blob in blobs)
+            {
+                blob.RefCount -= blobDecrements[blob.Id];
+                if (blob.RefCount <= 0)
+                    _db.FileBlobs.Remove(blob);
+            }
+        }
+
+        var identities = await _db.FileIdentities.Where(i => identityIds.Contains(i.Id)).ToListAsync(ct);
+        _db.FileIdentities.RemoveRange(identities);
+    }
+
     // ---- helpers ----
 
     private async Task<FileIdentity> GetOrCreateIdentityAsync(Guid projectId, string relativePath, CancellationToken ct)

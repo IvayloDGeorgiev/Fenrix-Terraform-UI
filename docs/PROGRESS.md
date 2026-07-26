@@ -178,9 +178,18 @@ pages, SQLite DB + workspace tree created on first launch._
 
 ## Phase 7 — Provider integrations
 
-- [ ] Generic Git · GitHub · Azure DevOps ([09](09-provider-integrations.md))
-- [ ] Bitbucket · GitLab · AWS CodeCommit · self-hosted
-- [ ] Repo browse/create · PR/MR · pipeline status · branch policies
+_In progress — foundation + all six adapters (code) + Connections hub landed; SourceControl provider panels, credential UX, sparse clone, and fixtures still to come._
+
+- [x] `IRepositoryProvider` abstraction + `ProviderCapabilities` flags + `IRepositoryProviderFactory` (fall-back-to-Generic-Git) ([09](09-provider-integrations.md))
+- [x] Generic Git · GitHub · Azure DevOps · Bitbucket · GitLab · AWS CodeCommit adapters (raw `HttpClient`, `ProviderResult<T>` typed errors)
+      — GitHub/GitLab/Azure DevOps/Bitbucket implement repo browse/create · PR/MR · pipeline status · branch policies; CodeCommit is a minimal adapter (IAM/SigV4 REST deferred to Phase 8)
+- [x] Self-hosted / self-managed base-URL support (GitHub Enterprise, GitLab self-managed, Azure DevOps Server)
+- [x] Secret backbone pulled forward from Phase 8: `ISecretStore` → Windows Credential Manager (P/Invoke); only a `SecretReference` in SQLite
+- [x] Global **Connections hub** (two sections: Git providers + cloud accounts): search, favorites, archive, test, add/edit; virtualized list; `IConnectionService` (EF CRUD + usage-guard)
+- [ ] Surface repo browse/create · PR/MR · pipeline status · branch policies in the **SourceControl** UI (adapters are ready; panels not wired yet)
+- [ ] Bind a repository connection to a project (project settings / new-project) + Git follow-ups: remote credential UX + auth-failure guidance, per-environment sparse clone
+- [ ] Provider JSON fixtures + contract-test cross-check (like the Phase 5/6 git-parser pass); token-leakage/redaction tests
+- [ ] Full cloud-connection sign-in (Azure login, AWS SSO, Google ADC) + per-environment binding → **Phase 8**
 
 ## Phase 8 — Cloud connections
 

@@ -1,13 +1,266 @@
 @page "/connections"
+@using Fenrix.IaCStudio.Application.Abstractions.Connections
+@using Fenrix.IaCStudio.Contracts.Connections
+@using Fenrix.IaCStudio.Domain.Cloud
+@using Fenrix.IaCStudio.Domain.Common
+@inject IConnectionService Hub
 
 <h1 class="fx-page-title">Connections</h1>
-<p class="fx-page-sub">Your global library of cloud and repository connections. Bound per environment; secrets are never stored here.</p>
+<p class="fx-page-sub">Your global library of Git hosts and cloud accounts. Bound per project (Git) or per environment (cloud); secrets live in the OS store — only references are saved here.</p>
 
-<div class="fx-card" style="text-align:center;padding:40px;">
-    <div style="color:var(--fx-accent);margin-bottom:10px;"><Icon Name="plug" Size="28" /></div>
-    <h2 style="font-size:16px;margin:0 0 6px;">No connections yet</h2>
-    <p style="color:var(--fx-dim);font-size:13px;margin:0 0 16px;">
-        Add a cloud account or a Git host once, then bind it to any environment.
-    </p>
-    <button class="fx-btn accent"><span class="fx-ico"><Icon Name="plug" Size="14" /></span> New connection</button>
+<div class="fx-conn-tabs">
+    <button class="fx-conn-tab @(_tab == Tab.Repository ? "active" : "")" @onclick="() => SwitchTab(Tab.Repository)">
+        <span class="fx-ico"><Icon Name="git-branch" Size="15" /></span> Git providers
+        <span class="fx-conn-count">@_repoCount</span>
+    </button>
+    <button class="fx-conn-tab @(_tab == Tab.Cloud ? "active" : "")" @onclick="() => SwitchTab(Tab.Cloud)">
+        <span class="fx-ico"><Icon Name="cloud" Size="15" /></span> Cloud accounts
+        <span class="fx-conn-count">@_cloudCount</span>
+    </button>
 </div>
+
+<div class="fx-conn-toolbar">
+    <div class="fx-search">
+        <span class="fx-ico"><Icon Name="search" Size="15" /></span>
+        <input class="fx-input" placeholder="Search by name, org, region…" @bind="_search" @bind:event="oninput" @bind:after="ReloadAsync" />
+    </div>
+    <label class="fx-conn-fav-toggle">
+        <input type="checkbox" @bind="_favoritesOnly" @bind:after="ReloadAsync" /> Favorites
+    </label>
+    <label class="fx-conn-fav-toggle">
+        <input type="checkbox" @bind="_includeArchived" @bind:after="ReloadAsync" /> Show archived
+    </label>
+    <div style="flex:1;"></div>
+    <button class="fx-btn accent" @onclick="OpenNew">
+        <span class="fx-ico"><Icon Name="plus" Size="14" /></span>
+        @(_tab == Tab.Repository ? "New Git connection" : "New cloud connection")
+    </button>
+</div>
+
+@if (_loading)
+{
+    <div class="fx-card" style="padding:28px;text-align:center;color:var(--fx-dim);">Loading…</div>
+}
+else if (_tab == Tab.Repository)
+{
+    @if (_repos.Count == 0)
+    {
+        <EmptyState IconName="git-branch" Title="No Git connections"
+                    Text="Add a GitHub, Azure DevOps, Bitbucket, GitLab, CodeCommit, or generic Git host." />
+    }
+    else
+    {
+        <div class="fx-conn-list">
+            <Virtualize Items="_repos" Context="c" ItemSize="66">
+                <div class="fx-conn-card">
+                    <button class="fx-star @(c.IsFavorite ? "on" : "")" title="Favorite" @onclick="() => ToggleFavAsync(c.Id, !c.IsFavorite)">
+                        <Icon Name="@(c.IsFavorite ? "star-fill" : "star")" Size="16" />
+                    </button>
+                    <div class="fx-conn-icon"><Icon Name="git-branch" Size="18" /></div>
+                    <div class="fx-conn-main">
+                        <div class="fx-conn-name">
+                            @c.DisplayName
+                            @if (c.IsArchived) { <span class="fx-tag muted">archived</span> }
+                        </div>
+                        <div class="fx-conn-meta">
+                            <span class="fx-tag">@ConnectionLabels.Repo(c.ProviderType)</span>
+                            @if (!string.IsNullOrEmpty(c.Organisation)) { <span>@c.Organisation</span> }
+                            @if (!string.IsNullOrEmpty(c.BaseUrl)) { <span>@c.BaseUrl</span> }
+                            <span class="fx-connstatus @ConnectionLabels.StatusClass(c.LastStatus)">@ConnectionLabels.Status(c.LastStatus)</span>
+                        </div>
+                    </div>
+                    <div class="fx-conn-actions">
+                        <button class="fx-btn sm" @onclick="() => TestAsync(c.Id)" disabled="@(_testing == c.Id)">
+                            @(_testing == c.Id ? "Testing…" : "Test")
+                        </button>
+                        <button class="fx-iconbtn" title="Edit" @onclick="() => OpenEdit(c.Id)"><Icon Name="pencil" Size="15" /></button>
+                        <button class="fx-iconbtn" title="@(c.IsArchived ? "Unarchive" : "Archive")" @onclick="() => ArchiveAsync(c.Id, !c.IsArchived)"><Icon Name="archive" Size="15" /></button>
+                        <button class="fx-iconbtn danger" title="Delete" @onclick="() => DeleteAsync(c.Id)"><Icon Name="trash" Size="15" /></button>
+                    </div>
+                </div>
+            </Virtualize>
+        </div>
+    }
+}
+else
+{
+    @if (_clouds.Count == 0)
+    {
+        <EmptyState IconName="cloud" Title="No cloud accounts"
+                    Text="Add an Azure, AWS, or Google Cloud account. Full sign-in + per-environment binding arrive in Phase 8." />
+    }
+    else
+    {
+        <div class="fx-conn-list">
+            <Virtualize Items="_clouds" Context="c" ItemSize="66">
+                <div class="fx-conn-card">
+                    <button class="fx-star @(c.IsFavorite ? "on" : "")" title="Favorite" @onclick="() => ToggleFavAsync(c.Id, !c.IsFavorite)">
+                        <Icon Name="@(c.IsFavorite ? "star-fill" : "star")" Size="16" />
+                    </button>
+                    <div class="fx-conn-icon"><Icon Name="cloud" Size="18" /></div>
+                    <div class="fx-conn-main">
+                        <div class="fx-conn-name">
+                            @c.DisplayName
+                            @if (c.IsArchived) { <span class="fx-tag muted">archived</span> }
+                        </div>
+                        <div class="fx-conn-meta">
+                            <span class="fx-tag">@ConnectionLabels.Cloud(c.ProviderType)</span>
+                            @if (!string.IsNullOrEmpty(c.Region)) { <span>@c.Region</span> }
+                            @if (!string.IsNullOrEmpty(c.SubscriptionOrProjectId)) { <span>@c.SubscriptionOrProjectId</span> }
+                        </div>
+                    </div>
+                    <div class="fx-conn-actions">
+                        <button class="fx-iconbtn" title="Edit" @onclick="() => OpenEdit(c.Id)"><Icon Name="pencil" Size="15" /></button>
+                        <button class="fx-iconbtn" title="@(c.IsArchived ? "Unarchive" : "Archive")" @onclick="() => ArchiveAsync(c.Id, !c.IsArchived)"><Icon Name="archive" Size="15" /></button>
+                        <button class="fx-iconbtn danger" title="Delete" @onclick="() => DeleteAsync(c.Id)"><Icon Name="trash" Size="15" /></button>
+                    </div>
+                </div>
+            </Virtualize>
+        </div>
+    }
+}
+
+@if (_toast is not null)
+{
+    <div class="fx-toast @(_toastOk ? "ok" : "fail")">@_toast</div>
+}
+
+@if (_showRepoDialog)
+{
+    <RepositoryConnectionDialog ConnectionId="_editId" OnClose="CloseDialogs" OnSaved="OnSavedAsync" />
+}
+@if (_showCloudDialog)
+{
+    <CloudConnectionDialog ConnectionId="_editId" OnClose="CloseDialogs" OnSaved="OnSavedAsync" />
+}
+
+@code {
+    private enum Tab { Repository, Cloud }
+
+    private Tab _tab = Tab.Repository;
+    private string? _search;
+    private bool _favoritesOnly;
+    private bool _includeArchived;
+    private bool _loading = true;
+
+    private List<RepositoryConnection> _repos = [];
+    private List<CloudConnection> _clouds = [];
+    private int _repoCount;
+    private int _cloudCount;
+
+    private bool _showRepoDialog;
+    private bool _showCloudDialog;
+    private Guid? _editId;
+    private Guid? _testing;
+
+    private string? _toast;
+    private bool _toastOk;
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    private async Task SwitchTab(Tab tab)
+    {
+        _tab = tab;
+        await ReloadAsync();
+    }
+
+    private ConnectionFilter BuildFilter() => new(
+        Search: string.IsNullOrWhiteSpace(_search) ? null : _search,
+        Favorite: _favoritesOnly ? true : null,
+        IncludeArchived: _includeArchived,
+        Take: 500);
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        var filter = BuildFilter();
+        if (_tab == Tab.Repository)
+            _repos = (await Hub.GetRepositoryConnectionsAsync(filter)).ToList();
+        else
+            _clouds = (await Hub.GetCloudConnectionsAsync(filter)).ToList();
+
+        // Keep the tab counts fresh (unfiltered totals).
+        var countFilter = new ConnectionFilter(IncludeArchived: _includeArchived, Take: 1);
+        _repoCount = await Hub.CountRepositoryConnectionsAsync(countFilter);
+        _cloudCount = await Hub.CountCloudConnectionsAsync(countFilter);
+        _loading = false;
+    }
+
+    private void OpenNew()
+    {
+        _editId = null;
+        if (_tab == Tab.Repository) _showRepoDialog = true; else _showCloudDialog = true;
+    }
+
+    private void OpenEdit(Guid id)
+    {
+        _editId = id;
+        if (_tab == Tab.Repository) _showRepoDialog = true; else _showCloudDialog = true;
+    }
+
+    private void CloseDialogs()
+    {
+        _showRepoDialog = false;
+        _showCloudDialog = false;
+        _editId = null;
+    }
+
+    private async Task OnSavedAsync()
+    {
+        CloseDialogs();
+        await ReloadAsync();
+    }
+
+    private async Task ToggleFavAsync(Guid id, bool fav)
+    {
+        await Hub.SetFavoriteAsync(id, fav);
+        await ReloadAsync();
+    }
+
+    private async Task ArchiveAsync(Guid id, bool archived)
+    {
+        var ok = await Hub.ArchiveAsync(id, archived);
+        if (!ok)
+            ShowToast("Can't archive — this connection is still used by a project or environment.", false);
+        await ReloadAsync();
+    }
+
+    private async Task DeleteAsync(Guid id)
+    {
+        var ok = await Hub.DeleteAsync(id);
+        ShowToast(ok ? "Connection deleted." : "Can't delete — this connection is still in use.", ok);
+        await ReloadAsync();
+    }
+
+    private async Task TestAsync(Guid id)
+    {
+        _testing = id;
+        try
+        {
+            var result = await Hub.TestRepositoryConnectionAsync(id);
+            ShowToast(result.Succeeded
+                ? $"Connected{(result.Identity is null ? "" : $" as {result.Identity}")}."
+                : result.Message ?? "Test failed.", result.Succeeded);
+        }
+        finally
+        {
+            _testing = null;
+            await ReloadAsync();
+        }
+    }
+
+    private int _toastSeq;
+
+    private void ShowToast(string message, bool ok)
+    {
+        _toast = message;
+        _toastOk = ok;
+        var seq = ++_toastSeq;
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(4000);
+            if (seq == _toastSeq)
+                await InvokeAsync(() => { _toast = null; StateHasChanged(); });
+        });
+    }
+}

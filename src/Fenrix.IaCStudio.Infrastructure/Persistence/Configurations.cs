@@ -97,7 +97,10 @@ internal sealed class RepositoryConnectionConfiguration : IEntityTypeConfigurati
         b.ToTable("RepositoryConnections");
         b.HasKey(x => x.Id);
         b.Property(x => x.DisplayName).IsRequired().HasMaxLength(200);
+        // hot columns for search at scale, matching CloudConnection
         b.HasIndex(x => x.ClientId);
+        b.HasIndex(x => x.ProviderType);
+        b.HasIndex(x => x.DisplayName);
         b.Property(x => x.Tags)
             .HasConversion(ConfigHelpers.StringListConverter)
             .Metadata.SetValueComparer(ConfigHelpers.StringListComparer);

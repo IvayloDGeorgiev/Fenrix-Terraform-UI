@@ -1,0 +1,196 @@
+@using Fenrix.IaCStudio.Application.Abstractions.Connections
+@using Fenrix.IaCStudio.Contracts.Connections
+@using Fenrix.IaCStudio.Domain.Cloud
+@using Fenrix.IaCStudio.Domain.Common
+@inject IConnectionService Connections
+
+<Modal Title="@(_isNew ? "New Git connection" : "Edit Git connection")" IconName="git-branch" Wide="true" OnClose="Cancel">
+    <ChildContent>
+        <div class="fx-field">
+            <label>Provider</label>
+            <select class="fx-input" @bind="_providerType">
+                @foreach (var pt in Enum.GetValues<RepositoryProviderType>())
+                {
+                    <option value="@pt">@ConnectionLabels.Repo(pt)</option>
+                }
+            </select>
+        </div>
+
+        <div class="fx-field">
+            <label>Display name</label>
+            <input class="fx-input" @bind="_displayName" placeholder="e.g. Acme GitHub (org)" />
+        </div>
+
+        <div class="fx-field">
+            <label>Description <span style="color:var(--fx-faint);">(optional)</span></label>
+            <input class="fx-input" @bind="_description" />
+        </div>
+
+        <div class="fx-grid-2">
+            <div class="fx-field">
+                <label>@OrgLabel <span style="color:var(--fx-faint);">(optional)</span></label>
+                <input class="fx-input" @bind="_organisation" placeholder="@OrgPlaceholder" />
+            </div>
+            <div class="fx-field">
+                <label>@ProjectLabel <span style="color:var(--fx-faint);">(optional)</span></label>
+                <input class="fx-input" @bind="_projectOrWorkspace" />
+            </div>
+        </div>
+
+        @if (_providerType is not RepositoryProviderType.GitHub and not RepositoryProviderType.Bitbucket)
+        {
+            <div class="fx-field">
+                <label>Base URL <span style="color:var(--fx-faint);">(self-hosted / self-managed, optional)</span></label>
+                <input class="fx-input" @bind="_baseUrl" placeholder="@BaseUrlPlaceholder" />
+            </div>
+        }
+
+        @if (_providerType != RepositoryProviderType.AwsCodeCommit)
+        {
+            @if (_providerType is RepositoryProviderType.Bitbucket)
+            {
+                <div class="fx-field">
+                    <label>Username <span style="color:var(--fx-faint);">(for app passwords)</span></label>
+                    <input class="fx-input" @bind="_userName" />
+                </div>
+            }
+            <div class="fx-field">
+                <label>@TokenLabel @(_hasExistingSecret ? "(leave blank to keep current)" : "")</label>
+                <input class="fx-input" type="password" @bind="_accessToken"
+                       placeholder="@(_hasExistingSecret ? "•••••••• stored" : "Paste a token")" autocomplete="off" />
+                <div class="fx-hint">Stored in the Windows Credential Manager — only a reference is saved in Fenrix.</div>
+            </div>
+            @if (_hasExistingSecret)
+            {
+                <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--fx-dim);">
+                    <input type="checkbox" @bind="_clearToken" /> Remove the stored token
+                </label>
+            }
+        }
+        else
+        {
+            <div class="fx-hint" style="margin-top:6px;">
+                AWS CodeCommit authenticates with IAM / git-remote-codecommit. Host-API features arrive with the
+                Phase 8 AWS cloud-connection work; Git clone/push still works with your AWS credential helper.
+            </div>
+        }
+
+        <label style="display:flex;align-items:center;gap:7px;font-size:13px;margin-top:6px;">
+            <input type="checkbox" @bind="_isFavorite" /> Favorite
+        </label>
+
+        @if (_error is not null)
+        {
+            <div class="fx-error">@_error</div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="fx-btn ghost" @onclick="Cancel" disabled="@_busy">Cancel</button>
+        <button class="fx-btn accent" @onclick="SaveAsync" disabled="@_busy">@(_busy ? "Saving…" : "Save")</button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public Guid? ConnectionId { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private bool _isNew => ConnectionId is null;
+    private RepositoryProviderType _providerType = RepositoryProviderType.GitHub;
+    private string _displayName = "";
+    private string? _description;
+    private string? _organisation;
+    private string? _projectOrWorkspace;
+    private string? _baseUrl;
+    private string? _userName;
+    private string? _accessToken;
+    private bool _isFavorite;
+    private bool _hasExistingSecret;
+    private bool _clearToken;
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ConnectionId is { } id)
+        {
+            var c = await Connections.GetRepositoryConnectionAsync(id);
+            if (c is not null)
+            {
+                _providerType = c.ProviderType;
+                _displayName = c.DisplayName;
+                _description = c.Description;
+                _organisation = c.Organisation;
+                _projectOrWorkspace = c.ProjectOrWorkspace;
+                _baseUrl = c.BaseUrl;
+                _isFavorite = c.IsFavorite;
+                _hasExistingSecret = c.SecretReferenceId is not null;
+            }
+        }
+    }
+
+    private string OrgLabel => _providerType switch
+    {
+        RepositoryProviderType.AzureDevOps => "Organisation",
+        RepositoryProviderType.Bitbucket => "Workspace",
+        _ => "Organisation / owner"
+    };
+    private string OrgPlaceholder => _providerType switch
+    {
+        RepositoryProviderType.AzureDevOps => "your-org",
+        RepositoryProviderType.Bitbucket => "your-workspace",
+        _ => "org or leave blank for your own repos"
+    };
+    private string ProjectLabel => _providerType == RepositoryProviderType.AzureDevOps ? "Team project" : "Project / group";
+    private string TokenLabel => _providerType switch
+    {
+        RepositoryProviderType.AzureDevOps => "Personal access token (PAT)",
+        RepositoryProviderType.Bitbucket => "App password / access token",
+        RepositoryProviderType.GitLab => "Personal / project access token",
+        _ => "Personal access token"
+    };
+    private string BaseUrlPlaceholder => _providerType switch
+    {
+        RepositoryProviderType.GitLab => "https://gitlab.example.com",
+        RepositoryProviderType.AzureDevOps => "https://dev.azure.com (or on-prem server)",
+        _ => "https://git.example.com"
+    };
+
+    private Task Cancel() => OnClose.InvokeAsync();
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_displayName))
+        {
+            _error = "Please enter a display name.";
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var request = new SaveRepositoryConnectionRequest(
+                ConnectionId,
+                _providerType,
+                _displayName.Trim(),
+                _description,
+                ClientId: null,
+                _baseUrl,
+                _organisation,
+                _projectOrWorkspace,
+                Tags: null,
+                _isFavorite,
+                string.IsNullOrWhiteSpace(_accessToken) ? null : _accessToken,
+                _userName,
+                _clearToken);
+            await Connections.SaveRepositoryConnectionAsync(request);
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _busy = false;
+        }
+    }
+}
