@@ -33,6 +33,13 @@ public interface IProjectService
     /// <summary>Binds (or clears, when null) the repository connection a project maps to. See docs/26-connections.md.</summary>
     Task SetRepositoryConnectionAsync(Guid projectId, Guid? repositoryConnectionId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Binds (or clears, when null) the cloud connection an environment authenticates with. The cloud
+    /// connection is bound per environment, never on the project. See docs/26-connections.md.
+    /// </summary>
+    Task SetEnvironmentCloudConnectionAsync(
+        Guid projectId, Guid environmentId, Guid? cloudConnectionId, CancellationToken ct = default);
+
     /// <summary>Unregisters a project from Fenrix. Never deletes files on disk.</summary>
     Task RemoveAsync(Guid projectId, CancellationToken ct = default);
 }

@@ -190,18 +190,23 @@ _✅ Complete. Full provider stack — abstraction, six adapters, secret backbon
 - [x] **Repo-connection binding** on a project (`InfrastructureProject.RepositoryConnectionId` via `IProjectService.SetRepositoryConnectionAsync`; bind/change from the Provider tab); host repo id derived from the Git remote via `RepoUrlParser` + `IRepositoryHostService`
 - [x] Git follow-ups: **remote credential UX + auth-failure guidance** (`GitRemoteError` enriches failed remote ops with next steps) and **per-environment sparse clone** (`--filter=blob:none --sparse` + `sparse-checkout set`, path field in the clone dialog)
 - [x] Provider JSON fixtures + contract cross-check (`tests/provider-fixtures/`, 106/106 key-presence + 11/11 `RepoUrlParser` via Python reference port); token-leakage/redaction checks (tokens confined to the secret-store path, never logged/persisted)
-- [ ] Full cloud-connection sign-in (Azure login, AWS SSO, Google ADC) + per-environment binding → **Phase 8**
+- [x] Full cloud-connection sign-in (Azure login, AWS SSO, Google ADC) + per-environment binding → **done in Phase 8**
 
 ## Phase 8 — Cloud connections
 
-- [ ] Global Connections hub (library, search, filter, group by client/provider) ([26](26-connections.md))
-- [ ] Scales to hundreds/thousands of connections (virtualized list, indexed search, pagination)
-- [ ] Client/group organization + tags + favorites
-- [ ] Per-environment cloud connection binding (project holds no cloud connection) + creation-time guidance/validation
-- [ ] Azure login + subscription selection ([10](10-cloud-integrations.md))
-- [ ] AWS profiles + SSO
-- [ ] Google ADC + project selection
-- [ ] Env-to-account mappings · connection testing · secret references · per-command env
+_✅ Core complete. Cloud provider abstraction + Azure/AWS/Google adapters (official CLIs via the shared process runner), per-environment binding (picker + apply-one-to-all + warning/block), connection testing, and the bound connection wired into Terraform execution (composed env + identity chip). **No new migration** — `ProjectEnvironment.CloudConnectionId`, the secret backbone, and `CloudConnection.LastStatus/LastTestedAt/Client/MetadataJson` all already exist._
+
+- [x] Global Connections hub (library, search, filter, favorites, archive) — delivered in Phase 7; cloud test + status now wired ([26](26-connections.md))
+- [x] Scales to hundreds/thousands of connections (virtualized list, indexed search, pagination) — Phase 7 groundwork reused by the per-environment picker (searchable, client-scoped, paged)
+- [x] Client/group organization + tags + favorites — Phase 7 groundwork; the per-environment picker pre-scopes to the project's client
+- [x] `ICloudConnectionProvider` (+ `ICloudConnectionProviderFactory`, `ICloudEnvironmentComposer`) mirroring `IRepositoryProvider`: `TestAsync` + `GetAvailableScopesAsync` + `BuildEnvironmentAsync` (process-scoped creds composed at execution time, secret resolved just-in-time, discarded after) ([10](10-cloud-integrations.md))
+- [x] Azure adapter (az CLI login + subscription selection; service-principal `ARM_*` when a client id + stored secret exist)
+- [x] AWS adapter (named profile / IAM Identity Center SSO; `AWS_PROFILE`/`AWS_REGION`; `sts get-caller-identity` test; profile discovery)
+- [x] Google adapter (ADC + project selection; `GOOGLE_PROJECT`/`GOOGLE_CLOUD_PROJECT`, optional SA-file path; active-account test; project discovery)
+- [x] Per-environment cloud connection binding (project holds no cloud connection): searchable/client-scoped picker, "apply one to all" at project creation, persistent warning badge + **state-changing ops blocked** when unbound (authentication-required)
+- [x] Connection testing (records `LastTestedAt`/`LastStatus`) — on-demand from the hub and from the connection dialog (Save & test); never a blocking sweep
+- [x] Bound connection wired into execution: plan/apply/init compose the env from the environment's connection, the account identity shows in the command-preview context chips, secrets are never placed in args/history (redacted env chips) ([25](25-execution-lifecycle.md))
+- [x] Cloud CLI shim handling (`CloudCli`): PATH+PATHEXT resolution, `.cmd`/`.bat` routed through `cmd.exe /c` via `ArgumentList` (no shell string)
 
 ## Phase 9 — State & inspection tools
 

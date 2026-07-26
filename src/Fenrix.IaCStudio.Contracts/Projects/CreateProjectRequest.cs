@@ -37,4 +37,11 @@ public sealed class NewEnvironmentSpec
 {
     public string Name { get; set; } = string.Empty;
     public bool IsProduction { get; set; }
+
+    /// <summary>
+    /// The cloud connection this environment binds to (from the global library). Optional at creation — the
+    /// wizard's "apply one to all" pre-fills each environment's own binding; unbound environments are flagged
+    /// and blocked from state-changing runs until one is chosen. See docs/26-connections.md.
+    /// </summary>
+    public Guid? CloudConnectionId { get; set; }
 }

@@ -1,3 +1,4 @@
+using Fenrix.IaCStudio.Application.Abstractions.Cloud;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
@@ -30,6 +31,7 @@ public sealed class TerraformPlanService(
     IEnvironmentLockService locks,
     IFileHistoryStore fileHistory,
     IGitService git,
+    ICloudEnvironmentComposer cloud,
     ILogger<TerraformPlanService> logger) : ITerraformPlanService
 {
     private const string DefaultExecutable = "terraform";
@@ -41,6 +43,7 @@ public sealed class TerraformPlanService(
     private readonly IEnvironmentLockService _locks = locks;
     private readonly IFileHistoryStore _fileHistory = fileHistory;
     private readonly IGitService _git = git;
+    private readonly ICloudEnvironmentComposer _cloud = cloud;
     private readonly ILogger<TerraformPlanService> _logger = logger;
 
     public async Task<PlanContext> PreparePlanAsync(
@@ -75,10 +78,12 @@ public sealed class TerraformPlanService(
             OutPlanFile = outPlanFile
         };
 
-        var request = CommandPreviewBuilder.BuildRequest(spec, exePath, workingDir);
+        var cloudEnv = await _cloud.ComposeAsync(environment?.CloudConnectionId, ct);
+        var request = CommandPreviewBuilder.BuildRequest(spec, exePath, workingDir, cloudEnv.EnvironmentVariables);
         var chips = BuildChips(installation, request.RiskLevel, project.RequiredTerraformVersion, mode);
+        chips.Add(new CommandContextChip("Cloud", cloudEnv.HasConnection ? cloudEnv.IdentityChip! : "none — bind a connection"));
         var preview = CommandPreviewBuilder.BuildPreview(request, chips);
-        var blockReason = DetermineBlockReason(project, environment, workingDir, installation);
+        var blockReason = DetermineBlockReason(project, environment, workingDir, installation, cloudEnv.HasConnection);
 
         return new PlanContext(
             projectId, environmentId, planId, mode, workingDir, varFile, outPlanFile, relativePlanFile,
@@ -107,8 +112,11 @@ public sealed class TerraformPlanService(
 
         Directory.CreateDirectory(Path.GetDirectoryName(context.OutPlanFile)!);
 
-        // 1) Run the plan (human-readable stream — Terraform masks sensitive values; safe to log).
-        var planRequest = CommandPreviewBuilder.BuildRequest(context.Spec, exePath, context.WorkingDirectory);
+        // 1) Run the plan (human-readable stream — Terraform masks sensitive values; safe to log). Compose
+        //    the bound cloud connection's credential environment just-in-time so the run authenticates to the
+        //    right account; secrets stay in the process env only (docs/10, docs/11, docs/25).
+        var cloudEnv = await _cloud.ComposeAsync(context.CloudConnectionId, ct);
+        var planRequest = CommandPreviewBuilder.BuildRequest(context.Spec, exePath, context.WorkingDirectory, cloudEnv.EnvironmentVariables);
         var planRun = await _coordinator.RunAsync(planRequest, output, captureLog: true, ct);
 
         if (planRun.Process.Cancelled)
@@ -233,12 +241,15 @@ public sealed class TerraformPlanService(
     }
 
     private static string? DetermineBlockReason(
-        InfrastructureProject? project, ProjectEnvironment? environment, string workingDir, TerraformInstallation? installation)
+        InfrastructureProject? project, ProjectEnvironment? environment, string workingDir,
+        TerraformInstallation? installation, bool hasCloudConnection)
     {
         if (project is null)
             return "Project not found.";
         if (environment is null)
             return "Select an environment to run against.";
+        if (!hasCloudConnection)
+            return "This environment has no cloud connection. Bind one from the environment's connection picker before planning (authentication required).";
         if (string.IsNullOrWhiteSpace(workingDir) || !Directory.Exists(workingDir))
             return $"Working directory not found: {workingDir}";
         if (installation is null)

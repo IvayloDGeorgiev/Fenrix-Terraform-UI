@@ -1,4 +1,5 @@
 using Fenrix.IaCStudio.Application.Abstractions;
+using Fenrix.IaCStudio.Application.Abstractions.Cloud;
 using Fenrix.IaCStudio.Application.Abstractions.Connections;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
@@ -6,6 +7,7 @@ using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Application.Abstractions.Providers;
 using Fenrix.IaCStudio.Application.Abstractions.Security;
 using Fenrix.IaCStudio.Application.Abstractions.Terraform;
+using Fenrix.IaCStudio.Infrastructure.Cloud;
 using Fenrix.IaCStudio.Infrastructure.Connections;
 using Fenrix.IaCStudio.Infrastructure.Files;
 using Fenrix.IaCStudio.Infrastructure.Git;
@@ -102,6 +104,17 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IRepositoryProviderFactory, RepositoryProviderFactory>();
         services.AddScoped<IConnectionService, ConnectionService>();
         services.AddScoped<IRepositoryHostService, RepositoryHostService>();
+
+        // Cloud connections (Phase 8). Adapters drive the official CLIs (az/aws/gcloud) via the shared
+        // process runner and are stateless singletons. The factory resolves an adapter + any service-principal
+        // secret just-in-time; the composer bridges a bound connection into Terraform execution — both touch
+        // the DB / secret store and are scoped. Fenrix stores only a SecretReference, never a credential value.
+        // See docs/10-cloud-integrations.md, docs/11-secrets.md, docs/26-connections.md.
+        services.AddSingleton<ICloudConnectionProvider, AzureCloudProvider>();
+        services.AddSingleton<ICloudConnectionProvider, AwsCloudProvider>();
+        services.AddSingleton<ICloudConnectionProvider, GoogleCloudProvider>();
+        services.AddScoped<ICloudConnectionProviderFactory, CloudConnectionProviderFactory>();
+        services.AddScoped<ICloudEnvironmentComposer, CloudEnvironmentComposer>();
 
         return services;
     }

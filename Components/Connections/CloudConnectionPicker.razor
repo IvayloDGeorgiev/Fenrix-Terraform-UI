@@ -1,0 +1,64 @@
+@using Fenrix.IaCStudio.Application.Abstractions.Connections
+@using Fenrix.IaCStudio.Contracts.Connections
+@using Fenrix.IaCStudio.Domain.Cloud
+@using Fenrix.IaCStudio.Domain.Common
+@inject IConnectionService Hub
+
+@* Searchable, client-scoped picker for binding a cloud connection to an environment. Backed by the paged
+   library query so it scales to hundreds of connections. See docs/26-connections.md. *@
+<div class="fx-cloudpicker">
+    @if (_all.Count > 8 || !string.IsNullOrEmpty(_search))
+    {
+        <input class="fx-input fx-cloudpicker-search" placeholder="Search connections…"
+               @bind="_search" @bind:event="oninput" @bind:after="ReloadAsync" />
+    }
+    <select class="fx-input" value="@(SelectedId?.ToString() ?? "")" @onchange="OnChanged">
+        <option value="">— no connection —</option>
+        @foreach (var c in _all)
+        {
+            <option value="@c.Id">@c.DisplayName — @ConnectionLabels.Cloud(c.ProviderType)@(c.LastStatus == ConnectionStatus.Ok ? " ✓" : "")</option>
+        }
+        @if (SelectedId is { } sel && _all.All(c => c.Id != sel) && _selected is not null)
+        {
+            <option value="@_selected.Id" selected>@_selected.DisplayName — @ConnectionLabels.Cloud(_selected.ProviderType)</option>
+        }
+    </select>
+</div>
+
+@code {
+    [Parameter] public Guid? SelectedId { get; set; }
+    [Parameter] public EventCallback<Guid?> SelectedIdChanged { get; set; }
+
+    /// <summary>Pre-scope the list to a client where known (the project's client), narrowing large libraries.</summary>
+    [Parameter] public Guid? ClientId { get; set; }
+
+    private string? _search;
+    private List<CloudConnection> _all = [];
+    private CloudConnection? _selected;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (SelectedId is { } id && (_selected is null || _selected.Id != id))
+            _selected = await Hub.GetCloudConnectionAsync(id);
+    }
+
+    private async Task ReloadAsync()
+    {
+        var filter = new ConnectionFilter(
+            Search: string.IsNullOrWhiteSpace(_search) ? null : _search,
+            ClientId: ClientId,
+            Take: 200);
+        _all = (await Hub.GetCloudConnectionsAsync(filter)).ToList();
+    }
+
+    private async Task OnChanged(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        Guid? id = Guid.TryParse(raw, out var g) ? g : null;
+        SelectedId = id;
+        _selected = id is { } sid ? _all.FirstOrDefault(c => c.Id == sid) ?? await Hub.GetCloudConnectionAsync(sid) : null;
+        await SelectedIdChanged.InvokeAsync(id);
+    }
+}

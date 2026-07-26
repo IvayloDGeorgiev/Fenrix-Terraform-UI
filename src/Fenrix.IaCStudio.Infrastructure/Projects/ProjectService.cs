@@ -72,6 +72,7 @@ public sealed class ProjectService(
                 WorkingDirectory = $"environments/{ProjectScaffolder.Slug(e.Name)}",
                 VariablesFile = $"{ProjectScaffolder.Slug(e.Name)}.tfvars",
                 BackendConfigFile = "backend.hcl",
+                CloudConnectionId = e.CloudConnectionId,
                 IsProduction = e.IsProduction,
                 DisplayOrder = i
             }).ToList()
@@ -202,6 +203,18 @@ public sealed class ProjectService(
             return;
         project.RepositoryConnectionId = repositoryConnectionId;
         await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task SetEnvironmentCloudConnectionAsync(
+        Guid projectId, Guid environmentId, Guid? cloudConnectionId, CancellationToken ct = default)
+    {
+        var environment = await _db.Environments
+            .FirstOrDefaultAsync(e => e.Id == environmentId && e.ProjectId == projectId, ct);
+        if (environment is null)
+            return;
+        environment.CloudConnectionId = cloudConnectionId;
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation("Bound environment {Env} to cloud connection {Conn}", environmentId, cloudConnectionId);
     }
 
     public async Task RemoveAsync(Guid projectId, CancellationToken ct = default)

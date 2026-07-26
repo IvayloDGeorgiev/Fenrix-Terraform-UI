@@ -37,9 +37,18 @@ else
                     <select class="fx-select" value="@_envId" @onchange="OnEnvChanged" disabled="@Busy">
                         @foreach (var env in _environments)
                         {
-                            <option value="@env.Id">@env.Name@(env.IsProduction ? " (production)" : "")</option>
+                            <option value="@env.Id">@env.Name@(env.IsProduction ? " (production)" : "")@(env.CloudConnectionId is null ? " ⚠" : "")</option>
                         }
                     </select>
+                    @{ var _selEnv = _environments.FirstOrDefault(x => x.Id == _envId); }
+                    @if (_selEnv is not null)
+                    {
+                        <div style="margin-top:8px;">
+                            <EnvironmentConnectionBar ProjectId="ProjectId" EnvironmentId="_selEnv.Id"
+                                                      CloudConnectionId="_selEnv.CloudConnectionId"
+                                                      ClientId="_project?.ClientId" OnChanged="OnConnectionBound" />
+                        </div>
+                    }
                 </div>
 
                 <div class="fx-field" style="margin-bottom:12px;">
@@ -297,6 +306,15 @@ else
         ResetPlanState();
         await PreparePlanAsync();
         await LoadRecentAsync();
+    }
+
+    private async Task OnConnectionBound(Guid? id)
+    {
+        var env = _environments.FirstOrDefault(x => x.Id == _envId);
+        if (env is not null)
+            env.CloudConnectionId = id;
+        ResetPlanState();
+        await PreparePlanAsync();
     }
 
     private async Task SetMode(PlanMode mode)

@@ -41,9 +41,17 @@ else
                     <select class="fx-select" value="@_envId" @onchange="OnEnvChanged" disabled="@_running">
                         @foreach (var env in _environments)
                         {
-                            <option value="@env.Id">@env.Name@(env.IsProduction ? " (production)" : "")</option>
+                            <option value="@env.Id">@env.Name@(env.IsProduction ? " (production)" : "")@(env.CloudConnectionId is null ? " ⚠" : "")</option>
                         }
                     </select>
+                    @if (SelectedEnvironment is not null)
+                    {
+                        <div style="margin-top:8px;">
+                            <EnvironmentConnectionBar ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id"
+                                                      CloudConnectionId="SelectedEnvironment.CloudConnectionId"
+                                                      ClientId="_project?.ClientId" OnChanged="OnConnectionBound" />
+                        </div>
+                    }
                 </div>
 
                 <div class="fx-tabs">
@@ -249,6 +257,14 @@ else
             _envId = id;
         PrefillEnvOptions();
         RebuildPreview();
+    }
+
+    private void OnConnectionBound(Guid? id)
+    {
+        if (SelectedEnvironment is { } env)
+            env.CloudConnectionId = id;
+        RebuildPreview();
+        StateHasChanged();
     }
 
     private void PrefillEnvOptions()

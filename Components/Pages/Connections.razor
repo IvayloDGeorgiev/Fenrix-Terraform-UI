@@ -107,9 +107,13 @@ else
                             <span class="fx-tag">@ConnectionLabels.Cloud(c.ProviderType)</span>
                             @if (!string.IsNullOrEmpty(c.Region)) { <span>@c.Region</span> }
                             @if (!string.IsNullOrEmpty(c.SubscriptionOrProjectId)) { <span>@c.SubscriptionOrProjectId</span> }
+                            <span class="fx-connstatus @ConnectionLabels.StatusClass(c.LastStatus)">@ConnectionLabels.Status(c.LastStatus)</span>
                         </div>
                     </div>
                     <div class="fx-conn-actions">
+                        <button class="fx-btn sm" @onclick="() => TestCloudAsync(c.Id)" disabled="@(_testing == c.Id)">
+                            @(_testing == c.Id ? "Testing…" : "Test")
+                        </button>
                         <button class="fx-iconbtn" title="Edit" @onclick="() => OpenEdit(c.Id)"><Icon Name="pencil" Size="15" /></button>
                         <button class="fx-iconbtn" title="@(c.IsArchived ? "Unarchive" : "Archive")" @onclick="() => ArchiveAsync(c.Id, !c.IsArchived)"><Icon Name="archive" Size="15" /></button>
                         <button class="fx-iconbtn danger" title="Delete" @onclick="() => DeleteAsync(c.Id)"><Icon Name="trash" Size="15" /></button>
@@ -238,6 +242,23 @@ else
         try
         {
             var result = await Hub.TestRepositoryConnectionAsync(id);
+            ShowToast(result.Succeeded
+                ? $"Connected{(result.Identity is null ? "" : $" as {result.Identity}")}."
+                : result.Message ?? "Test failed.", result.Succeeded);
+        }
+        finally
+        {
+            _testing = null;
+            await ReloadAsync();
+        }
+    }
+
+    private async Task TestCloudAsync(Guid id)
+    {
+        _testing = id;
+        try
+        {
+            var result = await Hub.TestCloudConnectionAsync(id);
             ShowToast(result.Succeeded
                 ? $"Connected{(result.Identity is null ? "" : $" as {result.Identity}")}."
                 : result.Message ?? "Test failed.", result.Succeeded);

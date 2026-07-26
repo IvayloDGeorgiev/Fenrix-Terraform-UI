@@ -39,6 +39,15 @@ public interface IConnectionService
     Task<CloudConnection> SaveCloudConnectionAsync(
         SaveCloudConnectionRequest request, CancellationToken ct = default);
 
+    /// <summary>Tests a cloud connection against its provider adapter (CLI) and records the result.</summary>
+    Task<ConnectionTestResult> TestCloudConnectionAsync(Guid id, CancellationToken ct = default);
+
+    /// <summary>
+    /// Lists the scopes (Azure subscriptions / AWS profiles / Google projects) discoverable for a cloud
+    /// connection from the signed-in CLI, to help fill in the connection. Empty when none/unsupported.
+    /// </summary>
+    Task<IReadOnlyList<Contracts.Cloud.CloudScope>> GetCloudScopesAsync(Guid id, CancellationToken ct = default);
+
     // ---- shared lifecycle ----
 
     /// <summary>Sets favorite state on a connection of either kind.</summary>

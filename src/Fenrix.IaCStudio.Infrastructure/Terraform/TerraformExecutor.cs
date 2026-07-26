@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Fenrix.IaCStudio.Application.Abstractions.Cloud;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Application.Abstractions.Terraform;
 using Fenrix.IaCStudio.Application.Terraform;
@@ -27,6 +28,7 @@ public sealed class TerraformExecutor(
     IProcessRunner runner,
     ICommandHistoryStore history,
     IWorkspacePaths paths,
+    ICloudEnvironmentComposer cloud,
     ILogger<TerraformExecutor> logger) : ITerraformExecutor
 {
     private const string Tool = "terraform";
@@ -36,6 +38,7 @@ public sealed class TerraformExecutor(
     private readonly IProcessRunner _runner = runner;
     private readonly ICommandHistoryStore _history = history;
     private readonly IWorkspacePaths _paths = paths;
+    private readonly ICloudEnvironmentComposer _cloud = cloud;
     private readonly ILogger<TerraformExecutor> _logger = logger;
 
     public async Task<TerraformRunPlan> PlanAsync(TerraformRunSpec spec, CancellationToken ct = default)
@@ -47,9 +50,15 @@ public sealed class TerraformExecutor(
         var installation = await _discovery.ResolveAsync(spec.ProjectId, ct);
 
         var executablePath = installation?.ExecutablePath ?? Tool;
-        var request = CommandPreviewBuilder.BuildRequest(spec, executablePath, workingDir);
+        // Compose the environment's bound cloud credentials so backend-aware commands (e.g. init against a
+        // remote backend) authenticate. These commands are not blocked on a missing connection — only
+        // state-changing plan/apply are (docs/26). Secrets stay in the child process env, redacted in previews.
+        var cloudEnv = await _cloud.ComposeAsync(environment?.CloudConnectionId, ct);
+        var request = CommandPreviewBuilder.BuildRequest(spec, executablePath, workingDir, cloudEnv.EnvironmentVariables);
 
         var chips = BuildChips(installation, request.RiskLevel, project?.RequiredTerraformVersion);
+        if (cloudEnv.HasConnection)
+            chips.Add(new CommandContextChip("Cloud", cloudEnv.IdentityChip!));
         var preview = CommandPreviewBuilder.BuildPreview(request, chips);
 
         var blockReason = DetermineBlockReason(project, environment, workingDir, installation);

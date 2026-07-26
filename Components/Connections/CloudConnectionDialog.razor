@@ -1,4 +1,6 @@
+@using System.Text.Json
 @using Fenrix.IaCStudio.Application.Abstractions.Connections
+@using Fenrix.IaCStudio.Contracts.Cloud
 @using Fenrix.IaCStudio.Contracts.Connections
 @using Fenrix.IaCStudio.Domain.Common
 @inject IConnectionService Connections
@@ -27,35 +29,85 @@
 
         <div class="fx-grid-2">
             <div class="fx-field">
-                <label>@AccountLabel <span style="color:var(--fx-faint);">(optional)</span></label>
+                <label>@AccountLabel</label>
                 <input class="fx-input" @bind="_tenantOrAccount" />
             </div>
             <div class="fx-field">
-                <label>@SubscriptionLabel <span style="color:var(--fx-faint);">(optional)</span></label>
-                <input class="fx-input" @bind="_subscriptionOrProject" />
+                <label>@SubscriptionLabel</label>
+                <div style="display:flex;gap:8px;">
+                    <input class="fx-input" @bind="_subscriptionOrProject" />
+                    @if (!_isNew && _providerType != CloudProviderType.Aws)
+                    {
+                        <button class="fx-btn" type="button" @onclick="DiscoverAsync" disabled="@_discovering" title="List from the signed-in CLI">
+                            @(_discovering ? "…" : "Discover")
+                        </button>
+                    }
+                </div>
+                @if (_scopes.Count > 0)
+                {
+                    <select class="fx-input" style="margin-top:6px;" @onchange="OnScopePicked">
+                        <option value="">— pick one —</option>
+                        @foreach (var s in _scopes)
+                        {
+                            <option value="@s.Id">@s.Name (@s.Id)</option>
+                        }
+                    </select>
+                }
             </div>
         </div>
 
-        <div class="fx-grid-2">
+        @if (_providerType == CloudProviderType.Aws)
+        {
+            <div class="fx-grid-2">
+                <div class="fx-field">
+                    <label>Profile <span style="color:var(--fx-faint);">(shared config / SSO)</span></label>
+                    <input class="fx-input" @bind="_profile" placeholder="e.g. acme-prod" />
+                </div>
+                <div class="fx-field">
+                    <label>Region</label>
+                    <input class="fx-input" @bind="_region" placeholder="e.g. eu-west-1" />
+                </div>
+            </div>
+        }
+        else if (_providerType == CloudProviderType.GoogleCloud)
+        {
             <div class="fx-field">
-                <label>Region <span style="color:var(--fx-faint);">(optional)</span></label>
-                <input class="fx-input" @bind="_region" placeholder="e.g. eu-west-1" />
+                <label>Service-account file <span style="color:var(--fx-faint);">(optional — path only, ADC used otherwise)</span></label>
+                <input class="fx-input" @bind="_serviceAccountFile" placeholder="C:\path\to\key.json" />
+            </div>
+        }
+        else if (_providerType == CloudProviderType.Azure)
+        {
+            <div class="fx-field">
+                <label>Service-principal client ID <span style="color:var(--fx-faint);">(optional — leave blank to use the az CLI login)</span></label>
+                <input class="fx-input" @bind="_spClientId" placeholder="appId / client id" />
             </div>
             <div class="fx-field">
-                <label>Profile <span style="color:var(--fx-faint);">(optional)</span></label>
-                <input class="fx-input" @bind="_profile" placeholder="AWS profile / gcloud config" />
+                <label>Client secret <span style="color:var(--fx-faint);">(@(_hasSecret ? "stored — leave blank to keep" : "optional"))</span></label>
+                <input class="fx-input" type="password" @bind="_secret" placeholder="@(_hasSecret ? "••••••••" : "service-principal secret")" />
+                @if (_hasSecret)
+                {
+                    <label style="display:flex;align-items:center;gap:7px;font-size:12px;margin-top:6px;color:var(--fx-dim);">
+                        <input type="checkbox" @bind="_clearSecret" /> Remove the stored secret
+                    </label>
+                }
             </div>
-        </div>
+        }
 
         <div class="fx-hint" style="margin-top:2px;">
-            Deeper sign-in (Azure login, AWS SSO, Google ADC) and per-environment binding land with Phase 8.
-            This stores identifying metadata plus an optional secret reference — never a secret value.
+            Fenrix stores identifying metadata plus, for an Azure service principal, a secret <em>reference</em> —
+            the value lives in Windows Credential Manager, never the database. AWS uses the named profile / SSO
+            and Google uses ADC; their credentials stay in the tool-native stores.
         </div>
 
         <label style="display:flex;align-items:center;gap:7px;font-size:13px;margin-top:8px;">
             <input type="checkbox" @bind="_isFavorite" /> Favorite
         </label>
 
+        @if (_testResult is not null)
+        {
+            <div class="@(_testOk ? "fx-hint" : "fx-error")" style="margin-top:8px;">@_testResult</div>
+        }
         @if (_error is not null)
         {
             <div class="fx-error">@_error</div>
@@ -63,7 +115,8 @@
     </ChildContent>
     <Footer>
         <button class="fx-btn ghost" @onclick="Cancel" disabled="@_busy">Cancel</button>
-        <button class="fx-btn accent" @onclick="SaveAsync" disabled="@_busy">@(_busy ? "Saving…" : "Save")</button>
+        <button class="fx-btn" @onclick="SaveAndTestAsync" disabled="@_busy">@(_busy ? "…" : "Save & test")</button>
+        <button class="fx-btn accent" @onclick="() => SaveAsync(closeAfter: true)" disabled="@_busy">@(_busy ? "Saving…" : "Save")</button>
     </Footer>
 </Modal>
 
@@ -80,9 +133,18 @@
     private string? _subscriptionOrProject;
     private string? _region;
     private string? _profile;
+    private string? _spClientId;
+    private string? _serviceAccountFile;
+    private string? _secret;
+    private bool _hasSecret;
+    private bool _clearSecret;
     private bool _isFavorite;
     private bool _busy;
+    private bool _discovering;
     private string? _error;
+    private string? _testResult;
+    private bool _testOk;
+    private List<CloudScope> _scopes = [];
 
     protected override async Task OnParametersSetAsync()
     {
@@ -98,59 +160,148 @@
                 _subscriptionOrProject = c.SubscriptionOrProjectId;
                 _region = c.Region;
                 _profile = c.ProfileName;
+                _spClientId = c.Client;
                 _isFavorite = c.IsFavorite;
+                _hasSecret = c.SecretReferenceId is not null;
+                _serviceAccountFile = ReadMetadata(c.MetadataJson, GoogleServiceAccountKey);
             }
         }
     }
 
+    // Keep in sync with GoogleCloudProvider.ServiceAccountFileKey.
+    private const string GoogleServiceAccountKey = "serviceAccountFile";
+
     private string AccountLabel => _providerType switch
     {
         CloudProviderType.Azure => "Tenant ID",
-        CloudProviderType.Aws => "Account ID",
-        CloudProviderType.GoogleCloud => "Organisation",
+        CloudProviderType.Aws => "Account ID (optional)",
+        CloudProviderType.GoogleCloud => "Organisation (optional)",
         _ => "Account"
     };
     private string SubscriptionLabel => _providerType switch
     {
         CloudProviderType.Azure => "Subscription ID",
-        CloudProviderType.Aws => "(n/a)",
+        CloudProviderType.Aws => "(managed via profile)",
         CloudProviderType.GoogleCloud => "Project ID",
         _ => "Subscription / project"
     };
 
+    private void OnScopePicked(ChangeEventArgs e)
+    {
+        var id = e.Value?.ToString();
+        if (!string.IsNullOrEmpty(id))
+            _subscriptionOrProject = id;
+    }
+
     private Task Cancel() => OnClose.InvokeAsync();
 
-    private async Task SaveAsync()
+    private string? BuildMetadataJson()
+    {
+        if (_providerType == CloudProviderType.GoogleCloud && !string.IsNullOrWhiteSpace(_serviceAccountFile))
+            return JsonSerializer.Serialize(new Dictionary<string, string> { [GoogleServiceAccountKey] = _serviceAccountFile!.Trim() });
+        return "{}"; // explicit reset so switching provider clears stale metadata
+    }
+
+    private SaveCloudConnectionRequest BuildRequest() => new(
+        ConnectionId,
+        _providerType,
+        _displayName.Trim(),
+        _description,
+        ClientId: null,
+        _tenantOrAccount,
+        _subscriptionOrProject,
+        _region,
+        _profile,
+        Tags: null,
+        _isFavorite,
+        SecretValue: string.IsNullOrWhiteSpace(_secret) ? null : _secret,
+        ClearSecret: _clearSecret,
+        ServicePrincipalClientId: _providerType == CloudProviderType.Azure ? _spClientId : null,
+        MetadataJson: BuildMetadataJson());
+
+    private async Task<Guid?> SaveAsync(bool closeAfter)
     {
         _error = null;
         if (string.IsNullOrWhiteSpace(_displayName))
         {
             _error = "Please enter a display name.";
-            return;
+            return null;
         }
 
         _busy = true;
         try
         {
-            var request = new SaveCloudConnectionRequest(
-                ConnectionId,
-                _providerType,
-                _displayName.Trim(),
-                _description,
-                ClientId: null,
-                _tenantOrAccount,
-                _subscriptionOrProject,
-                _region,
-                _profile,
-                Tags: null,
-                _isFavorite);
-            await Connections.SaveCloudConnectionAsync(request);
-            await OnSaved.InvokeAsync();
+            var saved = await Connections.SaveCloudConnectionAsync(BuildRequest());
+            if (closeAfter)
+                await OnSaved.InvokeAsync();
+            return saved.Id;
         }
         catch (Exception ex)
         {
             _error = ex.Message;
             _busy = false;
+            return null;
+        }
+    }
+
+    private async Task SaveAndTestAsync()
+    {
+        _testResult = null;
+        var id = await SaveAsync(closeAfter: false);
+        if (id is null)
+            return;
+        try
+        {
+            var result = await Connections.TestCloudConnectionAsync(id.Value);
+            _testOk = result.Succeeded;
+            _testResult = result.Succeeded
+                ? $"Connected{(result.Identity is null ? "" : $" as {result.Identity}")}."
+                : result.Message ?? "Test failed.";
+            _hasSecret = !string.IsNullOrWhiteSpace(_secret) || _hasSecret && !_clearSecret;
+            _secret = null;
+            _clearSecret = false;
+            ConnectionId = id; // subsequent saves update in place
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DiscoverAsync()
+    {
+        if (ConnectionId is not { } id)
+            return;
+        _discovering = true;
+        _error = null;
+        try
+        {
+            _scopes = (await Connections.GetCloudScopesAsync(id)).ToList();
+            if (_scopes.Count == 0)
+                _error = "No scopes found. Make sure you are signed in to the provider's CLI.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _discovering = false;
+        }
+    }
+
+    private static string? ReadMetadata(string? json, string key)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json.TrimStart().FirstOrDefault() != '{')
+            return null;
+        try
+        {
+            var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+            return dict is not null && dict.TryGetValue(key, out var v) ? v : null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 }

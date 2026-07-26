@@ -23,7 +23,14 @@ public sealed record SaveRepositoryConnectionRequest(
     string? UserName,
     bool ClearToken = false);
 
-/// <summary>Create/update payload for a cloud connection (metadata + optional secret reference).</summary>
+/// <summary>
+/// Create/update payload for a cloud connection: identifying metadata plus an <em>optional, transient</em>
+/// secret (an Azure service-principal client secret) that, when present, is written to the OS secret store so
+/// only a <c>SecretReference</c> is persisted. <paramref name="ServicePrincipalClientId"/> is a non-secret
+/// identifier (maps to <c>CloudConnection.Client</c>); <paramref name="MetadataJson"/> carries
+/// provider-specific extras (e.g. Azure auth mode, a Google service-account file path). Leave the secret null
+/// to keep the existing one unchanged. See docs/10-cloud-integrations.md, docs/11-secrets.md.
+/// </summary>
 public sealed record SaveCloudConnectionRequest(
     Guid? Id,
     CloudProviderType ProviderType,
@@ -37,7 +44,9 @@ public sealed record SaveCloudConnectionRequest(
     IReadOnlyList<string>? Tags,
     bool IsFavorite,
     string? SecretValue = null,
-    bool ClearSecret = false);
+    bool ClearSecret = false,
+    string? ServicePrincipalClientId = null,
+    string? MetadataJson = null);
 
 /// <summary>Which slice of the connection library to return — filters + paging for the virtualized hub.</summary>
 public sealed record ConnectionFilter(

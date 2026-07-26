@@ -1,0 +1,67 @@
+@using Fenrix.IaCStudio.Application.Abstractions.Connections
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Domain.Cloud
+@using Fenrix.IaCStudio.Domain.Common
+@inject IProjectService Projects
+@inject IConnectionService Hub
+
+@* Shows the cloud connection bound to an environment (with a persistent warning when none is bound) and lets
+   the user bind/change it inline. State-changing Terraform ops are blocked until one is set — see
+   docs/26-connections.md. *@
+<div class="fx-envconn @(CloudConnectionId is null ? "unbound" : "")">
+    <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="cloud" Size="14" /></span>
+    @if (CloudConnectionId is null)
+    {
+        <span class="fx-badge warn" title="Terraform can't authenticate without a connection">
+            <Icon Name="alert" Size="12" /> No cloud connection — plan/apply blocked
+        </span>
+    }
+    else
+    {
+        <span style="font-size:13px;">@(_name ?? "connection")</span>
+        <span class="fx-connstatus @ConnectionLabels.StatusClass(_status)">@ConnectionLabels.Status(_status)</span>
+    }
+    <div style="flex:1;"></div>
+    <div style="min-width:220px;">
+        <CloudConnectionPicker SelectedId="CloudConnectionId" ClientId="ClientId" SelectedIdChanged="BindAsync" />
+    </div>
+</div>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+    [Parameter] public Guid? CloudConnectionId { get; set; }
+    [Parameter] public Guid? ClientId { get; set; }
+    [Parameter] public EventCallback<Guid?> OnChanged { get; set; }
+
+    private string? _name;
+    private ConnectionStatus _status = ConnectionStatus.Untested;
+    private Guid? _loadedFor;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (CloudConnectionId == _loadedFor)
+            return;
+        _loadedFor = CloudConnectionId;
+        if (CloudConnectionId is { } id)
+        {
+            var c = await Hub.GetCloudConnectionAsync(id);
+            _name = c?.DisplayName;
+            _status = c?.LastStatus ?? ConnectionStatus.Untested;
+        }
+        else
+        {
+            _name = null;
+            _status = ConnectionStatus.Untested;
+        }
+    }
+
+    private async Task BindAsync(Guid? id)
+    {
+        await Projects.SetEnvironmentCloudConnectionAsync(ProjectId, EnvironmentId, id);
+        CloudConnectionId = id;
+        _loadedFor = null; // force metadata refresh on next parameter set
+        await OnParametersSetAsync();
+        await OnChanged.InvokeAsync(id);
+    }
+}

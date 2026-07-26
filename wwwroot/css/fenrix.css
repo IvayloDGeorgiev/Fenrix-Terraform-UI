@@ -780,3 +780,16 @@ a:hover { color: var(--fx-accent-strong); }
 }
 .fx-toast.ok { background: var(--fx-success); }
 .fx-toast.fail { background: var(--fx-danger); }
+
+/* ── Phase 8 · Cloud connections (per-environment binding) ───────────────── */
+.fx-badge.warn { color: var(--fx-warn); border-color: var(--fx-warn); display: inline-flex; align-items: center; gap: 5px; }
+
+.fx-envconn {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border: 1px solid var(--fx-border); border-radius: 8px;
+  background: var(--fx-surface-2, rgba(255,255,255,0.02));
+}
+.fx-envconn.unbound { border-color: var(--fx-warn); }
+
+.fx-cloudpicker { display: flex; flex-direction: column; gap: 6px; }
+.fx-cloudpicker-search { font-size: 12px; }

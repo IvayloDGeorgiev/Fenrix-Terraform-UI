@@ -23,11 +23,13 @@ public sealed class ConnectionService(
     AppDbContext db,
     ISecretStore secrets,
     IRepositoryProviderFactory providerFactory,
+    Fenrix.IaCStudio.Application.Abstractions.Cloud.ICloudConnectionProviderFactory cloudFactory,
     ILogger<ConnectionService> logger) : IConnectionService
 {
     private readonly AppDbContext _db = db;
     private readonly ISecretStore _secrets = secrets;
     private readonly IRepositoryProviderFactory _providerFactory = providerFactory;
+    private readonly Fenrix.IaCStudio.Application.Abstractions.Cloud.ICloudConnectionProviderFactory _cloudFactory = cloudFactory;
     private readonly ILogger<ConnectionService> _logger = logger;
 
     // ---- repository connections ----
@@ -203,6 +205,9 @@ public sealed class ConnectionService(
         entity.SubscriptionOrProjectId = Trimmed(request.SubscriptionOrProjectId);
         entity.Region = Trimmed(request.Region);
         entity.ProfileName = Trimmed(request.ProfileName);
+        entity.Client = Trimmed(request.ServicePrincipalClientId);
+        if (request.MetadataJson is not null)
+            entity.MetadataJson = string.IsNullOrWhiteSpace(request.MetadataJson) ? "{}" : request.MetadataJson.Trim();
         entity.Tags = request.Tags?.ToList() ?? entity.Tags;
         entity.IsFavorite = request.IsFavorite;
 
@@ -210,6 +215,8 @@ public sealed class ConnectionService(
         {
             await RemoveSecretAsync(entity.SecretReferenceId, ct);
             entity.SecretReferenceId = null;
+            entity.LastStatus = ConnectionStatus.Untested;
+            entity.LastTestedAt = null;
         }
         else if (!string.IsNullOrWhiteSpace(request.SecretValue))
         {
@@ -228,12 +235,49 @@ public sealed class ConnectionService(
                 entity.SecretReferenceId = reference.Id;
             }
             await _secrets.StoreAsync(reference, request.SecretValue.Trim(), ct);
+            entity.LastStatus = ConnectionStatus.Untested;
+            entity.LastTestedAt = null;
         }
 
         if (request.Id is null)
             _db.CloudConnections.Add(entity);
         await _db.SaveChangesAsync(ct);
         return entity;
+    }
+
+    public async Task<ConnectionTestResult> TestCloudConnectionAsync(Guid id, CancellationToken ct = default)
+    {
+        var entity = await _db.CloudConnections.FirstOrDefaultAsync(c => c.Id == id, ct);
+        if (entity is null)
+            return ConnectionTestResult.Fail("Connection not found.");
+
+        var resolved = await _cloudFactory.ResolveAsync(id, ct);
+        ConnectionTestResult result;
+        if (resolved is null)
+        {
+            result = ConnectionTestResult.Fail("No cloud adapter is available for this connection's provider.");
+        }
+        else
+        {
+            var test = await resolved.Value.Provider.TestAsync(resolved.Value.Context, ct);
+            result = test.Succeeded
+                ? ConnectionTestResult.Ok(test.Value!.DisplayName is { } d ? $"{test.Value.Account} ({d})" : test.Value.Account)
+                : ConnectionTestResult.Fail(test.Guidance ?? test.ErrorMessage ?? "Test failed.");
+        }
+
+        entity.LastStatus = result.Succeeded ? ConnectionStatus.Ok : ConnectionStatus.Failed;
+        entity.LastTestedAt = DateTimeOffset.UtcNow;
+        await _db.SaveChangesAsync(ct);
+        return result;
+    }
+
+    public async Task<IReadOnlyList<Contracts.Cloud.CloudScope>> GetCloudScopesAsync(Guid id, CancellationToken ct = default)
+    {
+        var resolved = await _cloudFactory.ResolveAsync(id, ct);
+        if (resolved is null)
+            return [];
+        var scopes = await resolved.Value.Provider.GetAvailableScopesAsync(resolved.Value.Context, ct);
+        return scopes.Succeeded ? scopes.Value! : [];
     }
 
     // ---- shared lifecycle ----

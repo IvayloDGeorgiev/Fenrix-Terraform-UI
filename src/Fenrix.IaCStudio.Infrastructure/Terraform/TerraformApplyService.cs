@@ -1,3 +1,4 @@
+using Fenrix.IaCStudio.Application.Abstractions.Cloud;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
@@ -30,6 +31,7 @@ public sealed class TerraformApplyService(
     IEnvironmentLockService locks,
     IFileHistoryStore fileHistory,
     IGitService git,
+    ICloudEnvironmentComposer cloud,
     ILogger<TerraformApplyService> logger) : ITerraformApplyService
 {
     private const string DefaultExecutable = "terraform";
@@ -42,6 +44,7 @@ public sealed class TerraformApplyService(
     private readonly IEnvironmentLockService _locks = locks;
     private readonly IFileHistoryStore _fileHistory = fileHistory;
     private readonly IGitService _git = git;
+    private readonly ICloudEnvironmentComposer _cloud = cloud;
     private readonly ILogger<TerraformApplyService> _logger = logger;
 
     public async Task<ApplyPreflight> PreflightAsync(Guid savedPlanId, CancellationToken ct = default)
@@ -89,6 +92,9 @@ public sealed class TerraformApplyService(
         var envOk = environment is not null;
         checks.Add(new PreflightCheck("Target environment exists", envOk, PreflightSeverity.Blocker,
             envOk ? null : "The environment no longer exists on this project."));
+        var hasConnection = environment?.CloudConnectionId is not null;
+        checks.Add(new PreflightCheck("Environment has a bound cloud connection", hasConnection, PreflightSeverity.Blocker,
+            hasConnection ? null : "Bind a cloud connection to this environment before applying (authentication required)."));
         var cloudOk = environment is not null && environment.CloudConnectionId == plan.CloudConnectionId;
         checks.Add(new PreflightCheck("Environment cloud account unchanged", cloudOk, PreflightSeverity.Blocker,
             cloudOk ? null : "The environment's bound cloud connection changed since the plan was created."));
@@ -118,7 +124,8 @@ public sealed class TerraformApplyService(
         // repository no longer matches what they looked at (docs/06-plan-apply-safety.md, docs/08-git-engine.md).
         await AddGitProvenanceWarningsAsync(plan, checks, ct);
 
-        var preview = BuildApplyPreview(plan, environment, installation);
+        var cloudEnv = await _cloud.ComposeAsync(environment?.CloudConnectionId, ct);
+        var preview = BuildApplyPreview(plan, environment, installation, cloudEnv);
         var canApply = checks.Where(c => c.Severity == PreflightSeverity.Blocker).All(c => c.Passed);
         var requiresTyped = environment?.IsProduction ?? plan.IsProductionTarget;
 
@@ -170,7 +177,10 @@ public sealed class TerraformApplyService(
         {
             PlanFilePath = plan.PlanFilePath
         };
-        var applyRequest = CommandPreviewBuilder.BuildRequest(applySpec, exePath, plan.WorkingDirectory);
+        // Compose the environment's bound cloud credentials just-in-time; they live only in the child
+        // process env (secret values are redacted in the preview/history by ArgumentRedactor).
+        var cloudEnv = await _cloud.ComposeAsync(environment.CloudConnectionId, ct);
+        var applyRequest = CommandPreviewBuilder.BuildRequest(applySpec, exePath, plan.WorkingDirectory, cloudEnv.EnvironmentVariables);
 
         ApplyJsonParser.ApplyChangeCounts? summary = null;
         var forwarder = new ApplyProgressForwarder(rawOutput, progress, c => summary = c);
@@ -251,20 +261,23 @@ public sealed class TerraformApplyService(
         static string Short(string sha) => sha.Length > 8 ? sha[..8] : sha;
     }
 
-    private CommandPreview BuildApplyPreview(SavedPlan plan, ProjectEnvironment? environment, TerraformInstallation? installation)
+    private CommandPreview BuildApplyPreview(
+        SavedPlan plan, ProjectEnvironment? environment, TerraformInstallation? installation,
+        Fenrix.IaCStudio.Contracts.Cloud.CloudEnvironmentResult cloudEnv)
     {
         var exePath = installation?.ExecutablePath ?? DefaultExecutable;
         var applySpec = new TerraformRunSpec(plan.ProjectId, plan.EnvironmentId, TerraformCommandKind.Apply)
         {
             PlanFilePath = plan.PlanFilePath
         };
-        var request = CommandPreviewBuilder.BuildRequest(applySpec, exePath, plan.WorkingDirectory);
+        var request = CommandPreviewBuilder.BuildRequest(applySpec, exePath, plan.WorkingDirectory, cloudEnv.EnvironmentVariables);
 
         var risk = plan.HasDeletions || plan.HasReplacements ? "destructive" : "state-changing";
         var chips = new List<CommandContextChip>
         {
             new("Terraform", installation?.Version?.ToString() ?? plan.TerraformVersion ?? "not found"),
             new("Environment", environment?.Name ?? plan.EnvironmentName),
+            new("Cloud", cloudEnv.HasConnection ? cloudEnv.IdentityChip! : "none — bind a connection"),
             new("Risk", risk)
         };
         if (plan.IsProductionTarget)
