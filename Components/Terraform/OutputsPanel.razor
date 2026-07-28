@@ -1,0 +1,90 @@
+@* Read-only outputs: terraform output -json, sensitive values redacted. See docs/06-plan-apply-safety.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Contracts.Terraform
+@inject ITerraformInspectionService Inspection
+@inject IJSRuntime JS
+
+<div class="fx-card">
+    <div class="fx-panel-head">
+        <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="upload" Size="16" /></span>
+        <span style="flex:1;font-weight:500;">Root outputs</span>
+        @if (_outputs is not null && !_outputs.IsEmpty)
+        {
+            <span class="fx-pill muted">@_outputs.Outputs.Count total@(_outputs.SensitiveCount > 0 ? $" · {_outputs.SensitiveCount} sensitive" : "")</span>
+        }
+        <button class="fx-btn sm" @onclick="LoadAsync" disabled="@_loading">
+            <span class="fx-ico"><Icon Name="refresh" Size="12" /></span> @(_loading ? "Reading…" : "Reload")
+        </button>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="fx-hint">Running <span class="fx-mono">terraform output -json</span>…</div>
+    }
+    else if (_blocked is not null)
+    {
+        <div class="fx-hint" style="color:var(--fx-warn);display:flex;gap:8px;"><span class="fx-ico"><Icon Name="alert" Size="14" /></span> @_blocked</div>
+    }
+    else if (_outputs is null || _outputs.IsEmpty)
+    {
+        <EmptyState IconName="upload" Title="No outputs" Text="This environment's configuration declares no root outputs, or the state has none yet." />
+    }
+    else
+    {
+        <div class="fx-outputs">
+            @foreach (var o in _outputs.Outputs)
+            {
+                <div class="fx-output">
+                    <div class="head">
+                        <span class="name fx-mono">@o.Name</span>
+                        <span class="type">@o.TypeLabel</span>
+                        @if (o.Sensitive)
+                        {
+                            <span class="tag">sensitive</span>
+                        }
+                        @if (!o.Sensitive && o.Value is not null)
+                        {
+                            <button class="fx-iconbtn" title="Copy value" @onclick="() => CopyAsync(o.Value!)"><Icon Name="copy" Size="13" /></button>
+                        }
+                    </div>
+                    <div class="val fx-mono @(o.Sensitive ? "sensitive" : "")">@(o.Value ?? "—")</div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private OutputCollection? _outputs;
+    private bool _loading;
+    private string? _blocked;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _blocked = null;
+        StateHasChanged();
+
+        var preview = await Inspection.PreviewAsync(ProjectId, EnvironmentId, TerraformCommandKind.Output);
+        if (!preview.CanRun)
+        {
+            _blocked = preview.BlockReason;
+            _outputs = OutputCollection.Empty;
+            _loading = false;
+            return;
+        }
+
+        _outputs = await Inspection.GetOutputsAsync(ProjectId, EnvironmentId);
+        _loading = false;
+    }
+
+    private async Task CopyAsync(string text)
+    {
+        try { await JS.InvokeVoidAsync("navigator.clipboard.writeText", text); } catch { }
+    }
+}

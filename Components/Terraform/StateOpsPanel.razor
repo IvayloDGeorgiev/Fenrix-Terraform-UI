@@ -1,0 +1,242 @@
+@* Advanced state operations: state mv / rm / push / pull + force-unlock. State-changing ops are gated behind
+   a typed confirmation + the per-environment lock and blocked when unbound. See docs/05, docs/06, docs/22. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Contracts.Terraform
+@inject ITerraformStateService StateOps
+@implements IDisposable
+
+<div class="fx-card" style="margin-bottom:16px;">
+    <div class="fx-panel-head">
+        <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="wrench" Size="16" /></span>
+        <span style="flex:1;font-weight:500;">State operation</span>
+    </div>
+
+    <div class="fx-field" style="margin-bottom:12px;">
+        <label>Operation</label>
+        <select class="fx-select" @bind="_op" @bind:after="OnOpChanged" disabled="@_running">
+            <option value="@TerraformCommandKind.StateMove">Move / rename (state mv)</option>
+            <option value="@TerraformCommandKind.StateRemove">Remove from state (state rm)</option>
+            <option value="@TerraformCommandKind.StatePull">Pull state to a file (state pull)</option>
+            <option value="@TerraformCommandKind.StatePush">Push state from a file (state push)</option>
+            <option value="@TerraformCommandKind.ForceUnlock">Force-unlock (force-unlock)</option>
+        </select>
+    </div>
+
+    @switch (_op)
+    {
+        case TerraformCommandKind.StateMove:
+            <div class="fx-field"><label>Source address</label><input class="fx-input fx-mono" placeholder="aws_instance.old" @bind="_mvSource" @bind:event="oninput" @bind:after="RebuildAsync" disabled="@_running" /></div>
+            <div class="fx-field"><label>Destination address</label><input class="fx-input fx-mono" placeholder="aws_instance.new" @bind="_mvDest" @bind:event="oninput" @bind:after="RebuildAsync" disabled="@_running" /></div>
+            break;
+
+        case TerraformCommandKind.StateRemove:
+            <div class="fx-field">
+                <label>Resource addresses <span class="hint" style="color:var(--fx-faint);">(one per line — removed from state, not destroyed)</span></label>
+                <textarea class="fx-input fx-mono" rows="4" placeholder="aws_instance.web&#10;module.db.aws_db_instance.main" @bind="_rmAddrs" @bind:event="oninput" @bind:after="RebuildAsync" disabled="@_running"></textarea>
+            </div>
+            break;
+
+        case TerraformCommandKind.StatePull:
+            <div class="fx-field"><label>Destination file</label><input class="fx-input fx-mono" placeholder="C:\backups\terraform.tfstate" @bind="_pullPath" @bind:event="oninput" disabled="@_running" /></div>
+            <p class="fx-hint" style="margin:0;">Reads remote state to a local file. State can contain plaintext secrets — the output is never logged and the file is your own backup.</p>
+            break;
+
+        case TerraformCommandKind.StatePush:
+            <div class="fx-field"><label>Source state file</label><input class="fx-input fx-mono" placeholder="C:\backups\terraform.tfstate" @bind="_pushPath" @bind:event="oninput" @bind:after="RebuildAsync" disabled="@_running" /></div>
+            <p class="fx-hint" style="margin:0;color:var(--fx-warn);">Overwrites remote state from this file. This is the most dangerous state operation — use only to restore a known-good backup.</p>
+            break;
+
+        case TerraformCommandKind.ForceUnlock:
+            <div class="fx-field"><label>Lock ID</label><input class="fx-input fx-mono" placeholder="a1b2c3d4-…" @bind="_lockId" @bind:event="oninput" @bind:after="RebuildAsync" disabled="@_running" /></div>
+            <p class="fx-hint" style="margin:0;">Releases a stuck state lock (the id is shown in the error from a failed operation). Only force-unlock when you are sure no operation is still running.</p>
+            break;
+    }
+</div>
+
+@if (_op == TerraformCommandKind.StatePull)
+{
+    <div class="fx-card" style="margin-bottom:16px;">
+        <button class="fx-btn accent" @onclick="PullAsync" disabled="@(_running || string.IsNullOrWhiteSpace(_pullPath))">
+            <span class="fx-ico"><Icon Name="download" Size="13" /></span> Pull state
+        </button>
+        @if (_error is not null)
+        {
+            <span class="fx-pill fail" style="margin-left:8px;">@_error</span>
+        }
+        @if (_pullOk)
+        {
+            <span class="fx-pill ok" style="margin-left:8px;"><span class="fx-ico"><Icon Name="check" Size="12" /></span> Saved</span>
+        }
+    </div>
+}
+else if (_context is not null)
+{
+    <div class="fx-card" style="margin-bottom:16px;">
+        <CommandPreviewPanel Preview="_context.Preview" />
+        @if (_context.BlockReason is not null)
+        {
+            <div class="fx-hint" style="margin-top:12px;color:var(--fx-warn);display:flex;gap:8px;"><span class="fx-ico"><Icon Name="alert" Size="14" /></span> @_context.BlockReason</div>
+        }
+        <div style="display:flex;gap:8px;margin-top:14px;">
+            @if (_running)
+            {
+                <button class="fx-btn danger" @onclick="CancelRun"><span class="fx-ico"><Icon Name="stop" Size="14" /></span> Cancel</button>
+                <span class="fx-pill run"><span class="fx-ico"><Icon Name="refresh" Size="12" /></span> Running…</span>
+            }
+            else
+            {
+                <button class="fx-btn danger" @onclick="BeginConfirm" disabled="@(!_context.CanRun)">
+                    <span class="fx-ico"><Icon Name="play" Size="13" /></span> Run @_context.OperationLabel
+                </button>
+            }
+            @if (_error is not null)
+            {
+                <span class="fx-pill fail">@_error</span>
+            }
+        </div>
+    </div>
+}
+
+@if (_output.Count > 0)
+{
+    <div class="fx-card" style="margin-bottom:16px;">
+        <div class="fx-panel-head"><span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="terminal" Size="16" /></span><span style="font-weight:500;">Output</span></div>
+        <OutputConsole Lines="_output" />
+    </div>
+}
+
+@if (_confirming && _context is not null)
+{
+    <Modal Title="@($"Confirm {_context.OperationLabel}")" IconName="shield" OnClose="() => _confirming = false">
+        <ChildContent>
+            <p class="fx-hint" style="margin-top:0;">This modifies Terraform state and takes the environment's operation lock. Make sure you have a state backup.</p>
+            <div class="fx-tf-preview" style="margin:12px 0;"><div class="fx-tf-cmd"><span class="exe">@_context.Preview.DisplayCommand</span></div></div>
+            <div class="fx-field">
+                <label>Type <span class="fx-mono">@_context.ConfirmationPhrase</span> to confirm</label>
+                <input class="fx-input" @bind="_confirmText" @bind:event="oninput" placeholder="@_context.ConfirmationPhrase" />
+            </div>
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn ghost" @onclick="() => _confirming = false">Cancel</button>
+            <button class="fx-btn danger" @onclick="RunAsync" disabled="@(_confirmText?.Trim() != _context.ConfirmationPhrase)">
+                <span class="fx-ico"><Icon Name="play" Size="13" /></span> Run
+            </button>
+        </Footer>
+    </Modal>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private TerraformCommandKind _op = TerraformCommandKind.StateMove;
+    private string _mvSource = "", _mvDest = "", _rmAddrs = "", _pushPath = "", _lockId = "", _pullPath = "";
+
+    private StateOpContext? _context;
+    private bool _running, _confirming, _pullOk;
+    private string? _error;
+    private string? _confirmText;
+    private readonly List<ProcessOutputEvent> _output = [];
+    private CancellationTokenSource? _cts;
+
+    protected override async Task OnInitializedAsync() => await RebuildAsync();
+
+    private async Task OnOpChanged()
+    {
+        _error = null;
+        _pullOk = false;
+        await RebuildAsync();
+    }
+
+    private TerraformRunSpec BuildSpec() => new(ProjectId, EnvironmentId, _op)
+    {
+        StateMove = new StateMoveOptions { Source = Trim(_mvSource), Destination = Trim(_mvDest) },
+        StateRemove = new StateRemoveOptions { Addresses = SplitLines(_rmAddrs) },
+        ForceUnlock = new ForceUnlockOptions { LockId = Trim(_lockId) },
+        StateFilePath = Trim(_pushPath)
+    };
+
+    private async Task RebuildAsync()
+    {
+        if (_op == TerraformCommandKind.StatePull)
+        {
+            _context = null;
+            return;
+        }
+        _context = await StateOps.PrepareAsync(BuildSpec());
+    }
+
+    private void BeginConfirm()
+    {
+        _error = null;
+        _confirmText = "";
+        _confirming = true;
+    }
+
+    private async Task RunAsync()
+    {
+        if (_context is null) return;
+        _confirming = false;
+        _running = true;
+        _error = null;
+        _output.Clear();
+        _cts = new CancellationTokenSource();
+        StateHasChanged();
+
+        try
+        {
+            var progress = new Progress<ProcessOutputEvent>(e => { _output.Add(e); StateHasChanged(); });
+            var result = await StateOps.ExecuteAsync(_context, new ApplyConfirmation(_confirmText), progress, _cts.Token);
+            if (result.BlockReason is not null)
+                _error = result.BlockReason;
+            else if (!result.Process.Succeeded && !result.Process.Cancelled)
+                _error = $"Command exited with code {result.Process.ExitCode}.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally
+        {
+            _running = false;
+            _confirmText = null;
+            _cts?.Dispose();
+            _cts = null;
+            await RebuildAsync();
+            StateHasChanged();
+        }
+    }
+
+    private async Task PullAsync()
+    {
+        _running = true;
+        _error = null;
+        _pullOk = false;
+        _output.Clear();
+        StateHasChanged();
+        try
+        {
+            var result = await StateOps.PullToFileAsync(ProjectId, EnvironmentId, Trim(_pullPath) ?? "");
+            if (result.BlockReason is not null)
+                _error = result.BlockReason;
+            else if (result.Process.Succeeded)
+                _pullOk = true;
+            else
+                _error = $"terraform state pull exited with code {result.Process.ExitCode}.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _running = false; StateHasChanged(); }
+    }
+
+    private void CancelRun() => _cts?.Cancel();
+
+    private static string? Trim(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    private static IReadOnlyList<string> SplitLines(string? text) =>
+        string.IsNullOrWhiteSpace(text)
+            ? []
+            : text.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

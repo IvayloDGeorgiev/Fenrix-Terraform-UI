@@ -21,5 +21,59 @@ public enum TerraformCommandKind
     Apply = 5,
 
     /// <summary><c>terraform show -json &lt;plan&gt;</c> — read-only conversion of a saved plan for review.</summary>
-    Show = 6
+    Show = 6,
+
+    // ---- Phase 9: state & inspection tools (docs/05, docs/25 "Read-only inspection", docs/22) ----
+
+    /// <summary><c>terraform state list</c> — read-only enumeration of tracked resource addresses.</summary>
+    StateList = 7,
+
+    /// <summary>
+    /// <c>terraform show -json</c> (no plan file) — read-only conversion of the <em>current state</em> to
+    /// JSON for the redacted state browser. Distinct from <see cref="Show"/>, which converts a saved plan.
+    /// </summary>
+    StateShow = 8,
+
+    /// <summary><c>terraform output -json</c> — read-only root output values (sensitive redacted).</summary>
+    Output = 9,
+
+    /// <summary><c>terraform graph</c> — read-only dependency graph in DOT, rendered visually.</summary>
+    Graph = 10,
+
+    /// <summary><c>terraform state mv</c> — moves/renames a resource in state (state-changing).</summary>
+    StateMove = 11,
+
+    /// <summary><c>terraform state rm</c> — removes resources from state without destroying them (state-changing).</summary>
+    StateRemove = 12,
+
+    /// <summary><c>terraform state pull</c> — reads remote state to stdout (read-only, but sensitive → never logged).</summary>
+    StatePull = 13,
+
+    /// <summary><c>terraform state push</c> — overwrites remote state from a file (state-changing, dangerous).</summary>
+    StatePush = 14,
+
+    /// <summary><c>terraform force-unlock</c> — releases a stuck state lock by id (state-changing).</summary>
+    ForceUnlock = 15,
+
+    /// <summary><c>terraform workspace list</c> — read-only enumeration of workspaces (current marked <c>*</c>).</summary>
+    WorkspaceList = 16,
+
+    /// <summary><c>terraform workspace select</c> — switches the active workspace (state-changing).</summary>
+    WorkspaceSelect = 17,
+
+    /// <summary><c>terraform workspace new</c> — creates a workspace (state-changing).</summary>
+    WorkspaceNew = 18,
+
+    /// <summary><c>terraform workspace delete</c> — deletes a workspace (state-changing).</summary>
+    WorkspaceDelete = 19,
+
+    /// <summary><c>terraform import ADDRESS ID</c> — imports an existing object into state (state-changing).</summary>
+    Import = 20,
+
+    /// <summary>
+    /// <c>terraform plan -generate-config-out=&lt;file&gt;</c> — the config-generation half of the Terraform
+    /// 1.5+ <c>import{}</c> workflow: with import blocks present in config, this writes generated HCL for the
+    /// imported resources. No state is changed (it is a plan). See docs/22-terraform-files-model.md.
+    /// </summary>
+    PlanGenerateConfig = 21
 }

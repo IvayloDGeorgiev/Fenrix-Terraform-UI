@@ -1,0 +1,107 @@
+@* Drift tab: surfaces a refresh-only plan (Phase 4) in the inspection view. Reuses the plan service via the
+   inspection service, so it takes the environment lock and records a saved plan. See docs/06-plan-apply-safety.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Terraform
+@inject ITerraformInspectionService Inspection
+@implements IDisposable
+
+<div class="fx-card" style="margin-bottom:16px;">
+    <div class="fx-panel-head">
+        <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="swap" Size="16" /></span>
+        <span style="flex:1;font-weight:500;">Refresh-only drift check</span>
+        @if (_running)
+        {
+            <button class="fx-btn danger sm" @onclick="Cancel"><span class="fx-ico"><Icon Name="stop" Size="12" /></span> Cancel</button>
+        }
+        else
+        {
+            <button class="fx-btn accent sm" @onclick="RunAsync">
+                <span class="fx-ico"><Icon Name="refresh" Size="12" /></span> Check drift
+            </button>
+        }
+    </div>
+    <p class="fx-hint" style="margin:0;">
+        Runs <span class="fx-mono">terraform plan -refresh-only</span> to compare real infrastructure against
+        recorded state, without proposing changes. It updates state and takes the environment's operation lock.
+    </p>
+
+    @if (_blocked is not null)
+    {
+        <div class="fx-hint" style="margin-top:10px;color:var(--fx-warn);display:flex;gap:8px;"><span class="fx-ico"><Icon Name="alert" Size="14" /></span> @_blocked</div>
+    }
+
+    @if (_result is not null && _result.Succeeded)
+    {
+        var drift = _result.Review?.DriftChanges.Count ?? 0;
+        <div style="margin-top:12px;">
+            @if (drift == 0)
+            {
+                <span class="fx-pill ok"><span class="fx-ico"><Icon Name="check" Size="12" /></span> No drift detected</span>
+            }
+            else
+            {
+                <span class="fx-pill warn"><span class="fx-ico"><Icon Name="alert" Size="12" /></span> @drift resource(s) drifted</span>
+            }
+        </div>
+    }
+</div>
+
+@if (_output.Count > 0)
+{
+    <div class="fx-card" style="margin-bottom:16px;">
+        <div class="fx-panel-head"><span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="terminal" Size="16" /></span><span style="font-weight:500;">Output</span></div>
+        <OutputConsole Lines="_output" />
+    </div>
+}
+
+@if (_result?.Review is { } review && !review.IsEmpty)
+{
+    <PlanReviewPanel Review="review" Mode="PlanMode.RefreshOnly" />
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private readonly List<ProcessOutputEvent> _output = [];
+    private PlanCreationResult? _result;
+    private string? _blocked;
+    private bool _running;
+    private CancellationTokenSource? _cts;
+
+    private async Task RunAsync()
+    {
+        _running = true;
+        _blocked = null;
+        _result = null;
+        _output.Clear();
+        _cts = new CancellationTokenSource();
+        StateHasChanged();
+
+        try
+        {
+            var progress = new Progress<ProcessOutputEvent>(e => { _output.Add(e); StateHasChanged(); });
+            _result = await Inspection.CheckDriftAsync(ProjectId, EnvironmentId, progress, _cts.Token);
+            if (_result.BlockReason is not null)
+                _blocked = _result.BlockReason;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { _blocked = ex.Message; }
+        finally
+        {
+            _running = false;
+            _cts?.Dispose();
+            _cts = null;
+            StateHasChanged();
+        }
+    }
+
+    private void Cancel() => _cts?.Cancel();
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

@@ -40,6 +40,14 @@ public interface IProjectService
     Task SetEnvironmentCloudConnectionAsync(
         Guid projectId, Guid environmentId, Guid? cloudConnectionId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Records (or clears, when null) the Terraform workspace an environment is bound to, after a successful
+    /// <c>workspace select</c>/<c>new</c>. Persists to <see cref="Domain.Environments.ProjectEnvironment.TerraformWorkspace"/>.
+    /// See docs/05-terraform-engine.md.
+    /// </summary>
+    Task SetEnvironmentWorkspaceAsync(
+        Guid projectId, Guid environmentId, string? workspace, CancellationToken ct = default);
+
     /// <summary>Unregisters a project from Fenrix. Never deletes files on disk.</summary>
     Task RemoveAsync(Guid projectId, CancellationToken ct = default);
 }

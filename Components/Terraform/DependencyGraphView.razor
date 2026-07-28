@@ -1,0 +1,57 @@
+@* Visual dependency graph: renders the parsed graph via the offline SVG DAG renderer (js/fenrix-graph.js).
+   Drag to pan, scroll to zoom, click a node to focus its neighbours. See docs/25-execution-lifecycle.md. *@
+@using System.Text.Json
+@using Fenrix.IaCStudio.Contracts.Terraform
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="fx-graph-wrap">
+    <div class="fx-graph-toolbar">
+        <span class="fx-graph-legend">
+            <span class="dot kind-resource"></span> Resource
+            <span class="dot kind-datasource"></span> Data
+            <span class="dot kind-provider"></span> Provider
+            <span class="dot kind-variable"></span> Variable
+            <span class="dot kind-output"></span> Output
+        </span>
+        <span style="flex:1;"></span>
+        <span class="fx-hint" style="margin:0;">@Graph.Nodes.Count nodes · @Graph.Edges.Count edges · scroll to zoom, drag to pan</span>
+    </div>
+    <div class="fx-graph-canvas" id="@_containerId"></div>
+</div>
+
+@code {
+    [Parameter] public DependencyGraph Graph { get; set; } = DependencyGraph.Empty;
+
+    private readonly string _containerId = "fxgraph-" + Guid.NewGuid().ToString("N")[..8];
+    private string? _rendered;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Re-render whenever the graph identity changes (cheap signature avoids redundant JS calls).
+        var signature = $"{Graph.Nodes.Count}:{Graph.Edges.Count}";
+        if (_rendered == signature)
+            return;
+        _rendered = signature;
+
+        try
+        {
+            var payload = JsonSerializer.Serialize(new
+            {
+                nodes = Graph.Nodes.Select(n => new { id = n.Id, label = n.Label, kind = n.Kind.ToString() }),
+                edges = Graph.Edges.Select(e => new { from = e.From, to = e.To })
+            });
+            await JS.InvokeVoidAsync("fenrixGraph.render", _containerId, payload);
+        }
+        catch
+        {
+            // Interop unavailable (teardown) — ignore.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await JS.InvokeVoidAsync("fenrixGraph.dispose", _containerId); }
+        catch { /* ignore */ }
+    }
+}

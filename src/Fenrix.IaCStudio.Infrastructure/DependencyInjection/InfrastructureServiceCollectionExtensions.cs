@@ -77,6 +77,14 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ITerraformPlanService, TerraformPlanService>();
         services.AddScoped<ITerraformApplyService, TerraformApplyService>();
 
+        // State & inspection tools (Phase 9). Inspection is read-only (no lock, JSON output never logged);
+        // the state-ops and import services are state-changing (confirm + per-environment lock + the Phase 8
+        // authentication-required rule + redacted history). All touch the DB / process runner and are scoped.
+        // No new services beyond these three; no new DB migration. See docs/05, docs/22, docs/25.
+        services.AddScoped<ITerraformInspectionService, TerraformInspectionService>();
+        services.AddScoped<ITerraformStateService, TerraformStateService>();
+        services.AddScoped<ITerraformImportService, TerraformImportService>();
+
         // Git engine (Phase 5). Discovery reads settings; the coordinator records redacted history and
         // logs to Logs/git; the service drives the git CLI via the shared ArgumentList runner. All are
         // scoped to the UI request. See docs/08-git-engine.md, docs/23-command-transparency.md.

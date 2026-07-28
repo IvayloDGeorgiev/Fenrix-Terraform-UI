@@ -1,0 +1,161 @@
+@page "/projects/{ProjectId:guid}/inspect"
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Environments
+@using Fenrix.IaCStudio.Domain.Projects
+@inject IProjectService Projects
+
+@if (_project is null)
+{
+    <div class="fx-card" style="text-align:center;color:var(--fx-dim);">@(_loading ? "Loading…" : "Project not found.")</div>
+}
+else
+{
+    <ProjectHeader ProjectId="ProjectId" Name="@_project.Name" Active="ProjectHeader.ProjectPage.Inspect" Trail="@(SelectedEnvironment?.Name)" />
+
+    <div class="fx-card" style="margin-bottom:16px;">
+        <div class="fx-field" style="margin-bottom:0;">
+            <label>Environment</label>
+            <select class="fx-select" value="@_envId" @onchange="OnEnvChanged">
+                @foreach (var env in _environments)
+                {
+                    <option value="@env.Id">@env.Name@(env.IsProduction ? " (production)" : "")@(env.CloudConnectionId is null ? " ⚠" : "")</option>
+                }
+            </select>
+            @if (SelectedEnvironment is not null)
+            {
+                <div style="margin-top:8px;">
+                    <EnvironmentConnectionBar ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id"
+                                              CloudConnectionId="SelectedEnvironment.CloudConnectionId"
+                                              ClientId="_project?.ClientId" OnChanged="OnConnectionBound" />
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="fx-tabs" style="margin-bottom:16px;">
+        @foreach (var tab in _tabs)
+        {
+            <button class="fx-tab @(_tab == tab ? "active" : "")" @onclick="() => _tab = tab">
+                <span class="fx-ico"><Icon Name="@TabIcon(tab)" Size="13" /></span> @TabLabel(tab)
+            </button>
+        }
+    </div>
+
+    @if (SelectedEnvironment is null)
+    {
+        <div class="fx-card"><div class="fx-hint" style="margin:0;">Select an environment to inspect.</div></div>
+    }
+    else
+    {
+        @* Keyed on env id so switching environments re-initialises each panel's cached data. *@
+        @switch (_tab)
+        {
+            case InspectTab.State:
+                <StateBrowserPanel @key="StateKey" ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                break;
+            case InspectTab.Outputs:
+                <OutputsPanel @key="StateKey" ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                break;
+            case InspectTab.Graph:
+                <GraphPanel @key="StateKey" ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                break;
+            case InspectTab.Workspaces:
+                <WorkspacePanel @key="StateKey" ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id"
+                                CurrentWorkspace="@SelectedEnvironment.TerraformWorkspace" OnChanged="ReloadProjectAsync" />
+                break;
+            case InspectTab.Drift:
+                <DriftPanel @key="StateKey" ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                break;
+            case InspectTab.Ops:
+                <StateOpsPanel @key="StateKey" ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                break;
+            case InspectTab.Import:
+                <ImportAssistant @key="StateKey" ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                break;
+        }
+    }
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private enum InspectTab { State, Outputs, Graph, Workspaces, Drift, Ops, Import }
+
+    private static readonly InspectTab[] _tabs =
+        [InspectTab.State, InspectTab.Outputs, InspectTab.Graph, InspectTab.Workspaces, InspectTab.Drift, InspectTab.Ops, InspectTab.Import];
+
+    private InfrastructureProject? _project;
+    private List<ProjectEnvironment> _environments = [];
+    private Guid _envId;
+    private InspectTab _tab = InspectTab.State;
+    private bool _loading = true;
+    private Guid _loadedId;
+
+    private ProjectEnvironment? SelectedEnvironment => _environments.FirstOrDefault(e => e.Id == _envId);
+
+    // Panels are keyed on (env, tab) so a change re-creates the panel with fresh state.
+    private string StateKey => $"{_envId}:{_tab}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == ProjectId) return;
+        _loadedId = ProjectId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _project = await Projects.GetAsync(ProjectId);
+        _loading = false;
+        if (_project is null) return;
+        _environments = _project.Environments.OrderBy(e => e.DisplayOrder).ThenBy(e => e.Name).ToList();
+        _envId = _environments.FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private async Task ReloadProjectAsync()
+    {
+        _project = await Projects.GetAsync(ProjectId);
+        if (_project is not null)
+            _environments = _project.Environments.OrderBy(e => e.DisplayOrder).ThenBy(e => e.Name).ToList();
+        StateHasChanged();
+    }
+
+    private void OnEnvChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id))
+            _envId = id;
+    }
+
+    private void OnConnectionBound(Guid? id)
+    {
+        if (SelectedEnvironment is { } env)
+            env.CloudConnectionId = id;
+        StateHasChanged();
+    }
+
+    private static string TabLabel(InspectTab t) => t switch
+    {
+        InspectTab.State => "State browser",
+        InspectTab.Outputs => "Outputs",
+        InspectTab.Graph => "Graph",
+        InspectTab.Workspaces => "Workspaces",
+        InspectTab.Drift => "Drift",
+        InspectTab.Ops => "State ops",
+        InspectTab.Import => "Import",
+        _ => t.ToString()
+    };
+
+    private static string TabIcon(InspectTab t) => t switch
+    {
+        InspectTab.State => "database",
+        InspectTab.Outputs => "upload",
+        InspectTab.Graph => "sitemap",
+        InspectTab.Workspaces => "layers",
+        InspectTab.Drift => "swap",
+        InspectTab.Ops => "wrench",
+        InspectTab.Import => "download",
+        _ => "circle-dot"
+    };
+}

@@ -16,6 +16,9 @@
             <button class="fx-ribbon-btn @(Active == ProjectPage.Plan ? "active" : "")" @onclick='() => Go("/plan")' title="Plan &amp; apply">
                 <Icon Name="shield" Size="14" /> <span>Plan &amp; apply</span>
             </button>
+            <button class="fx-ribbon-btn @(Active == ProjectPage.Inspect ? "active" : "")" @onclick='() => Go("/inspect")' title="State &amp; inspection">
+                <Icon Name="database" Size="14" /> <span>Inspect</span>
+            </button>
             <button class="fx-ribbon-btn @(Active == ProjectPage.SourceControl ? "active" : "")" @onclick='() => Go("/source-control")' title="Source control">
                 <Icon Name="git-branch" Size="14" /> <span>Source control</span>
             </button>
@@ -39,7 +42,7 @@
 </div>
 
 @code {
-    public enum ProjectPage { Files, Terraform, Plan, SourceControl }
+    public enum ProjectPage { Files, Terraform, Plan, Inspect, SourceControl }
 
     [Parameter] public Guid ProjectId { get; set; }
     [Parameter] public string Name { get; set; } = "";
@@ -58,6 +61,7 @@
         ProjectPage.Files => "Files",
         ProjectPage.Terraform => "Terraform",
         ProjectPage.Plan => "Plan & apply",
+        ProjectPage.Inspect => "Inspect",
         ProjectPage.SourceControl => "Source control",
         _ => ""
     };

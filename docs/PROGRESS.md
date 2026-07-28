@@ -208,10 +208,18 @@ _✅ Core complete. Cloud provider abstraction + Azure/AWS/Google adapters (offi
 - [x] Bound connection wired into execution: plan/apply/init compose the env from the environment's connection, the account identity shows in the command-preview context chips, secrets are never placed in args/history (redacted env chips) ([25](25-execution-lifecycle.md))
 - [x] Cloud CLI shim handling (`CloudCli`): PATH+PATHEXT resolution, `.cmd`/`.bat` routed through `cmd.exe /c` via `ArgumentList` (no shell string)
 
-## Phase 9 — State & inspection tools
+## Phase 9 — State & inspection tools ✅ core complete
 
-- [ ] State browser · list/show · outputs · dependency graph
-- [ ] Import assistant · workspace management · force-unlock · advanced state ops
+- [x] **State browser** — `state list` + `show -json` (current state) parsed in memory into a redacted `StateSnapshot` (`StateJsonParser`: recurses child modules, redacts via the state `sensitive_values` map); two-pane browser (filterable address list + per-resource redacted attributes) ([22](22-terraform-files-model.md), [25](25-execution-lifecycle.md))
+- [x] **Outputs** — `output -json` parsed (`OutputJsonParser`), sensitive outputs reduced to a placeholder; copy non-sensitive values ([06](06-plan-apply-safety.md))
+- [x] **Dependency graph** — `terraform graph` → DOT parsed (`GraphDotParser`: `[root]`/`(expand)`/`(close)` conventions, escaped-quote provider ids, node classification) → **visual layered-DAG renderer** (offline `wwwroot/js/fenrix-graph.js`, pan/zoom, click-to-focus neighbours) — no external graph library
+- [x] **Refresh-only drift** surfaced in the inspection view (delegates to the Phase 4 plan service; takes the lock, records a saved plan)
+- [x] **Advanced state ops** — `state mv/rm/pull/push` + `force-unlock`; state-changing ops gated behind a typed confirmation (environment name) + the per-environment lock, **blocked when the environment is unbound** (Phase 8 authentication-required rule), redacted history; `state pull`/`show`/`output` output never logged (`captureLog:false`); `state pull` writes to a user-chosen backup file
+- [x] **Workspace management** — `workspace list/select/new/delete`; select/new persist the environment's active workspace (`ProjectEnvironment.TerraformWorkspace`)
+- [x] **Import assistant** — guided **CLI import** (`terraform import ADDRESS ID`: confirm + lock + blocked-when-unbound + history) and **config generation** (Terraform 1.5+ `import{}` block + `plan -generate-config-out`, generated HCL captured in file history and shown for review)
+- [x] New **Inspect** ribbon tab + page (`/projects/{id}/inspect`) with State browser / Outputs / Graph / Workspaces / Drift / State ops / Import; reuses the command-preview, output-console, connection-bar, and plan-review components
+- [x] Verified (MAUI not compiled here): `tests/terraform-fixtures/` real-format state/output/graph/workspace samples + Python reference port — 24/24 assertions (redaction, module recursion, DOT parsing, workspace current)
+- [ ] _Follow-ups:_ read-only inspection currently records a redacted history row per run (like Phase 4 `show -json`) rather than running silently (Phase 5 Git posture) — could be made silent if it proves noisy; `state show` details are derived from `show -json` (structured + redactable) rather than the text `state show` (the literal command is still previewable); graph renderer uses a simple longest-path layering (no crossing-minimisation) — fine for typical project sizes; serial/lineage only populated when present (raw state / `state pull`), not from `show -json`
 
 ## Phase 8.5 — Project secrets & key-pair management
 

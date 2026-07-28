@@ -1,0 +1,182 @@
+@* Workspace management: list (read-only) + select/new/delete (state-changing → typed confirm + env lock +
+   blocked when unbound). See docs/05-terraform-engine.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Contracts.Terraform
+@inject ITerraformStateService StateOps
+@implements IDisposable
+
+<div class="fx-card" style="margin-bottom:16px;">
+    <div class="fx-panel-head">
+        <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="layers" Size="16" /></span>
+        <span style="flex:1;font-weight:500;">Workspaces</span>
+        <button class="fx-btn sm" @onclick="LoadAsync" disabled="@_loading || _running">
+            <span class="fx-ico"><Icon Name="refresh" Size="12" /></span> @(_loading ? "Listing…" : "Reload")
+        </button>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="fx-hint">Running <span class="fx-mono">terraform workspace list</span>…</div>
+    }
+    else if (_workspaces is null || _workspaces.IsEmpty)
+    {
+        <div class="fx-hint">No workspaces found (the backend may not support them, or init hasn't run).</div>
+    }
+    else
+    {
+        <div class="fx-wslist">
+            @foreach (var w in _workspaces.Names)
+            {
+                var isCurrent = w == _workspaces.Current;
+                <div class="fx-wsrow @(isCurrent ? "current" : "")">
+                    <span class="fx-ico"><Icon Name="@(isCurrent ? "check" : "circle-dot")" Size="13" /></span>
+                    <span class="name fx-mono">@w</span>
+                    @if (isCurrent)
+                    {
+                        <span class="fx-pill ok">current</span>
+                    }
+                    <span style="flex:1;"></span>
+                    @if (!isCurrent)
+                    {
+                        <button class="fx-btn sm" @onclick="() => BeginAsync(TerraformCommandKind.WorkspaceSelect, w)" disabled="@_running">Select</button>
+                        @if (w != "default")
+                        {
+                            <button class="fx-btn sm danger" @onclick="() => BeginAsync(TerraformCommandKind.WorkspaceDelete, w)" disabled="@_running">Delete</button>
+                        }
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    <div class="fx-field" style="margin-top:14px;">
+        <label>Create a workspace</label>
+        <div style="display:flex;gap:8px;">
+            <input class="fx-input fx-mono" placeholder="staging" @bind="_newName" @bind:event="oninput" disabled="@_running" />
+            <button class="fx-btn accent" @onclick="() => BeginAsync(TerraformCommandKind.WorkspaceNew, _newName)"
+                    disabled="@(_running || string.IsNullOrWhiteSpace(_newName))">
+                <span class="fx-ico"><Icon Name="plus" Size="13" /></span> New
+            </button>
+        </div>
+    </div>
+</div>
+
+@if (_output.Count > 0)
+{
+    <div class="fx-card" style="margin-bottom:16px;">
+        <div class="fx-panel-head"><span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="terminal" Size="16" /></span><span style="font-weight:500;">Output</span></div>
+        <OutputConsole Lines="_output" />
+        @if (_error is not null)
+        {
+            <span class="fx-pill fail" style="margin-top:8px;">@_error</span>
+        }
+    </div>
+}
+
+@if (_pending is not null)
+{
+    <Modal Title="@($"Confirm {_pending.OperationLabel}")" IconName="shield" OnClose="Cancel">
+        <ChildContent>
+            <p class="fx-hint" style="margin-top:0;">This changes the environment's Terraform workspace and takes the operation lock.</p>
+            <div class="fx-tf-preview" style="margin:12px 0;"><div class="fx-tf-cmd"><span class="exe">@_pending.Preview.DisplayCommand</span></div></div>
+            <div class="fx-field">
+                <label>Type <span class="fx-mono">@_pending.ConfirmationPhrase</span> to confirm</label>
+                <input class="fx-input" @bind="_confirmText" @bind:event="oninput" placeholder="@_pending.ConfirmationPhrase" />
+            </div>
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn ghost" @onclick="Cancel">Cancel</button>
+            <button class="fx-btn danger" @onclick="RunAsync" disabled="@(_confirmText?.Trim() != _pending.ConfirmationPhrase)">
+                <span class="fx-ico"><Icon Name="play" Size="13" /></span> Run
+            </button>
+        </Footer>
+    </Modal>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+    [Parameter] public string? CurrentWorkspace { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private WorkspaceSnapshot? _workspaces;
+    private string _newName = "";
+    private bool _loading;
+    private bool _running;
+    private string? _error;
+
+    private StateOpContext? _pending;
+    private string? _confirmText;
+    private readonly List<ProcessOutputEvent> _output = [];
+    private CancellationTokenSource? _cts;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        StateHasChanged();
+        _workspaces = await StateOps.GetWorkspacesAsync(ProjectId, EnvironmentId);
+        _loading = false;
+    }
+
+    private async Task BeginAsync(TerraformCommandKind kind, string name)
+    {
+        _error = null;
+        var spec = new TerraformRunSpec(ProjectId, EnvironmentId, kind) { Workspace = new WorkspaceOptions { Name = name?.Trim() } };
+        var ctx = await StateOps.PrepareAsync(spec);
+        if (!ctx.CanRun)
+        {
+            _error = ctx.BlockReason;
+            return;
+        }
+        _pending = ctx;
+        _confirmText = "";
+    }
+
+    private void Cancel()
+    {
+        _pending = null;
+        _confirmText = null;
+    }
+
+    private async Task RunAsync()
+    {
+        if (_pending is null) return;
+        var ctx = _pending;
+        _pending = null;
+        _running = true;
+        _output.Clear();
+        _cts = new CancellationTokenSource();
+        StateHasChanged();
+
+        try
+        {
+            var progress = new Progress<ProcessOutputEvent>(e => { _output.Add(e); StateHasChanged(); });
+            var result = await StateOps.ExecuteAsync(ctx, new ApplyConfirmation(_confirmText), progress, _cts.Token);
+            if (result.BlockReason is not null)
+                _error = result.BlockReason;
+            else if (!result.Process.Succeeded && !result.Process.Cancelled)
+                _error = $"Command exited with code {result.Process.ExitCode}.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally
+        {
+            _running = false;
+            _confirmText = null;
+            _cts?.Dispose();
+            _cts = null;
+            await LoadAsync();
+            _newName = "";
+            if (OnChanged.HasDelegate)
+                await OnChanged.InvokeAsync();
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

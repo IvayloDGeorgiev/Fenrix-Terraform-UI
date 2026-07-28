@@ -793,3 +793,88 @@ a:hover { color: var(--fx-accent-strong); }
 
 .fx-cloudpicker { display: flex; flex-direction: column; gap: 6px; }
 .fx-cloudpicker-search { font-size: 12px; }
+
+/* ============================ Phase 9 — State & inspection ============================ */
+
+.fx-panel-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.fx-panel-head > span:first-of-type { display: inline-flex; }
+
+/* State browser */
+.fx-statelist { display: flex; flex-direction: column; gap: 2px; max-height: 460px; overflow-y: auto; }
+.fx-staterow {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 7px 9px; border: 1px solid transparent; border-radius: var(--fx-radius-sm);
+  background: none; color: var(--fx-text); cursor: pointer; font-size: 12.5px;
+}
+.fx-staterow:hover { background: var(--fx-surface); }
+.fx-staterow.active { background: var(--fx-accent-tint); border-color: var(--fx-accent); }
+.fx-staterow .addr { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-staterow .prov { color: var(--fx-faint); font-size: 11px; }
+
+.fx-kv { display: flex; flex-direction: column; gap: 4px; }
+.fx-kv > div { display: flex; gap: 10px; font-size: 12.5px; }
+.fx-kv .k { color: var(--fx-dim); min-width: 74px; }
+.fx-kv .v { color: var(--fx-text); min-width: 0; overflow-wrap: anywhere; }
+
+.fx-attrs { display: flex; flex-direction: column; gap: 1px; max-height: 420px; overflow-y: auto; }
+.fx-attr { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--fx-border); font-size: 12px; }
+.fx-attr .name { color: var(--fx-accent-text); min-width: 150px; max-width: 220px; overflow-wrap: anywhere; }
+.fx-attr .val { color: var(--fx-text); min-width: 0; overflow-wrap: anywhere; }
+.fx-attr .val.sensitive, .fx-output .val.sensitive { color: var(--fx-warn); letter-spacing: 1px; }
+.fx-attr .tag, .fx-output .tag {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--fx-warn);
+  border: 1px solid var(--fx-warn); border-radius: 4px; padding: 1px 4px; margin-left: 6px; letter-spacing: .5px;
+}
+
+/* Outputs */
+.fx-outputs { display: flex; flex-direction: column; gap: 8px; }
+.fx-output { border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm); padding: 9px 11px; }
+.fx-output .head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.fx-output .head .name { color: var(--fx-accent-text); font-weight: 500; }
+.fx-output .head .type { color: var(--fx-faint); font-size: 11px; }
+.fx-output .val { color: var(--fx-text); font-size: 12px; overflow-wrap: anywhere; }
+
+/* Workspaces */
+.fx-wslist { display: flex; flex-direction: column; gap: 3px; }
+.fx-wsrow { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm); }
+.fx-wsrow.current { border-color: var(--fx-accent); background: var(--fx-accent-tint); }
+.fx-wsrow .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* Generated config block */
+.fx-codeblock {
+  background: var(--fx-bg); border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm);
+  padding: 12px; font-size: 12px; line-height: 1.5; max-height: 420px; overflow: auto;
+  white-space: pre; color: var(--fx-text); margin: 0;
+}
+
+/* Dependency graph */
+.fx-graph-wrap { display: flex; flex-direction: column; gap: 8px; }
+.fx-graph-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.fx-graph-legend { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--fx-dim); }
+.fx-graph-legend .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-right: 3px; vertical-align: middle; }
+.fx-graph-canvas {
+  height: 560px; border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm);
+  background: var(--fx-bg); overflow: hidden; position: relative;
+}
+.fx-graph-svg { display: block; cursor: grab; touch-action: none; }
+.fx-graph-svg.dragging { cursor: grabbing; }
+
+.fx-graph-node rect { fill: var(--fx-surface); stroke: var(--fx-border-strong); stroke-width: 1.4; transition: opacity var(--fx-dur-fast) var(--fx-ease); }
+.fx-graph-node text { fill: var(--fx-text); font-family: var(--fx-font-mono); font-size: 11px; pointer-events: none; }
+.fx-graph-node { cursor: pointer; }
+.fx-graph-node:hover rect { stroke: var(--fx-accent); }
+.fx-graph-node.focused rect { stroke: var(--fx-accent); stroke-width: 2.2; }
+.fx-graph-node.dimmed { opacity: 0.28; }
+
+/* Legend + node accents by kind (left border via a thicker coloured stroke on the rect) */
+.fx-graph-node.kind-resource rect,   .dot.kind-resource   { stroke: var(--fx-accent);  background: var(--fx-accent); }
+.fx-graph-node.kind-datasource rect, .dot.kind-datasource { stroke: var(--fx-cyan);    background: var(--fx-cyan); }
+.fx-graph-node.kind-provider rect,   .dot.kind-provider   { stroke: var(--fx-prod);    background: var(--fx-prod); }
+.fx-graph-node.kind-variable rect,   .dot.kind-variable   { stroke: var(--fx-success); background: var(--fx-success); }
+.fx-graph-node.kind-output rect,     .dot.kind-output     { stroke: var(--fx-warn);    background: var(--fx-warn); }
+.fx-graph-node.kind-module rect { stroke: var(--fx-border-strong); }
+
+.fx-graph-edge { fill: none; stroke: var(--fx-border-strong); stroke-width: 1.3; transition: opacity var(--fx-dur-fast) var(--fx-ease), stroke var(--fx-dur-fast) var(--fx-ease); }
+.fx-graph-edge.active { stroke: var(--fx-accent); stroke-width: 2; }
+.fx-graph-edge.dimmed { opacity: 0.12; }
+.fx-graph-arrowhead { fill: var(--fx-border-strong); stroke: none; }

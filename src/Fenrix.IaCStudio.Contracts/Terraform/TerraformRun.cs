@@ -25,6 +25,38 @@ public sealed record TerraformRunSpec(Guid ProjectId, Guid EnvironmentId, Terraf
 
     /// <summary>The saved plan file to <c>apply</c> or <c>show</c> (absolute path). Required for those kinds.</summary>
     public string? PlanFilePath { get; init; }
+
+    // ---- Phase 9: state & inspection options. Only the field(s) matching Kind are used. ----
+
+    /// <summary>State move (<see cref="TerraformCommandKind.StateMove"/>) source/destination addresses.</summary>
+    public StateMoveOptions StateMove { get; init; } = new();
+
+    /// <summary>State remove (<see cref="TerraformCommandKind.StateRemove"/>) target addresses.</summary>
+    public StateRemoveOptions StateRemove { get; init; } = new();
+
+    /// <summary>Force-unlock (<see cref="TerraformCommandKind.ForceUnlock"/>) lock id.</summary>
+    public ForceUnlockOptions ForceUnlock { get; init; } = new();
+
+    /// <summary>Workspace verbs (<see cref="TerraformCommandKind.WorkspaceSelect"/>/<c>New</c>/<c>Delete</c>) target name.</summary>
+    public WorkspaceOptions Workspace { get; init; } = new();
+
+    /// <summary>Import (<see cref="TerraformCommandKind.Import"/>) / config-generation options.</summary>
+    public ImportOptions Import { get; init; } = new();
+
+    /// <summary>
+    /// Optional single output name for <see cref="TerraformCommandKind.Output"/> (<c>output -json NAME</c>).
+    /// Null enumerates all outputs.
+    /// </summary>
+    public string? OutputName { get; init; }
+
+    /// <summary>
+    /// The <c>-generate-config-out</c> target for <see cref="TerraformCommandKind.PlanGenerateConfig"/>: the
+    /// absolute path Terraform writes generated HCL to for import blocks present in config.
+    /// </summary>
+    public string? GenerateConfigOutFile { get; init; }
+
+    /// <summary>Absolute path to the state file for <see cref="TerraformCommandKind.StatePush"/> (the source).</summary>
+    public string? StateFilePath { get; init; }
 }
 
 /// <summary>

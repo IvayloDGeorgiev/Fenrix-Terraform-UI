@@ -26,6 +26,24 @@ public static class TerraformCommandCatalog
         TerraformCommandKind.Plan => BuildPlan(spec),
         TerraformCommandKind.Apply => BuildApply(spec),
         TerraformCommandKind.Show => BuildShow(spec),
+
+        // ---- Phase 9: state & inspection ----
+        TerraformCommandKind.StateList => BuildStateList(),
+        TerraformCommandKind.StateShow => BuildStateShow(),
+        TerraformCommandKind.Output => BuildOutput(spec),
+        TerraformCommandKind.Graph => BuildGraph(),
+        TerraformCommandKind.StateMove => BuildStateMove(spec),
+        TerraformCommandKind.StateRemove => BuildStateRemove(spec),
+        TerraformCommandKind.StatePull => BuildStatePull(),
+        TerraformCommandKind.StatePush => BuildStatePush(spec),
+        TerraformCommandKind.ForceUnlock => BuildForceUnlock(spec),
+        TerraformCommandKind.WorkspaceList => BuildWorkspaceList(),
+        TerraformCommandKind.WorkspaceSelect => BuildWorkspace(spec, "select"),
+        TerraformCommandKind.WorkspaceNew => BuildWorkspace(spec, "new"),
+        TerraformCommandKind.WorkspaceDelete => BuildWorkspace(spec, "delete"),
+        TerraformCommandKind.Import => BuildImport(spec),
+        TerraformCommandKind.PlanGenerateConfig => BuildPlanGenerateConfig(spec),
+
         _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Kind, "Unsupported command kind.")
     };
 
@@ -104,5 +122,107 @@ public static class TerraformCommandCatalog
             throw new InvalidOperationException("Show requires a plan file (spec.PlanFilePath).");
         // Read-only conversion of a saved plan to JSON for review.
         return new CommandDefinition("show", ["show", "-json", spec.PlanFilePath], TerraformRiskLevel.ReadOnly);
+    }
+
+    // ---- Phase 9: state & inspection tools ----
+
+    private static CommandDefinition BuildStateList() =>
+        new("state", ["state", "list"], TerraformRiskLevel.ReadOnly);
+
+    /// <summary>
+    /// <c>show -json</c> with no plan file renders the <em>current state</em> as JSON. Read-only, but the
+    /// output can contain sensitive values → the caller must not log it (parsed in memory, redacted).
+    /// </summary>
+    private static CommandDefinition BuildStateShow() =>
+        new("show", ["show", "-json"], TerraformRiskLevel.ReadOnly);
+
+    private static CommandDefinition BuildOutput(TerraformRunSpec spec)
+    {
+        var args = new List<string> { "output", "-json" };
+        if (!string.IsNullOrWhiteSpace(spec.OutputName))
+            args.Add(spec.OutputName);
+        return new CommandDefinition("output", args, TerraformRiskLevel.ReadOnly);
+    }
+
+    private static CommandDefinition BuildGraph() =>
+        new("graph", ["graph"], TerraformRiskLevel.ReadOnly);
+
+    private static CommandDefinition BuildStateMove(TerraformRunSpec spec)
+    {
+        var o = spec.StateMove;
+        if (string.IsNullOrWhiteSpace(o.Source) || string.IsNullOrWhiteSpace(o.Destination))
+            throw new InvalidOperationException("state mv requires both a source and a destination address.");
+        // Rewrites state bindings but touches no real infrastructure.
+        return new CommandDefinition("state", ["state", "mv", o.Source, o.Destination], TerraformRiskLevel.StateChanging);
+    }
+
+    private static CommandDefinition BuildStateRemove(TerraformRunSpec spec)
+    {
+        var addresses = spec.StateRemove.Addresses;
+        if (addresses.Count == 0 || addresses.Any(string.IsNullOrWhiteSpace))
+            throw new InvalidOperationException("state rm requires at least one resource address.");
+        var args = new List<string> { "state", "rm" };
+        args.AddRange(addresses);
+        // Forgets resources from state; the real objects are left untouched (orphaned).
+        return new CommandDefinition("state", args, TerraformRiskLevel.StateChanging);
+    }
+
+    /// <summary>
+    /// <c>state pull</c> writes the full remote state (which can contain plaintext secrets) to stdout. It
+    /// changes nothing, but the caller must treat the output as sensitive (never logged).
+    /// </summary>
+    private static CommandDefinition BuildStatePull() =>
+        new("state", ["state", "pull"], TerraformRiskLevel.ReadOnly);
+
+    private static CommandDefinition BuildStatePush(TerraformRunSpec spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec.StateFilePath))
+            throw new InvalidOperationException("state push requires a source state file path.");
+        // Overwrites remote state from a file — the most dangerous state operation.
+        return new CommandDefinition("state", ["state", "push", spec.StateFilePath], TerraformRiskLevel.Destructive);
+    }
+
+    private static CommandDefinition BuildForceUnlock(TerraformRunSpec spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec.ForceUnlock.LockId))
+            throw new InvalidOperationException("force-unlock requires a lock id.");
+        // -force skips Terraform's own interactive prompt; the UI supplies a typed confirmation instead.
+        return new CommandDefinition("force-unlock", ["force-unlock", "-force", spec.ForceUnlock.LockId], TerraformRiskLevel.StateChanging);
+    }
+
+    private static CommandDefinition BuildWorkspaceList() =>
+        new("workspace", ["workspace", "list"], TerraformRiskLevel.ReadOnly);
+
+    private static CommandDefinition BuildWorkspace(TerraformRunSpec spec, string verb)
+    {
+        if (string.IsNullOrWhiteSpace(spec.Workspace.Name))
+            throw new InvalidOperationException($"workspace {verb} requires a workspace name.");
+        return new CommandDefinition("workspace", ["workspace", verb, spec.Workspace.Name], TerraformRiskLevel.StateChanging);
+    }
+
+    private static CommandDefinition BuildImport(TerraformRunSpec spec)
+    {
+        var o = spec.Import;
+        if (string.IsNullOrWhiteSpace(o.Address) || string.IsNullOrWhiteSpace(o.Id))
+            throw new InvalidOperationException("import requires a resource address and a real-world id.");
+        var args = new List<string> { "import", "-input=false" };
+        // Import evaluates configuration, so it needs the environment's variables when one is set.
+        if (!string.IsNullOrWhiteSpace(spec.VarFile))
+            args.Add($"-var-file={spec.VarFile}");
+        args.Add(o.Address);
+        args.Add(o.Id);
+        return new CommandDefinition("import", args, TerraformRiskLevel.StateChanging);
+    }
+
+    private static CommandDefinition BuildPlanGenerateConfig(TerraformRunSpec spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec.GenerateConfigOutFile))
+            throw new InvalidOperationException("Config generation requires a -generate-config-out target.");
+        // A plan that writes generated HCL for import{} blocks. It changes no real infrastructure — the
+        // generated file is reviewed and then applied like any other config change.
+        var args = new List<string> { "plan", "-input=false", $"-generate-config-out={spec.GenerateConfigOutFile}" };
+        if (!string.IsNullOrWhiteSpace(spec.VarFile))
+            args.Add($"-var-file={spec.VarFile}");
+        return new CommandDefinition("plan", args, TerraformRiskLevel.Safe);
     }
 }

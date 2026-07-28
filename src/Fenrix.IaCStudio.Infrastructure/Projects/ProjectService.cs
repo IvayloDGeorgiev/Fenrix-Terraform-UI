@@ -217,6 +217,18 @@ public sealed class ProjectService(
         _logger.LogInformation("Bound environment {Env} to cloud connection {Conn}", environmentId, cloudConnectionId);
     }
 
+    public async Task SetEnvironmentWorkspaceAsync(
+        Guid projectId, Guid environmentId, string? workspace, CancellationToken ct = default)
+    {
+        var environment = await _db.Environments
+            .FirstOrDefaultAsync(e => e.Id == environmentId && e.ProjectId == projectId, ct);
+        if (environment is null)
+            return;
+        environment.TerraformWorkspace = string.IsNullOrWhiteSpace(workspace) ? null : workspace.Trim();
+        await _db.SaveChangesAsync(ct);
+        _logger.LogInformation("Set environment {Env} Terraform workspace to {Workspace}", environmentId, environment.TerraformWorkspace);
+    }
+
     public async Task RemoveAsync(Guid projectId, CancellationToken ct = default)
     {
         var project = await _db.Projects.FirstOrDefaultAsync(p => p.Id == projectId, ct);

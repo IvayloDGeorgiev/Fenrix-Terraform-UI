@@ -1,0 +1,216 @@
+@* Guided import assistant. CLI import (into state, confirm + lock) or config generation (import{} block +
+   plan -generate-config-out, Terraform 1.5+). See docs/22-terraform-files-model.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Contracts.Terraform
+@inject ITerraformImportService Import
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="fx-card" style="margin-bottom:16px;">
+    <div class="fx-panel-head">
+        <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="download" Size="16" /></span>
+        <span style="flex:1;font-weight:500;">Import an existing resource</span>
+    </div>
+    <p class="fx-hint" style="margin:0 0 12px;">
+        Bring an object that already exists in your cloud under Terraform management. Choose whether to import it
+        straight into state, or to have Terraform generate starter HCL for it (Terraform 1.5+).
+    </p>
+
+    <div class="fx-field">
+        <label>Resource address</label>
+        <input class="fx-input fx-mono" placeholder="aws_instance.web" @bind="_address" @bind:event="oninput" @bind:after="RebuildAsync" disabled="@_running" />
+    </div>
+    <div class="fx-field">
+        <label>Real-world ID</label>
+        <input class="fx-input fx-mono" placeholder="i-0abc123def456" @bind="_id" @bind:event="oninput" @bind:after="RebuildAsync" disabled="@_running" />
+    </div>
+
+    <div class="fx-tabs" style="margin-top:4px;">
+        <button class="fx-tab @(!_generate ? "active" : "")" @onclick="() => SetMode(false)" disabled="@_running">Import into state</button>
+        <button class="fx-tab @(_generate ? "active" : "")" @onclick="() => SetMode(true)" disabled="@_running">Generate config</button>
+    </div>
+    <p class="fx-hint" style="margin:8px 0 0;">
+        @if (_generate)
+        {
+            <text>Writes an <span class="fx-mono">import{}</span> block and runs <span class="fx-mono">plan -generate-config-out</span> to scaffold HCL. No state is changed — review and commit the generated file, then apply.</text>
+        }
+        else
+        {
+            <text>Runs <span class="fx-mono">terraform import</span> to write the object into state. State-changing, so it needs a typed confirmation and takes the environment lock.</text>
+        }
+    </p>
+</div>
+
+@if (_context is not null)
+{
+    <div class="fx-card" style="margin-bottom:16px;">
+        <CommandPreviewPanel Preview="_context.Preview" />
+        @if (_context.BlockReason is not null)
+        {
+            <div class="fx-hint" style="margin-top:12px;color:var(--fx-warn);display:flex;gap:8px;"><span class="fx-ico"><Icon Name="alert" Size="14" /></span> @_context.BlockReason</div>
+        }
+        <div style="display:flex;gap:8px;margin-top:14px;">
+            @if (_running)
+            {
+                <button class="fx-btn danger" @onclick="Cancel"><span class="fx-ico"><Icon Name="stop" Size="14" /></span> Cancel</button>
+                <span class="fx-pill run"><span class="fx-ico"><Icon Name="refresh" Size="12" /></span> Running…</span>
+            }
+            else
+            {
+                <button class="fx-btn @(_generate ? "accent" : "danger")" @onclick="BeginAsync" disabled="@(!_context.CanRun)">
+                    <span class="fx-ico"><Icon Name="play" Size="13" /></span> @(_generate ? "Generate config" : "Import into state")
+                </button>
+            }
+            @if (_error is not null)
+            {
+                <span class="fx-pill fail">@_error</span>
+            }
+            @if (_done)
+            {
+                <span class="fx-pill ok"><span class="fx-ico"><Icon Name="check" Size="12" /></span> Done</span>
+            }
+        </div>
+    </div>
+}
+
+@if (_output.Count > 0)
+{
+    <div class="fx-card" style="margin-bottom:16px;">
+        <div class="fx-panel-head"><span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="terminal" Size="16" /></span><span style="font-weight:500;">Output</span></div>
+        <OutputConsole Lines="_output" />
+    </div>
+}
+
+@if (_result is { GeneratedConfigMode: true, GeneratedConfig: not null })
+{
+    <div class="fx-card" style="margin-bottom:16px;">
+        <div class="fx-panel-head">
+            <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="file-text" Size="16" /></span>
+            <span style="flex:1;font-weight:500;">Generated configuration</span>
+            <button class="fx-btn sm ghost" @onclick="() => CopyAsync(_result.GeneratedConfig!)"><span class="fx-ico"><Icon Name="copy" Size="12" /></span> Copy</button>
+        </div>
+        <div class="fx-hint" style="margin:0 0 8px;">Written to <span class="fx-mono">@_result.GeneratedConfigPath</span> and captured in file history. Review it, then remove the temporary <span class="fx-mono">import{}</span> block before applying.</div>
+        <pre class="fx-codeblock fx-mono">@_result.GeneratedConfig</pre>
+    </div>
+}
+else if (_result is { GeneratedConfigMode: true, GeneratedConfig: null, Process.Succeeded: true })
+{
+    <div class="fx-card" style="margin-bottom:16px;">
+        <div class="fx-hint" style="margin:0;">The plan ran, but no configuration was generated. This usually means the resource is already in configuration, or the provider does not support generation for it.</div>
+    </div>
+}
+
+@if (_confirming && _context is not null)
+{
+    <Modal Title="Confirm import into state" IconName="shield" OnClose="() => _confirming = false">
+        <ChildContent>
+            <p class="fx-hint" style="margin-top:0;">This writes the object into Terraform state and takes the environment's operation lock.</p>
+            <div class="fx-tf-preview" style="margin:12px 0;"><div class="fx-tf-cmd"><span class="exe">@_context.Preview.DisplayCommand</span></div></div>
+            <div class="fx-field">
+                <label>Type <span class="fx-mono">@_context.ConfirmationPhrase</span> to confirm</label>
+                <input class="fx-input" @bind="_confirmText" @bind:event="oninput" placeholder="@_context.ConfirmationPhrase" />
+            </div>
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn ghost" @onclick="() => _confirming = false">Cancel</button>
+            <button class="fx-btn danger" @onclick="RunAsync" disabled="@(_confirmText?.Trim() != _context.ConfirmationPhrase)">
+                <span class="fx-ico"><Icon Name="play" Size="13" /></span> Import
+            </button>
+        </Footer>
+    </Modal>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private string _address = "", _id = "";
+    private bool _generate;
+
+    private StateOpContext? _context;
+    private ImportResult? _result;
+    private bool _running, _confirming, _done;
+    private string? _error;
+    private string? _confirmText;
+    private readonly List<ProcessOutputEvent> _output = [];
+    private CancellationTokenSource? _cts;
+
+    private ImportOptions Options => new() { Address = Trim(_address), Id = Trim(_id), GenerateConfigOut = _generate };
+
+    private async Task SetMode(bool generate)
+    {
+        _generate = generate;
+        await RebuildAsync();
+    }
+
+    private async Task RebuildAsync()
+    {
+        _context = string.IsNullOrWhiteSpace(_address) && string.IsNullOrWhiteSpace(_id)
+            ? null
+            : await Import.PrepareAsync(ProjectId, EnvironmentId, Options);
+    }
+
+    private async Task BeginAsync()
+    {
+        _error = null;
+        _done = false;
+        if (_generate)
+        {
+            await RunAsync(); // config generation needs no typed confirmation
+        }
+        else
+        {
+            _confirmText = "";
+            _confirming = true;
+        }
+    }
+
+    private async Task RunAsync()
+    {
+        if (_context is null) return;
+        _confirming = false;
+        _running = true;
+        _error = null;
+        _result = null;
+        _output.Clear();
+        _cts = new CancellationTokenSource();
+        StateHasChanged();
+
+        try
+        {
+            var progress = new Progress<ProcessOutputEvent>(e => { _output.Add(e); StateHasChanged(); });
+            _result = await Import.ExecuteAsync(_context, new ApplyConfirmation(_confirmText), progress, _cts.Token);
+            if (_result.BlockReason is not null)
+                _error = _result.BlockReason;
+            else if (_result.Process.Succeeded)
+                _done = true;
+            else if (!_result.Process.Cancelled)
+                _error = $"Command exited with code {_result.Process.ExitCode}.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally
+        {
+            _running = false;
+            _confirmText = null;
+            _cts?.Dispose();
+            _cts = null;
+            await RebuildAsync();
+            StateHasChanged();
+        }
+    }
+
+    private void Cancel() => _cts?.Cancel();
+
+    private async Task CopyAsync(string text)
+    {
+        try { await JS.InvokeVoidAsync("navigator.clipboard.writeText", text); } catch { }
+    }
+
+    private static string? Trim(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

@@ -1,0 +1,140 @@
+@* Read-only state browser: state list (addresses) + show -json (redacted attributes), parsed in memory.
+   See docs/22-terraform-files-model.md, docs/25-execution-lifecycle.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Contracts.Terraform
+@inject ITerraformInspectionService Inspection
+
+<div class="fx-split">
+    <div style="display:flex;flex-direction:column;gap:16px;min-width:0;">
+        <div class="fx-card">
+            <div class="fx-panel-head">
+                <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="database" Size="16" /></span>
+                <span style="flex:1;font-weight:500;">Resources in state</span>
+                @if (_snapshot is not null)
+                {
+                    <span class="fx-pill muted">@_snapshot.ManagedCount managed · @_snapshot.DataCount data</span>
+                }
+                <button class="fx-btn sm" @onclick="LoadAsync" disabled="@_loading">
+                    <span class="fx-ico"><Icon Name="refresh" Size="12" /></span> @(_loading ? "Reading…" : "Reload")
+                </button>
+            </div>
+
+            @if (_snapshot is { Serial: not null } s)
+            {
+                <div class="fx-hint" style="margin:0 0 8px;">serial @s.Serial · @(s.TerraformVersion ?? "unknown version")</div>
+            }
+
+            @if (_loading)
+            {
+                <div class="fx-hint">Running <span class="fx-mono">terraform show -json</span>…</div>
+            }
+            else if (_blocked is not null)
+            {
+                <div class="fx-hint" style="color:var(--fx-warn);display:flex;gap:8px;"><span class="fx-ico"><Icon Name="alert" Size="14" /></span> @_blocked</div>
+            }
+            else if (_snapshot is null || _snapshot.IsEmpty)
+            {
+                <EmptyState IconName="database" Title="No resources in state"
+                            Text="Run a plan &amp; apply for this environment, or check that init has connected the backend." />
+            }
+            else
+            {
+                <div class="fx-field" style="margin-bottom:10px;">
+                    <input class="fx-input" placeholder="Filter by address or type…" @bind="_filter" @bind:event="oninput" />
+                </div>
+                <div class="fx-statelist">
+                    @foreach (var r in Filtered())
+                    {
+                        <button class="fx-staterow @(_selected?.Address == r.Address ? "active" : "")" @onclick="() => _selected = r">
+                            <span class="fx-ico"><Icon Name="@(r.Mode == ResourceMode.Data ? "search" : "box")" Size="13" /></span>
+                            <span class="addr fx-mono">@r.Address</span>
+                            <span class="prov">@r.ProviderName</span>
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="fx-card" style="min-width:0;">
+        <div class="fx-panel-head">
+            <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="file-text" Size="16" /></span>
+            <span style="flex:1;font-weight:500;">@(_selected is null ? "Resource details" : _selected.Address)</span>
+        </div>
+        @if (_selected is null)
+        {
+            <div class="fx-hint">Select a resource to view its redacted attributes.</div>
+        }
+        else
+        {
+            <div class="fx-kv">
+                <div><span class="k">Type</span><span class="v fx-mono">@_selected.Type</span></div>
+                <div><span class="k">Name</span><span class="v fx-mono">@_selected.Name</span></div>
+                <div><span class="k">Provider</span><span class="v">@_selected.ProviderName</span></div>
+                @if (_selected.ModuleAddress is not null)
+                {
+                    <div><span class="k">Module</span><span class="v fx-mono">@_selected.ModuleAddress</span></div>
+                }
+            </div>
+            <div class="fx-attrs" style="margin-top:12px;">
+                @foreach (var a in _selected.Attributes)
+                {
+                    <div class="fx-attr">
+                        <span class="name fx-mono">@a.Name</span>
+                        @if (a.Sensitive)
+                        {
+                            <span class="val sensitive" title="Sensitive value, redacted">@a.Value <span class="tag">sensitive</span></span>
+                        }
+                        else
+                        {
+                            <span class="val fx-mono">@a.Value</span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private StateSnapshot? _snapshot;
+    private StateResourceInstance? _selected;
+    private string _filter = "";
+    private bool _loading;
+    private string? _blocked;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _blocked = null;
+        _selected = null;
+        StateHasChanged();
+
+        var preview = await Inspection.PreviewAsync(ProjectId, EnvironmentId, TerraformCommandKind.StateShow);
+        if (!preview.CanRun)
+        {
+            _blocked = preview.BlockReason;
+            _snapshot = StateSnapshot.Empty;
+            _loading = false;
+            return;
+        }
+
+        _snapshot = await Inspection.GetStateAsync(ProjectId, EnvironmentId);
+        _loading = false;
+    }
+
+    private IEnumerable<StateResourceInstance> Filtered()
+    {
+        if (_snapshot is null) return [];
+        if (string.IsNullOrWhiteSpace(_filter)) return _snapshot.Resources;
+        var f = _filter.Trim();
+        return _snapshot.Resources.Where(r =>
+            r.Address.Contains(f, StringComparison.OrdinalIgnoreCase) ||
+            r.Type.Contains(f, StringComparison.OrdinalIgnoreCase));
+    }
+}

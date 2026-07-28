@@ -1,0 +1,62 @@
+@* Dependency graph tab: terraform graph -> parsed DOT -> visual DAG renderer. See docs/25-execution-lifecycle.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Contracts.Terraform
+@inject ITerraformInspectionService Inspection
+
+<div class="fx-card">
+    <div class="fx-panel-head">
+        <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="sitemap" Size="16" /></span>
+        <span style="flex:1;font-weight:500;">Dependency graph</span>
+        <button class="fx-btn sm" @onclick="LoadAsync" disabled="@_loading">
+            <span class="fx-ico"><Icon Name="refresh" Size="12" /></span> @(_loading ? "Building…" : "Reload")
+        </button>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="fx-hint">Running <span class="fx-mono">terraform graph</span>…</div>
+    }
+    else if (_blocked is not null)
+    {
+        <div class="fx-hint" style="color:var(--fx-warn);display:flex;gap:8px;"><span class="fx-ico"><Icon Name="alert" Size="14" /></span> @_blocked</div>
+    }
+    else if (_graph is null || _graph.IsEmpty)
+    {
+        <EmptyState IconName="sitemap" Title="No graph"
+                    Text="Run init for this environment first so Terraform can build the resource graph." />
+    }
+    else
+    {
+        <DependencyGraphView Graph="_graph" />
+    }
+</div>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private DependencyGraph? _graph;
+    private bool _loading;
+    private string? _blocked;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _blocked = null;
+        StateHasChanged();
+
+        var preview = await Inspection.PreviewAsync(ProjectId, EnvironmentId, TerraformCommandKind.Graph);
+        if (!preview.CanRun)
+        {
+            _blocked = preview.BlockReason;
+            _graph = DependencyGraph.Empty;
+            _loading = false;
+            return;
+        }
+
+        _graph = await Inspection.GetGraphAsync(ProjectId, EnvironmentId);
+        _loading = false;
+    }
+}
