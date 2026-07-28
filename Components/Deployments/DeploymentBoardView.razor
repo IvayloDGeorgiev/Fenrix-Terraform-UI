@@ -1,0 +1,146 @@
+@* Release-pipeline board: ordered environment stages with the version deployed to each, plus external CI status. See docs/20-pipelines-deployments.md. *@
+@using Fenrix.IaCStudio.Contracts.Deployments
+@using Fenrix.IaCStudio.Contracts.Providers
+
+@if (Board is null || Board.Stages.Count == 0)
+{
+    <EmptyState IconName="git-pull-request" Title="No environments"
+                Text="Add environments to this project to see the deployment board." />
+}
+else
+{
+    <div class="fx-board">
+        @for (var i = 0; i < Board.Stages.Count; i++)
+        {
+            var stage = Board.Stages[i];
+            if (i > 0)
+            {
+                <div class="fx-board-arrow">
+                    <Icon Name="chevron-right" Size="18" />
+                    @if (stage.CommitsBehindPrevious is { } behind && behind > 0)
+                    {
+                        <span class="fx-tag warn" title="Behind the upstream stage">@behind behind</span>
+                    }
+                </div>
+            }
+            <div class="fx-stage @(stage.IsProduction ? "prod" : "")">
+                <div class="fx-stage-head">
+                    <span class="fx-stage-name">@stage.EnvironmentName</span>
+                    @if (stage.IsProduction) { <span class="fx-tag prod">prod</span> }
+                    @if (stage.IsLocked) { <span class="fx-tag lock" title="@stage.LockDetail"><Icon Name="clock" Size="11" /> busy</span> }
+                    @if (!stage.HasCloudConnection) { <span class="fx-tag warn" title="No cloud connection bound">⚠</span> }
+                </div>
+
+                @if (stage.CurrentVersion is { } v)
+                {
+                    <div class="fx-stage-version">
+                        <span class="fx-ico"><Icon Name="bookmark" Size="13" /></span>
+                        <span class="lbl">@v.Label</span>
+                        <span class="sha fx-mono">@v.ShortCommit</span>
+                    </div>
+                    @if (stage.LastDeployment is { } d)
+                    {
+                        <div class="fx-stage-meta">
+                            <div>+@d.AddCount ~@d.ChangeCount -@d.DestroyCount ±@d.ReplaceCount</div>
+                            <div class="fx-hint">@d.CompletedAt?.LocalDateTime.ToString("g") · @d.InitiatedBy</div>
+                            @if (d.StateSerial is { } serial)
+                            {
+                                <div class="fx-hint" title="@d.StateLineage">state serial @serial@(d.StateBackend is not null ? $" · {d.StateBackend}" : "")</div>
+                            }
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="fx-stage-empty fx-hint">Nothing deployed yet.</div>
+                }
+
+                @* External CI status for this branch, when available. *@
+                @{
+                    var run = MatchRun(stage);
+                }
+                @if (run is not null)
+                {
+                    <div class="fx-stage-ci" title="@run.Name">
+                        <span class="fx-ci-dot @CiClass(run.Status)"></span>
+                        <span class="fx-hint">CI: @run.Status@(run.Branch is not null ? $" · {run.Branch}" : "")</span>
+                    </div>
+                }
+
+                <div class="fx-stage-actions">
+                    @if (i > 0)
+                    {
+                        <button class="fx-btn small" title="Promote the upstream version to this stage"
+                                @onclick="() => OnPromote.InvokeAsync(stage.EnvironmentId)">
+                            <span class="fx-ico"><Icon Name="arrow-up" Size="12" /></span> Promote
+                        </button>
+                    }
+                    <button class="fx-btn small" title="Roll back to the previous version"
+                            @onclick="() => OnRollback.InvokeAsync(stage.EnvironmentId)"
+                            disabled="@(stage.LastDeployment is null)">
+                        <span class="fx-ico"><Icon Name="restore" Size="12" /></span> Rollback
+                    </button>
+                </div>
+            </div>
+        }
+    </div>
+
+    @if (Board.RecentDeployments.Count > 0)
+    {
+        <div class="fx-card" style="margin-top:16px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="history" Size="16" /></span>
+                <span style="font-size:14px;font-weight:500;">Recent deployments</span>
+            </div>
+            @foreach (var d in Board.RecentDeployments)
+            {
+                <div class="fx-row">
+                    <div class="grow" style="min-width:0;">
+                        <div class="title" style="font-size:12.5px;">@d.VersionLabel → @EnvName(d.EnvironmentId) · +@d.AddCount ~@d.ChangeCount -@d.DestroyCount</div>
+                        <div class="meta">@d.StartedAt.LocalDateTime.ToString("g") · @d.InitiatedBy · @d.ShortCommit</div>
+                    </div>
+                    <span class="fx-pill @StatusClass(d.Status)">@d.Status</span>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public DeploymentBoard? Board { get; set; }
+    [Parameter] public IReadOnlyList<PipelineRun>? ExternalRuns { get; set; }
+    [Parameter] public EventCallback<Guid> OnPromote { get; set; }
+    [Parameter] public EventCallback<Guid> OnRollback { get; set; }
+
+    private string EnvName(Guid envId) =>
+        Board?.Stages.FirstOrDefault(s => s.EnvironmentId == envId)?.EnvironmentName ?? "?";
+
+    private PipelineRun? MatchRun(DeploymentBoardStage stage)
+    {
+        if (ExternalRuns is null || ExternalRuns.Count == 0) return null;
+        // Prefer a run on the same branch as the deployed version; else the newest run.
+        var branch = stage.LastDeployment?.GitBranch;
+        if (!string.IsNullOrEmpty(branch))
+        {
+            var m = ExternalRuns.FirstOrDefault(r => string.Equals(r.Branch, branch, StringComparison.OrdinalIgnoreCase));
+            if (m is not null) return m;
+        }
+        return null;
+    }
+
+    private static string CiClass(PipelineStatus s) => s switch
+    {
+        PipelineStatus.Succeeded => "ok",
+        PipelineStatus.Failed => "fail",
+        PipelineStatus.Running or PipelineStatus.Queued => "run",
+        _ => "muted"
+    };
+
+    private static string StatusClass(Fenrix.IaCStudio.Domain.Common.DeploymentStatus s) => s switch
+    {
+        Fenrix.IaCStudio.Domain.Common.DeploymentStatus.Succeeded => "ok",
+        Fenrix.IaCStudio.Domain.Common.DeploymentStatus.Failed => "fail",
+        Fenrix.IaCStudio.Domain.Common.DeploymentStatus.RolledBack => "warn",
+        _ => "muted"
+    };
+}

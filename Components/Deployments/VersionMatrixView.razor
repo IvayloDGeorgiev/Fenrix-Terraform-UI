@@ -1,0 +1,96 @@
+@* Versions (rows) × environments (columns) deploy-state grid. See docs/20-pipelines-deployments.md. *@
+@using Fenrix.IaCStudio.Contracts.Deployments
+
+@if (Matrix is null || Matrix.Rows.Count == 0)
+{
+    <EmptyState IconName="layers" Title="No versions yet"
+                Text="Cut a version from the Versions tab, or infer them from existing Git tags, then deploy from here." />
+}
+else
+{
+    <div class="fx-matrix-wrap">
+        <table class="fx-matrix">
+            <thead>
+                <tr>
+                    <th class="fx-matrix-corner">Version</th>
+                    @foreach (var env in Matrix.Environments)
+                    {
+                        <th title="@(env.HasCloudConnection ? "" : "No cloud connection bound")">
+                            @env.Name
+                            @if (env.IsProduction) { <span class="fx-tag prod">prod</span> }
+                            @if (!env.HasCloudConnection) { <span class="fx-tag warn">⚠</span> }
+                        </th>
+                    }
+                    <th class="fx-matrix-actions"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Matrix.Rows)
+                {
+                    <tr>
+                        <th class="fx-matrix-row">
+                            <div class="lbl">@row.Version.Label</div>
+                            <div class="sha fx-mono">@row.Version.ShortCommit@(row.Version.GitTag is not null ? $" · {row.Version.GitTag}" : "")</div>
+                        </th>
+                        @foreach (var cell in row.Cells)
+                        {
+                            var env = Matrix.Environments.First(e => e.EnvironmentId == cell.EnvironmentId);
+                            <td class="fx-cell @CellClass(cell.State)">
+                                <button class="fx-cell-btn" title="@CellTitle(cell)"
+                                        @onclick="() => Deploy(row.Version.Id, cell.EnvironmentId)"
+                                        disabled="@(!env.HasCloudConnection)">
+                                    <span class="fx-cell-state">@StateLabel(cell.State)</span>
+                                    @if (cell.LastDeployedAt is { } when)
+                                    {
+                                        <span class="fx-cell-when">@when.LocalDateTime.ToString("d MMM")</span>
+                                    }
+                                </button>
+                            </td>
+                        }
+                        <td class="fx-matrix-actions">
+                            <button class="fx-btn small" title="Deploy this version to several environments"
+                                    @onclick="() => DeployMany(row.Version.Id)">
+                                <span class="fx-ico"><Icon Name="layers" Size="12" /></span> Deploy to…
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <div class="fx-matrix-legend">
+        <span><span class="dot current"></span> current</span>
+        <span><span class="dot previous"></span> previously deployed</span>
+        <span><span class="dot available"></span> available to deploy</span>
+    </div>
+}
+
+@code {
+    [Parameter] public VersionMatrix? Matrix { get; set; }
+    [Parameter] public EventCallback<(Guid VersionId, Guid EnvironmentId)> OnDeploy { get; set; }
+    [Parameter] public EventCallback<Guid> OnDeployMany { get; set; }
+
+    private Task Deploy(Guid versionId, Guid envId) => OnDeploy.InvokeAsync((versionId, envId));
+    private Task DeployMany(Guid versionId) => OnDeployMany.InvokeAsync(versionId);
+
+    private static string CellClass(MatrixCellState s) => s switch
+    {
+        MatrixCellState.Current => "current",
+        MatrixCellState.Previous => "previous",
+        _ => "available"
+    };
+
+    private static string StateLabel(MatrixCellState s) => s switch
+    {
+        MatrixCellState.Current => "current",
+        MatrixCellState.Previous => "redeploy",
+        _ => "deploy"
+    };
+
+    private static string CellTitle(MatrixCell c) => c.State switch
+    {
+        MatrixCellState.Current => "Live now — click to re-deploy",
+        MatrixCellState.Previous => "Previously deployed here — click to re-deploy",
+        _ => "Not deployed here — click to deploy"
+    };
+}

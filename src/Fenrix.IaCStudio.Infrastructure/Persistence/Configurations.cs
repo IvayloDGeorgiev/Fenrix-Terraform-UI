@@ -131,6 +131,38 @@ internal sealed class DeploymentConfiguration : IEntityTypeConfiguration<Deploym
     }
 }
 
+internal sealed class DeploymentPipelineConfiguration : IEntityTypeConfiguration<DeploymentPipeline>
+{
+    public void Configure(EntityTypeBuilder<DeploymentPipeline> b)
+    {
+        b.ToTable("DeploymentPipelines");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Name).IsRequired().HasMaxLength(200);
+        // One pipeline per project this phase; the index keeps the lookup fast and supports the guard.
+        b.HasIndex(x => x.ProjectId);
+        b.HasMany(x => x.Stages)
+            .WithOne()
+            .HasForeignKey(s => s.PipelineId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class PipelineStageConfiguration : IEntityTypeConfiguration<PipelineStage>
+{
+    public void Configure(EntityTypeBuilder<PipelineStage> b)
+    {
+        b.ToTable("PipelineStages");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.RequiredBranch).HasMaxLength(200);
+        b.HasIndex(x => x.PipelineId);
+        b.HasIndex(x => x.EnvironmentId);
+        // Enterprise approver identities stored as a JSON column (as with Client.Tags).
+        b.Property(x => x.Approvers)
+            .HasConversion(ConfigHelpers.StringListConverter)
+            .Metadata.SetValueComparer(ConfigHelpers.StringListComparer);
+    }
+}
+
 internal sealed class RecentFileConfiguration : IEntityTypeConfiguration<RecentFile>
 {
     public void Configure(EntityTypeBuilder<RecentFile> b)

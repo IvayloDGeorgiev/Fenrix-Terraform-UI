@@ -1,0 +1,119 @@
+@* Deploy one version to several/all environments as independent governed deployments. See docs/20-pipelines-deployments.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Deployments
+@using Fenrix.IaCStudio.Contracts.Deployments
+@inject IDeploymentService Deployments
+
+<Modal Title="@($"Deploy {VersionLabel} to environments")" IconName="layers" Wide="true" OnClose="OnClose" CloseOnBackdrop="false">
+    <ChildContent>
+    @if (_results is null)
+    {
+        <p class="fx-hint" style="margin-top:0;">Each target runs its own governed plan, gates, and apply. Environments needing approval or a production confirmation are prepared and flagged for you to finish individually.</p>
+        <label class="fx-approve" style="margin:8px 0;">
+            <input type="checkbox" checked="@AllSelected" @onchange="ToggleAll" disabled="@_busy" />
+            <span><strong>All environments</strong></span>
+        </label>
+        <div class="fx-fanout-list">
+            @foreach (var env in Environments)
+            {
+                <label class="fx-approve">
+                    <input type="checkbox" checked="@_selected.Contains(env.Id)" @onchange="e => Toggle(env.Id, (bool)e.Value!)"
+                           disabled="@(_busy || !env.HasCloud)" />
+                    <span>@env.Name@(env.IsProduction ? " (production)" : "")@(env.HasCloud ? "" : " — no cloud connection ⚠")</span>
+                </label>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="fx-fanout-results">
+            @foreach (var r in _results.Items)
+            {
+                <div class="fx-checkrow @OutcomeClass(r.Outcome)">
+                    <span class="fx-ico"><Icon Name="@OutcomeIcon(r.Outcome)" Size="15" /></span>
+                    <div>
+                        <div>@r.EnvironmentName — @OutcomeLabel(r.Outcome)</div>
+                        @if (!string.IsNullOrWhiteSpace(r.Detail)) { <div class="detail">@r.Detail</div> }
+                    </div>
+                </div>
+            }
+        </div>
+        <p class="fx-hint" style="margin-top:10px;">Environments marked <em>needs confirmation</em> have a plan ready — open them from the Matrix to approve/confirm and apply.</p>
+    }
+    </ChildContent>
+    <Footer>
+        @if (_pill is { } p) { <span class="fx-pill @p.Cls" style="margin-right:auto;">@p.Text</span> }
+        <button class="fx-btn" @onclick="OnClose" disabled="@_busy">@(_results is null ? "Cancel" : "Close")</button>
+        @if (_results is null)
+        {
+            <button class="fx-btn accent" @onclick="RunAsync" disabled="@(_busy || _selected.Count == 0)">
+                <span class="fx-ico"><Icon Name="zap" Size="13" /></span> Deploy to @_selected.Count
+            </button>
+        }
+    </Footer>
+</Modal>
+
+@code {
+    public sealed record EnvOption(Guid Id, string Name, bool IsProduction, bool HasCloud);
+
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid VersionId { get; set; }
+    [Parameter] public string VersionLabel { get; set; } = "";
+    [Parameter] public IReadOnlyList<EnvOption> Environments { get; set; } = [];
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnDone { get; set; }
+
+    private readonly HashSet<Guid> _selected = [];
+    private FanOutResult? _results;
+    private bool _busy;
+    private (string Cls, string Text)? _pill;
+
+    private bool AllSelected => Environments.Where(e => e.HasCloud).All(e => _selected.Contains(e.Id)) && _selected.Count > 0;
+
+    private void Toggle(Guid id, bool on) { if (on) _selected.Add(id); else _selected.Remove(id); }
+
+    private void ToggleAll(ChangeEventArgs e)
+    {
+        _selected.Clear();
+        if ((bool)e.Value!)
+            foreach (var env in Environments.Where(x => x.HasCloud))
+                _selected.Add(env.Id);
+    }
+
+    private async Task RunAsync()
+    {
+        if (_selected.Count == 0) return;
+        _busy = true;
+        _pill = null;
+        try
+        {
+            _results = await Deployments.FanOutAsync(VersionId, _selected.ToList());
+            var ok = _results.Items.Count(i => i.Outcome == FanOutOutcome.Deployed);
+            _pill = ("ok", $"{ok}/{_results.Items.Count} deployed");
+            await OnDone.InvokeAsync();
+        }
+        catch (Exception ex) { _pill = ("fail", ex.Message); }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private static string OutcomeClass(FanOutOutcome o) => o switch
+    {
+        FanOutOutcome.Deployed => "pass",
+        FanOutOutcome.NeedsConfirmation => "warn",
+        _ => "block"
+    };
+
+    private static string OutcomeIcon(FanOutOutcome o) => o switch
+    {
+        FanOutOutcome.Deployed => "check",
+        FanOutOutcome.NeedsConfirmation => "alert",
+        _ => "x"
+    };
+
+    private static string OutcomeLabel(FanOutOutcome o) => o switch
+    {
+        FanOutOutcome.Deployed => "deployed",
+        FanOutOutcome.NeedsConfirmation => "needs confirmation",
+        FanOutOutcome.Blocked => "blocked",
+        _ => "failed"
+    };
+}

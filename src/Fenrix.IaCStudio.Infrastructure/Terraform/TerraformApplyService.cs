@@ -1,4 +1,5 @@
 using Fenrix.IaCStudio.Application.Abstractions.Cloud;
+using Fenrix.IaCStudio.Application.Abstractions.Deployments;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
@@ -32,6 +33,7 @@ public sealed class TerraformApplyService(
     IFileHistoryStore fileHistory,
     IGitService git,
     ICloudEnvironmentComposer cloud,
+    IDeploymentRecorder deployments,
     ILogger<TerraformApplyService> logger) : ITerraformApplyService
 {
     private const string DefaultExecutable = "terraform";
@@ -45,6 +47,7 @@ public sealed class TerraformApplyService(
     private readonly IFileHistoryStore _fileHistory = fileHistory;
     private readonly IGitService _git = git;
     private readonly ICloudEnvironmentComposer _cloud = cloud;
+    private readonly IDeploymentRecorder _deployments = deployments;
     private readonly ILogger<TerraformApplyService> _logger = logger;
 
     public async Task<ApplyPreflight> PreflightAsync(Guid savedPlanId, CancellationToken ct = default)
@@ -208,7 +211,14 @@ public sealed class TerraformApplyService(
             applyRun.Process.Succeeded ? "succeeded" : applyRun.Process.Cancelled ? "cancelled" : "failed",
             added, changed, destroyed);
 
-        return new ApplyResult(savedPlanId, applyRun.RunId, applyRun.Process, added, changed, destroyed, applyRun.LogPath);
+        var result = new ApplyResult(savedPlanId, applyRun.RunId, applyRun.Process, added, changed, destroyed, applyRun.LogPath);
+
+        // Record a Deployment for the board on success — covers both the Plan & apply page and the governed
+        // Pipelines flow (this is the single apply entry point). Best-effort; never fails the succeeded apply.
+        if (applyRun.Process.Succeeded)
+            await _deployments.RecordApplyAsync(plan, result, ct);
+
+        return result;
     }
 
     // ---- helpers ----

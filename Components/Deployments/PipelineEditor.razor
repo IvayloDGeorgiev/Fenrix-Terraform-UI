@@ -1,0 +1,164 @@
+@* Edit the project's ordered pipeline stages + per-stage gates. See docs/20-pipelines-deployments.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Deployments
+@using Fenrix.IaCStudio.Contracts.Deployments
+@inject IPipelineService Pipelines
+
+<div class="fx-card">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="git-pull-request" Size="16" /></span>
+        <span style="flex:1;font-size:14px;font-weight:500;">Pipeline definition</span>
+        @if (_hasSaved) { <span class="fx-pill muted">saved</span> } else { <span class="fx-pill muted">default (unsaved)</span> }
+    </div>
+
+    <div class="fx-field" style="margin-bottom:12px;">
+        <label>Pipeline name</label>
+        <input class="fx-input" @bind="_name" @bind:event="oninput" disabled="@_busy" />
+    </div>
+
+    @if (_stages.Count == 0)
+    {
+        <div class="fx-hint">This project has no environments to sequence.</div>
+    }
+    else
+    {
+        @for (var i = 0; i < _stages.Count; i++)
+        {
+            var idx = i;
+            var s = _stages[idx];
+            <div class="fx-stage-edit">
+                <div class="fx-stage-edit-head">
+                    <span class="fx-stage-order">@(idx + 1)</span>
+                    <span class="fx-stage-name">@s.EnvironmentName</span>
+                    @if (s.IsProduction) { <span class="fx-tag prod">prod</span> }
+                    <div style="margin-left:auto;display:flex;gap:4px;">
+                        <button class="fx-iconbtn" title="Move up" @onclick="() => Move(idx, -1)" disabled="@(_busy || idx == 0)"><Icon Name="arrow-up" Size="14" /></button>
+                        <button class="fx-iconbtn" title="Move down" @onclick="() => Move(idx, 1)" disabled="@(_busy || idx == _stages.Count - 1)"><Icon Name="arrow-down" Size="14" /></button>
+                    </div>
+                </div>
+                <div class="fx-stage-gates">
+                    <label class="fx-approve"><input type="checkbox" checked="@s.RequireApproval" @onchange="e => s.RequireApproval = (bool)e.Value!" disabled="@_busy" /> <span>Require approval before apply</span></label>
+                    <label class="fx-approve"><input type="checkbox" checked="@s.RequirePreviousStageSuccess" @onchange="e => s.RequirePreviousStageSuccess = (bool)e.Value!" disabled="@_busy" /> <span>Require the previous stage to hold this version (promote in order)</span></label>
+                    <label class="fx-approve"><input type="checkbox" checked="@s.RequireCleanWorkingTree" @onchange="e => s.RequireCleanWorkingTree = (bool)e.Value!" disabled="@_busy" /> <span>Require a clean working tree</span></label>
+                    <label class="fx-approve"><input type="checkbox" checked="@s.RequireTypedConfirmationForProduction" @onchange="e => s.RequireTypedConfirmationForProduction = (bool)e.Value!" disabled="@_busy" /> <span>Production typed-confirmation</span></label>
+                    <div class="fx-field" style="margin-top:6px;">
+                        <label>Required branch (optional)</label>
+                        <input class="fx-input" placeholder="e.g. main" value="@s.RequiredBranch" @onchange="e => s.RequiredBranch = e.Value?.ToString()" disabled="@_busy" />
+                    </div>
+                </div>
+            </div>
+        }
+    }
+
+    <div style="display:flex;gap:8px;margin-top:14px;align-items:center;">
+        <button class="fx-btn accent" @onclick="SaveAsync" disabled="@(_busy || _stages.Count == 0)">
+            <span class="fx-ico"><Icon Name="check" Size="13" /></span> Save pipeline
+        </button>
+        <button class="fx-btn" @onclick="ResetDefaultAsync" disabled="@_busy">Reset to default</button>
+        @if (_hasSaved)
+        {
+            <button class="fx-btn danger" @onclick="DeleteAsync" disabled="@_busy">Delete</button>
+        }
+        @if (_pill is { } p) { <span class="fx-pill @p.Cls">@p.Text</span> }
+    </div>
+    <p class="fx-hint" style="margin-top:10px;">A pipeline is optional — you can always deploy per-environment from the Matrix. Defaults put production gates on production stages.</p>
+</div>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private string _name = "Release pipeline";
+    private readonly List<Row> _stages = [];
+    private bool _hasSaved;
+    private bool _busy;
+    private (string Cls, string Text)? _pill;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var def = await Pipelines.GetAsync(ProjectId);
+        _hasSaved = def is not null;
+        def ??= await Pipelines.BuildDefaultAsync(ProjectId);
+        _name = def.Name;
+        _stages.Clear();
+        _stages.AddRange(def.Stages.OrderBy(s => s.Order).Select(Row.From));
+        StateHasChanged();
+    }
+
+    private void Move(int idx, int delta)
+    {
+        var target = idx + delta;
+        if (target < 0 || target >= _stages.Count) return;
+        (_stages[idx], _stages[target]) = (_stages[target], _stages[idx]);
+    }
+
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        _pill = null;
+        try
+        {
+            var request = new SavePipelineRequest(ProjectId, _name,
+                _stages.Select(s => new StageDefinitionInput(
+                    s.EnvironmentId, s.RequireApproval, s.RequirePreviousStageSuccess,
+                    s.RequireCleanWorkingTree, s.RequireTypedConfirmationForProduction,
+                    string.IsNullOrWhiteSpace(s.RequiredBranch) ? null : s.RequiredBranch!.Trim(), [])).ToList());
+            await Pipelines.SaveAsync(request);
+            _hasSaved = true;
+            _pill = ("ok", "Saved");
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex) { _pill = ("fail", ex.Message); }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task ResetDefaultAsync()
+    {
+        var def = await Pipelines.BuildDefaultAsync(ProjectId);
+        _name = def.Name;
+        _stages.Clear();
+        _stages.AddRange(def.Stages.OrderBy(s => s.Order).Select(Row.From));
+        _pill = null;
+        StateHasChanged();
+    }
+
+    private async Task DeleteAsync()
+    {
+        _busy = true;
+        try
+        {
+            await Pipelines.DeleteAsync(ProjectId);
+            _hasSaved = false;
+            _pill = ("muted", "Deleted");
+            await OnSaved.InvokeAsync();
+            await LoadAsync();
+        }
+        catch (Exception ex) { _pill = ("fail", ex.Message); }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private sealed class Row
+    {
+        public Guid EnvironmentId;
+        public string EnvironmentName = "";
+        public bool IsProduction;
+        public bool RequireApproval;
+        public bool RequirePreviousStageSuccess;
+        public bool RequireCleanWorkingTree;
+        public bool RequireTypedConfirmationForProduction = true;
+        public string? RequiredBranch;
+
+        public static Row From(StageDefinition s) => new()
+        {
+            EnvironmentId = s.EnvironmentId,
+            EnvironmentName = s.EnvironmentName,
+            IsProduction = s.IsProduction,
+            RequireApproval = s.RequireApproval,
+            RequirePreviousStageSuccess = s.RequirePreviousStageSuccess,
+            RequireCleanWorkingTree = s.RequireCleanWorkingTree,
+            RequireTypedConfirmationForProduction = s.RequireTypedConfirmationForProduction,
+            RequiredBranch = s.RequiredBranch
+        };
+    }
+}

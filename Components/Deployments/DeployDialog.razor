@@ -1,0 +1,242 @@
+@* Governed one-click deploy: plan → gates → apply the exact saved plan (ADR-0003). See docs/20-pipelines-deployments.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Deployments
+@using Fenrix.IaCStudio.Contracts.Deployments
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Terraform
+@inject IDeploymentService Deployments
+@implements IDisposable
+
+<Modal Title="@Title" IconName="git-pull-request" Wide="true" OnClose="OnClose" CloseOnBackdrop="false">
+    <ChildContent>
+    @if (_prep is null)
+    {
+        <div class="fx-hint">@(_error ?? "Preparing deployment…")</div>
+    }
+    else
+    {
+        <div class="fx-deploy-head">
+            <span class="fx-chip"><span class="fx-ico"><Icon Name="bookmark" Size="13" /></span> @_prep.VersionLabel</span>
+            <span class="fx-ico"><Icon Name="chevron-right" Size="14" /></span>
+            <span class="fx-chip">@_prep.EnvironmentName@(_prep.IsProduction ? " (production)" : "")</span>
+            <span class="fx-chip fx-mono" title="Version commit">@Short(_prep.VersionCommit)</span>
+        </div>
+
+        @if (_prep.BlockReason is not null)
+        {
+            <div class="fx-hint" style="color:var(--fx-warn);margin-top:10px;">
+                <span class="fx-ico"><Icon Name="alert" Size="14" /></span> @_prep.BlockReason
+            </div>
+        }
+
+        @* Repository not at the version's commit → offer a checkout, then re-prepare. *@
+        @if (!_prep.RepositoryAtVersion)
+        {
+            <div class="fx-card" style="margin-top:12px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="fx-ico" style="color:var(--fx-warn);"><Icon Name="alert" Size="15" /></span>
+                    <div style="flex:1;">
+                        <div style="font-size:13px;font-weight:500;">Repository is not at this version</div>
+                        <div class="fx-hint" style="margin:2px 0 0;">Check the version out so what deploys is exactly what was cut.</div>
+                    </div>
+                    <button class="fx-btn" @onclick="CheckoutAsync" disabled="@(!_prep.CanCheckout || _busy)">
+                        <span class="fx-ico"><Icon Name="download" Size="13" /></span> Check out @_prep.VersionLabel
+                    </button>
+                </div>
+                @if (!_prep.CanCheckout)
+                {
+                    <div class="fx-hint" style="margin-top:8px;">Commit or stash your working-tree changes first, then reopen.</div>
+                }
+                @if (_checkoutMsg is not null)
+                {
+                    <div class="fx-hint" style="margin-top:8px;">@_checkoutMsg</div>
+                }
+            </div>
+        }
+
+        @* Gates. *@
+        @if (_prep.Gates.Count > 0)
+        {
+            <div style="margin-top:12px;">
+                @foreach (var g in _prep.Gates)
+                {
+                    <div class="fx-checkrow @(g.Passed ? "pass" : g.IsBlocker ? "block" : "warn")">
+                        <span class="fx-ico"><Icon Name="@(g.Passed ? "check" : g.IsBlocker ? "x" : "alert")" Size="15" /></span>
+                        <div>
+                            <div>@g.Label</div>
+                            @if (!string.IsNullOrWhiteSpace(g.Detail)) { <div class="detail">@g.Detail</div> }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        @* Plan review summary. *@
+        @if (_prep.Review is not null)
+        {
+            <div class="fx-card" style="margin-top:12px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                    <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="file-text" Size="15" /></span>
+                    <span style="font-size:13px;font-weight:500;">Plan review</span>
+                </div>
+                <PlanReviewPanel Review="_prep.Review" Mode="PlanMode.Normal" />
+            </div>
+        }
+
+        @* Interactive gates: approval + production typed confirmation. *@
+        @if (_prep.PlanReady && _prep.RequiresApproval && !_deployed)
+        {
+            <label class="fx-approve">
+                <input type="checkbox" checked="@_approved" @onchange="e => _approved = (bool)e.Value!" disabled="@_busy" />
+                <span>I approve this deployment to <strong>@_prep.EnvironmentName</strong>.</span>
+            </label>
+        }
+        @if (_prep.PlanReady && _prep.RequiresTypedConfirmation && !_deployed)
+        {
+            <div class="fx-confirm" style="margin-top:10px;">
+                <div class="lead"><span class="fx-ico"><Icon Name="alert" Size="15" /></span> Production environment</div>
+                <p class="fx-hint" style="margin:0 0 8px;">Type <strong class="fx-mono">@_prep.ConfirmationPhrase</strong> to confirm.</p>
+                <input class="fx-input fx-mono" placeholder="@_prep.ConfirmationPhrase" @bind="_typed" @bind:event="oninput" disabled="@_busy" />
+            </div>
+        }
+
+        @if (_applyOrder.Count > 0)
+        {
+            <div style="margin-top:12px;"><ApplyProgressView Rows="OrderedRows" /></div>
+        }
+        @if (_output.Count > 0)
+        {
+            <details style="margin-top:10px;">
+                <summary style="cursor:pointer;font-size:12.5px;color:var(--fx-dim);">Command output</summary>
+                <div style="margin-top:8px;"><OutputConsole Lines="_output" EmptyText="No output." /></div>
+            </details>
+        }
+    }
+    </ChildContent>
+    <Footer>
+        @if (_resultPill is { } pill) { <span class="fx-pill @pill.Cls" style="margin-right:auto;">@pill.Text</span> }
+        @if (_error is not null && _prep is not null) { <span class="fx-pill fail" style="margin-right:auto;" title="@_error">@_error</span> }
+        <button class="fx-btn" @onclick="OnClose" disabled="@_busy">@(_deployed ? "Close" : "Cancel")</button>
+        @if (!_deployed)
+        {
+            <button class="fx-btn accent" @onclick="DeployAsync" disabled="@(!CanDeploy)">
+                <span class="fx-ico"><Icon Name="zap" Size="13" /></span> Deploy
+            </button>
+        }
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid VersionId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnDeployed { get; set; }
+
+    private DeployPreparation? _prep;
+    private readonly List<ProcessOutputEvent> _output = [];
+    private readonly Dictionary<string, ApplyProgressEvent> _applyRows = [];
+    private readonly List<string> _applyOrder = [];
+    private bool _busy;
+    private bool _deployed;
+    private bool _approved;
+    private string _typed = "";
+    private string? _error;
+    private string? _checkoutMsg;
+    private (string Cls, string Text)? _resultPill;
+    private CancellationTokenSource? _cts;
+
+    private string Title => "Deploy version";
+    private IReadOnlyList<ApplyProgressEvent> OrderedRows => _applyOrder.Select(a => _applyRows[a]).ToList();
+
+    private bool CanDeploy =>
+        !_busy && !_deployed && _prep is { PlanReady: true }
+        && (!_prep.RequiresApproval || _approved)
+        && (!_prep.RequiresTypedConfirmation || string.Equals(_typed.Trim(), _prep.ConfirmationPhrase, StringComparison.Ordinal));
+
+    protected override async Task OnInitializedAsync() => await PrepareAsync();
+
+    private async Task PrepareAsync()
+    {
+        _busy = true;
+        _error = null;
+        _output.Clear();
+        StateHasChanged();
+        try
+        {
+            var progress = new Progress<ProcessOutputEvent>(e => { _output.Add(e); StateHasChanged(); });
+            _prep = await Deployments.PrepareDeployAsync(VersionId, EnvironmentId, progress);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CheckoutAsync()
+    {
+        _busy = true;
+        _checkoutMsg = null;
+        StateHasChanged();
+        try
+        {
+            var (ok, detail) = await Deployments.CheckoutVersionAsync(VersionId);
+            _checkoutMsg = detail;
+            if (ok) await PrepareAsync();
+        }
+        catch (Exception ex) { _checkoutMsg = ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task DeployAsync()
+    {
+        if (_prep?.SavedPlanId is null || !CanDeploy) return;
+
+        _busy = true;
+        _error = null;
+        _resultPill = null;
+        _applyRows.Clear();
+        _applyOrder.Clear();
+        _cts = new CancellationTokenSource();
+        try
+        {
+            var raw = new Progress<ProcessOutputEvent>(e => { _output.Add(e); StateHasChanged(); });
+            var structured = new Progress<ApplyProgressEvent>(e =>
+            {
+                if (!_applyRows.ContainsKey(e.Address)) _applyOrder.Add(e.Address);
+                _applyRows[e.Address] = e;
+                StateHasChanged();
+            });
+            var result = await Deployments.ExecuteDeployAsync(
+                _prep.SavedPlanId.Value, new DeployConfirmation(_approved || !_prep.RequiresApproval, _typed), raw, structured, _cts.Token);
+
+            if (result.Succeeded)
+            {
+                _deployed = true;
+                var a = result.Apply;
+                _resultPill = ("ok", a is null ? "Deployed" : $"Deployed · +{a.Added} ~{a.Changed} -{a.Destroyed}");
+                await OnDeployed.InvokeAsync();
+            }
+            else
+            {
+                _resultPill = ("fail", result.Error ?? "Deploy failed");
+                _error = result.Error;
+            }
+        }
+        catch (OperationCanceledException) { _resultPill = ("warn", "Cancelled"); }
+        catch (Exception ex) { _error = ex.Message; _resultPill = ("fail", ex.Message); }
+        finally { _busy = false; _cts?.Dispose(); _cts = null; StateHasChanged(); }
+    }
+
+    private static string Short(string sha) => string.IsNullOrEmpty(sha) ? "—" : sha.Length > 8 ? sha[..8] : sha;
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

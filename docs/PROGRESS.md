@@ -234,17 +234,18 @@ _✅ Core complete. Cloud provider abstraction + Azure/AWS/Google adapters (offi
 
 ## Phase 9.5 — CI/CD Pipelines & Deployments
 
-- [ ] `ProjectVersion` model (per-project, Git-anchored, semver labels) ([20](20-pipelines-deployments.md))
-- [ ] `Deployment` records (version + state serial/lineage + plan summary)
-- [ ] Independent version-per-environment (v1/Live, v1.5/UAT, v2/Dev)
-- [ ] Version × environment matrix view
-- [ ] Deploy one version to many/all environments (governed fan-out)
-- [ ] Read-only deployments board (from plan/apply + Git history)
-- [ ] Pipeline definitions + ordered stages
-- [ ] Stage gates (approval, branch, clean tree, production typed-confirm)
-- [ ] One-click governed deploy (plan → gates → apply saved plan)
-- [ ] Promote & rollback
-- [ ] External-pipeline status on the board (provider adapters)
+- [x] `ProjectVersion` model (per-project, Git-anchored, semver labels) — cut-from-HEAD (optional annotated tag + push) + infer-from-tags; `SemVerLabel` tolerant parse/precedence ([20](20-pipelines-deployments.md))
+- [x] `Deployment` records (version + state serial/lineage + plan summary) — written by the single `IDeploymentRecorder` after every successful apply (both the Plan & apply page and the governed flow); serial/lineage read from the local state file (only the two non-sensitive top-level fields)
+- [x] Independent version-per-environment (v1/Live, v1.5/UAT, v2/Dev) — current version = latest `Succeeded` deployment per env
+- [x] Version × environment matrix view (`VersionMatrixBuilder`; current/previous/available)
+- [x] Deploy one version to many/all environments (governed fan-out) — auto-applies gate-clean targets, flags approval/production targets as needing confirmation
+- [x] Read-only deployments board (from plan/apply + Git history) + external-pipeline status
+- [x] Pipeline definitions + ordered stages (`DeploymentPipeline`/`PipelineStage`; editor with reorder)
+- [x] Stage gates (approval [local self-ack], required branch, clean tree, production typed-confirm, promote-in-order) via `DeploymentGateEvaluator`
+- [x] One-click governed deploy (plan → gates → apply the exact saved plan) — reuses the Phase 4 plan/apply spine; checkout-to-version guard so what deploys is what was cut
+- [x] Promote (upstream version → downstream) & rollback (previous distinct succeeded version)
+- [x] External-pipeline status on the board (Phase 7 provider adapters, capability-gated, best-effort)
+- [ ] _Needs one migration: `AddDeploymentPipelines` (new `DeploymentPipelines` + `PipelineStages` tables). `ProjectVersions`/`Deployments` tables already exist from `AddSavedPlans`. Verify port `tests/deployment-fixtures/verify_deployments.py` (sandbox VM was down — run it)._
 
 ## Phase 10 — Visual resource builder
 
@@ -307,3 +308,4 @@ Turn the plain `<textarea>` file editor on the project Files page into a profess
 | 2026-07-24 | Keep every saved plan as its own file so any reviewed plan stays exactly applyable (ADR-0003); apply uses `apply -json` for structured per-resource progress | [06](06-plan-apply-safety.md) |
 | 2026-07-24 | `AppInitializer` adopts a legacy `EnsureCreated` DB (create missing tables + stamp migration history) instead of requiring a reset — upgrades never lose data | [12](12-database-design.md) |
 | 2026-07-28 | Managed private keys are DPAPI-encrypted under `Data\keys\<projectId>\` (never in the project/git); DB holds only a `KeyPair` row + `SecretReference`. Import reads the public key without decrypting the private half; generation captures it from Terraform outputs. Dependency-free SSH/PPK handling (no BouncyCastle) — Ivo's call | [28](28-key-pair-management.md), [11](11-secrets.md) |
+| 2026-07-28 | Deployments recorded by a single `IDeploymentRecorder` inside the apply service, so every successful apply (Plan & apply page *or* governed Pipelines flow) lands on the board; resolves/creates the `ProjectVersion` from the plan's commit. Governed deploy = plan → gates → apply the exact saved plan (no bypass of ADR-0003); a deploy first checks the version's commit out so what deploys is what was cut. Approval gate is a local self-ack (multi-user role approvals stay Phase 11). State serial/lineage read from the local `terraform.tfstate` (only the two non-sensitive top-level fields). One migration: `AddDeploymentPipelines` (pipeline-config tables only) | [20](20-pipelines-deployments.md) |

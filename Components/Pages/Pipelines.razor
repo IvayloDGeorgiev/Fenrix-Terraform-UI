@@ -1,0 +1,272 @@
+@page "/projects/{ProjectId:guid}/pipelines"
+@using Fenrix.IaCStudio.Application.Abstractions.Deployments
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Abstractions.Providers
+@using Fenrix.IaCStudio.Contracts.Deployments
+@using Fenrix.IaCStudio.Contracts.Providers
+@using Fenrix.IaCStudio.Domain.Environments
+@using Fenrix.IaCStudio.Domain.Projects
+@inject IProjectService Projects
+@inject IDeploymentService Deployments
+@inject IProjectVersionService Versions
+@inject IRepositoryHostService Host
+
+@if (_project is null)
+{
+    <div class="fx-card" style="text-align:center;color:var(--fx-dim);">@(_loading ? "Loading…" : "Project not found.")</div>
+}
+else
+{
+    <ProjectHeader ProjectId="ProjectId" Name="@_project.Name" Active="ProjectHeader.ProjectPage.Pipelines" Trail="@TabLabel(_tab)">
+        <Actions>
+            <button class="fx-btn small" @onclick="RefreshAsync" disabled="@_busy">
+                <span class="fx-ico"><Icon Name="refresh" Size="13" /></span> Refresh
+            </button>
+        </Actions>
+    </ProjectHeader>
+
+    <div class="fx-seg" style="margin-bottom:14px;">
+        <button class="@(_tab == Tab.Board ? "active" : "")" @onclick="() => _tab = Tab.Board"><span class="fx-ico"><Icon Name="git-pull-request" Size="13" /></span> Board</button>
+        <button class="@(_tab == Tab.Matrix ? "active" : "")" @onclick="() => _tab = Tab.Matrix"><span class="fx-ico"><Icon Name="layers" Size="13" /></span> Matrix</button>
+        <button class="@(_tab == Tab.Versions ? "active" : "")" @onclick="() => _tab = Tab.Versions"><span class="fx-ico"><Icon Name="bookmark" Size="13" /></span> Versions</button>
+        <button class="@(_tab == Tab.Pipeline ? "active" : "")" @onclick="() => _tab = Tab.Pipeline"><span class="fx-ico"><Icon Name="settings" Size="13" /></span> Pipeline</button>
+    </div>
+
+    @if (_notice is { } n)
+    {
+        <div class="fx-hint" style="color:var(--fx-warn);margin-bottom:12px;">
+            <span class="fx-ico"><Icon Name="alert" Size="14" /></span> @n
+        </div>
+    }
+
+    @switch (_tab)
+    {
+        case Tab.Board:
+            <DeploymentBoardView Board="_board" ExternalRuns="_externalRuns"
+                                 OnPromote="PromoteAsync" OnRollback="RollbackAsync" />
+            break;
+
+        case Tab.Matrix:
+            <VersionMatrixView Matrix="_matrix" OnDeploy="OnDeployCell" OnDeployMany="OpenFanOut" />
+            break;
+
+        case Tab.Versions:
+            <div class="fx-card">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                    <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="bookmark" Size="16" /></span>
+                    <span style="flex:1;font-size:14px;font-weight:500;">Project versions</span>
+                    <button class="fx-btn small" @onclick="InferTagsAsync" disabled="@_busy"><span class="fx-ico"><Icon Name="download" Size="12" /></span> Infer from tags</button>
+                    <button class="fx-btn small accent" @onclick="() => _showCut = true" disabled="@_busy"><span class="fx-ico"><Icon Name="plus" Size="12" /></span> Cut version</button>
+                </div>
+                @if (_versions.Count == 0)
+                {
+                    <div class="fx-hint">No versions yet. Cut one from the current commit, or infer them from Git tags.</div>
+                }
+                else
+                {
+                    @foreach (var v in _versions)
+                    {
+                        <div class="fx-row">
+                            <div class="grow" style="min-width:0;">
+                                <div class="title" style="font-size:12.5px;">@v.Label @(v.GitTag is not null ? $"· tag {v.GitTag}" : "")</div>
+                                <div class="meta fx-mono">@v.ShortCommit@(v.GitBranch is not null ? $" · {v.GitBranch}" : "") · @v.CreatedAt.LocalDateTime.ToString("g")</div>
+                                @if (!string.IsNullOrWhiteSpace(v.Notes)) { <div class="meta">@v.Notes</div> }
+                            </div>
+                            <button class="fx-btn small" @onclick="() => OpenFanOut(v.Id)"><span class="fx-ico"><Icon Name="layers" Size="12" /></span> Deploy to…</button>
+                        </div>
+                    }
+                }
+            </div>
+            break;
+
+        case Tab.Pipeline:
+            <PipelineEditor ProjectId="ProjectId" OnSaved="RefreshAsync" />
+            break;
+    }
+}
+
+@if (_showCut)
+{
+    <CutVersionDialog ProjectId="ProjectId" OnClose="() => _showCut = false" OnCut="OnVersionCut" />
+}
+
+@if (_deployVersionId is { } dv && _deployEnvId is { } de)
+{
+    <DeployDialog ProjectId="ProjectId" VersionId="dv" EnvironmentId="de"
+                  OnClose="CloseDeploy" OnDeployed="OnDeployed" />
+}
+
+@if (_fanOutVersionId is { } fv)
+{
+    <FanOutDialog ProjectId="ProjectId" VersionId="fv" VersionLabel="@_fanOutLabel"
+                  Environments="_fanOutEnvs" OnClose="() => _fanOutVersionId = null" OnDone="RefreshAsync" />
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private enum Tab { Board, Matrix, Versions, Pipeline }
+
+    private InfrastructureProject? _project;
+    private List<ProjectEnvironment> _environments = [];
+    private Tab _tab = Tab.Board;
+    private bool _loading = true;
+    private bool _busy;
+    private Guid _loadedId;
+    private string? _notice;
+
+    private DeploymentBoard? _board;
+    private VersionMatrix? _matrix;
+    private List<ProjectVersionSummary> _versions = [];
+    private IReadOnlyList<PipelineRun>? _externalRuns;
+
+    private bool _showCut;
+    private Guid? _deployVersionId, _deployEnvId;
+    private Guid? _fanOutVersionId;
+    private string _fanOutLabel = "";
+    private List<FanOutDialog.EnvOption> _fanOutEnvs = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == ProjectId) return;
+        _loadedId = ProjectId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _project = await Projects.GetAsync(ProjectId);
+        _loading = false;
+        if (_project is null) return;
+
+        _environments = _project.Environments.OrderBy(e => e.DisplayOrder).ThenBy(e => e.Name).ToList();
+        await RefreshAsync();
+        await LoadExternalRunsAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        _busy = true;
+        try
+        {
+            _board = await Deployments.GetBoardAsync(ProjectId);
+            _matrix = await Deployments.GetMatrixAsync(ProjectId);
+            _versions = (await Versions.ListAsync(ProjectId)).ToList();
+        }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task LoadExternalRunsAsync()
+    {
+        try
+        {
+            var binding = await Host.DescribeAsync(ProjectId);
+            if (binding.HasConnection && binding.RepositoryId is not null &&
+                binding.Capabilities.HasFlag(ProviderCapabilities.PipelineStatus))
+            {
+                var result = await Host.GetPipelineRunsAsync(ProjectId, binding.RepositoryId!, null);
+                if (result.Succeeded)
+                    _externalRuns = result.Value;
+            }
+        }
+        catch { /* external CI is best-effort; never blocks the board */ }
+        StateHasChanged();
+    }
+
+    // ---- deploy flows ----
+
+    private void OnDeployCell((Guid VersionId, Guid EnvironmentId) cell)
+    {
+        _notice = null;
+        _deployVersionId = cell.VersionId;
+        _deployEnvId = cell.EnvironmentId;
+    }
+
+    private void CloseDeploy()
+    {
+        _deployVersionId = null;
+        _deployEnvId = null;
+    }
+
+    private async Task OnDeployed()
+    {
+        CloseDeploy();
+        await RefreshAsync();
+    }
+
+    private void PromoteAsync(Guid envId)
+    {
+        _notice = null;
+        // Promote = deploy the upstream stage's current version to this stage.
+        var stages = _board?.Stages;
+        var idx = stages?.ToList().FindIndex(s => s.EnvironmentId == envId) ?? -1;
+        if (stages is null || idx <= 0)
+        {
+            _notice = "No upstream stage to promote from.";
+            return;
+        }
+        var source = stages[idx - 1].CurrentVersion;
+        if (source is null)
+        {
+            _notice = $"The upstream stage ({stages[idx - 1].EnvironmentName}) has nothing deployed to promote.";
+            return;
+        }
+        _deployVersionId = source.Id;
+        _deployEnvId = envId;
+    }
+
+    private async Task RollbackAsync(Guid envId)
+    {
+        _notice = null;
+        var versionId = await Deployments.GetRollbackVersionIdAsync(envId);
+        if (versionId is null)
+        {
+            _notice = "No previous version to roll back to for this environment.";
+            return;
+        }
+        _deployVersionId = versionId;
+        _deployEnvId = envId;
+    }
+
+    private void OpenFanOut(Guid versionId)
+    {
+        _notice = null;
+        _fanOutVersionId = versionId;
+        _fanOutLabel = _versions.FirstOrDefault(v => v.Id == versionId)?.Label ?? "version";
+        _fanOutEnvs = _environments
+            .Select(e => new FanOutDialog.EnvOption(e.Id, e.Name, e.IsProduction, e.CloudConnectionId is not null))
+            .ToList();
+    }
+
+    // ---- versions ----
+
+    private async Task OnVersionCut(string? warning)
+    {
+        _showCut = false;
+        _notice = warning;
+        await RefreshAsync();
+    }
+
+    private async Task InferTagsAsync()
+    {
+        _busy = true;
+        try
+        {
+            var created = await Versions.InferFromTagsAsync(ProjectId);
+            _notice = created.Count == 0 ? "No new versions found in Git tags." : $"Imported {created.Count} version(s) from tags.";
+            await RefreshAsync();
+        }
+        catch (Exception ex) { _notice = ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private static string TabLabel(Tab t) => t switch
+    {
+        Tab.Board => "Board",
+        Tab.Matrix => "Matrix",
+        Tab.Versions => "Versions",
+        Tab.Pipeline => "Pipeline",
+        _ => ""
+    };
+}

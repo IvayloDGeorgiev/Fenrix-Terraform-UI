@@ -28,6 +28,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<KeyPair> KeyPairs => Set<KeyPair>();
     public DbSet<ProjectVersion> ProjectVersions => Set<ProjectVersion>();
     public DbSet<Deployment> Deployments => Set<Deployment>();
+    public DbSet<DeploymentPipeline> DeploymentPipelines => Set<DeploymentPipeline>();
+    public DbSet<PipelineStage> PipelineStages => Set<PipelineStage>();
     public DbSet<CommandRun> CommandRuns => Set<CommandRun>();
     public DbSet<SavedPlan> SavedPlans => Set<SavedPlan>();
     public DbSet<RecentFile> RecentFiles => Set<RecentFile>();

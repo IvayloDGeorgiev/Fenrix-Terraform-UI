@@ -1,6 +1,7 @@
 using Fenrix.IaCStudio.Application.Abstractions;
 using Fenrix.IaCStudio.Application.Abstractions.Cloud;
 using Fenrix.IaCStudio.Application.Abstractions.Connections;
+using Fenrix.IaCStudio.Application.Abstractions.Deployments;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
@@ -9,6 +10,7 @@ using Fenrix.IaCStudio.Application.Abstractions.Security;
 using Fenrix.IaCStudio.Application.Abstractions.Terraform;
 using Fenrix.IaCStudio.Infrastructure.Cloud;
 using Fenrix.IaCStudio.Infrastructure.Connections;
+using Fenrix.IaCStudio.Infrastructure.Deployments;
 using Fenrix.IaCStudio.Infrastructure.Files;
 using Fenrix.IaCStudio.Infrastructure.Git;
 using Fenrix.IaCStudio.Infrastructure.Persistence;
@@ -133,6 +135,16 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<KeyStore>();
         services.AddScoped<KeyGenerationRunner>();
         services.AddScoped<IKeyPairService, KeyPairService>();
+
+        // CI/CD pipelines & deployments (Phase 9.5). Version + pipeline services are plain DB CRUD; the
+        // recorder is the single writer of Deployment history (invoked inside the apply service after a
+        // successful apply, so every apply lands on the board); the deployment service orchestrates the
+        // governed deploy (plan → gates → apply) + board/matrix/fan-out over the Phase 4 spine. All scoped.
+        // No bypass of the saved-plan-only apply rule. See docs/20-pipelines-deployments.md.
+        services.AddScoped<IProjectVersionService, ProjectVersionService>();
+        services.AddScoped<IDeploymentRecorder, DeploymentRecorder>();
+        services.AddScoped<IPipelineService, PipelineService>();
+        services.AddScoped<IDeploymentService, DeploymentService>();
 
         return services;
     }

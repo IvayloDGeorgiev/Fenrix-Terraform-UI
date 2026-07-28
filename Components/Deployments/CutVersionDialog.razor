@@ -1,0 +1,77 @@
+@* Cut a new project version from the current Git HEAD, optionally tagging + pushing. See docs/20-pipelines-deployments.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Deployments
+@using Fenrix.IaCStudio.Contracts.Deployments
+@inject IProjectVersionService Versions
+
+<Modal Title="Cut a version" IconName="bookmark" OnClose="OnClose" CloseOnBackdrop="false">
+    <ChildContent>
+    <div class="fx-field">
+        <label>Version label</label>
+        <input class="fx-input" placeholder="e.g. 1.0, 1.5-rc, 2.0-dev" @bind="_label" @bind:event="oninput" disabled="@_busy" />
+        <p class="fx-hint" style="margin-top:6px;">Anchored to the current commit. Free-form, but semver labels sort meaningfully.</p>
+    </div>
+    <div class="fx-field" style="margin-top:10px;">
+        <label>Notes (optional)</label>
+        <textarea class="fx-input" rows="2" @bind="_notes" @bind:event="oninput" disabled="@_busy"></textarea>
+    </div>
+    <label class="fx-approve" style="margin-top:10px;">
+        <input type="checkbox" checked="@_tag" @onchange="e => _tag = (bool)e.Value!" disabled="@_busy" />
+        <span>Create an annotated Git tag named <span class="fx-mono">@DisplayLabel</span></span>
+    </label>
+    @if (_tag)
+    {
+        <label class="fx-approve" style="margin-top:6px;margin-left:22px;">
+            <input type="checkbox" checked="@_push" @onchange="e => _push = (bool)e.Value!" disabled="@_busy" />
+            <span>Push the tag to the remote</span>
+        </label>
+    }
+    @if (_error is not null)
+    {
+        <div class="fx-hint" style="color:var(--fx-warn);margin-top:10px;">
+            <span class="fx-ico"><Icon Name="alert" Size="14" /></span> @_error
+        </div>
+    }
+    </ChildContent>
+    <Footer>
+        <button class="fx-btn" @onclick="OnClose" disabled="@_busy">Cancel</button>
+        <button class="fx-btn accent" @onclick="CutAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_label))">
+            <span class="fx-ico"><Icon Name="bookmark" Size="13" /></span> Cut version
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<string?> OnCut { get; set; }
+
+    private string _label = "";
+    private string _notes = "";
+    private bool _tag;
+    private bool _push;
+    private bool _busy;
+    private string? _error;
+
+    private string DisplayLabel => string.IsNullOrWhiteSpace(_label) ? "<label>" : _label.Trim();
+
+    private async Task CutAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_label)) return;
+        _busy = true;
+        _error = null;
+        try
+        {
+            var result = await Versions.CutAsync(new CutVersionRequest(
+                ProjectId, _label.Trim(),
+                string.IsNullOrWhiteSpace(_notes) ? null : _notes.Trim(),
+                _tag, _tag && _push));
+
+            if (result.Succeeded)
+                await OnCut.InvokeAsync(result.Warning);
+            else
+                _error = result.Error ?? "Could not cut the version.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+}

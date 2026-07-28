@@ -903,3 +903,76 @@ a:hover { color: var(--fx-accent-strong); }
 }
 .fx-key-badge.accent { color: var(--fx-accent-text); border-color: var(--fx-accent); }
 .fx-key-badge .fx-ico { display: inline-flex; }
+
+/* ============================ Phase 9.5 — Pipelines & deployments ============================ */
+
+/* Small button variant + inline tags reused across the board/matrix/editor. */
+.fx-btn.small { padding: 4px 9px; font-size: 12px; }
+.fx-tag.prod { color: var(--fx-danger); border-color: var(--fx-danger); }
+.fx-tag.lock { color: var(--fx-warn); border-color: var(--fx-warn); display: inline-flex; align-items: center; gap: 4px; }
+
+.fx-approve { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; cursor: pointer; padding: 3px 0; }
+.fx-approve input { margin-top: 2px; }
+
+.fx-deploy-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Version × environment matrix */
+.fx-matrix-wrap { overflow-x: auto; border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm); }
+.fx-matrix { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.fx-matrix th, .fx-matrix td { border-bottom: 1px solid var(--fx-border); border-right: 1px solid var(--fx-border); padding: 8px 10px; text-align: left; vertical-align: middle; }
+.fx-matrix thead th { background: var(--fx-surface-2); font-weight: 600; white-space: nowrap; position: sticky; top: 0; }
+.fx-matrix-corner { min-width: 120px; }
+.fx-matrix-row { min-width: 120px; }
+.fx-matrix-row .lbl { font-weight: 600; }
+.fx-matrix-row .sha { font-size: 11px; color: var(--fx-dim); margin-top: 2px; }
+.fx-matrix-actions { border-right: none !important; white-space: nowrap; }
+
+.fx-cell { text-align: center !important; padding: 4px !important; }
+.fx-cell-btn {
+  width: 100%; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+  background: none; color: var(--fx-text); padding: 6px 4px; font-size: 11.5px; font-weight: 600;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+.fx-cell-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.fx-cell-when { font-size: 10px; font-weight: 400; color: var(--fx-faint); }
+.fx-cell.current .fx-cell-btn { background: var(--fx-accent-tint); color: var(--fx-accent-text); border-color: var(--fx-accent); }
+.fx-cell.previous .fx-cell-btn { color: var(--fx-dim); border-color: var(--fx-border-strong); }
+.fx-cell.available .fx-cell-btn:hover { border-color: var(--fx-accent); color: var(--fx-accent-text); }
+
+.fx-matrix-legend { display: flex; gap: 16px; margin-top: 10px; font-size: 12px; color: var(--fx-dim); }
+.fx-matrix-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: middle; }
+.fx-matrix-legend .dot.current { background: var(--fx-accent); }
+.fx-matrix-legend .dot.previous { background: var(--fx-border-strong); }
+.fx-matrix-legend .dot.available { background: transparent; border: 1px solid var(--fx-border-strong); }
+
+/* Release-pipeline board */
+.fx-board { display: flex; align-items: stretch; gap: 4px; overflow-x: auto; padding-bottom: 6px; }
+.fx-board-arrow { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--fx-faint); min-width: 42px; }
+.fx-stage {
+  min-width: 220px; flex: 1; border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm);
+  background: var(--fx-surface); padding: 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.fx-stage.prod { border-color: var(--fx-danger); }
+.fx-stage-head { display: flex; align-items: center; gap: 6px; }
+.fx-stage-name { font-weight: 600; font-size: 13.5px; }
+.fx-stage-version { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.fx-stage-version .lbl { font-weight: 600; }
+.fx-stage-version .sha { color: var(--fx-dim); font-size: 11px; }
+.fx-stage-meta { font-size: 12px; }
+.fx-stage-meta > div:first-child { font-weight: 500; }
+.fx-stage-empty { padding: 4px 0; }
+.fx-stage-ci { display: flex; align-items: center; gap: 6px; }
+.fx-ci-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fx-faint); flex-shrink: 0; }
+.fx-ci-dot.ok { background: var(--fx-success); }
+.fx-ci-dot.fail { background: var(--fx-danger); }
+.fx-ci-dot.run { background: var(--fx-warn); }
+.fx-stage-actions { display: flex; gap: 6px; margin-top: auto; padding-top: 4px; }
+
+/* Pipeline editor */
+.fx-stage-edit { border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm); padding: 10px 12px; margin-bottom: 8px; background: var(--fx-surface); }
+.fx-stage-edit-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.fx-stage-order { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--fx-accent-tint); color: var(--fx-accent-text); font-size: 12px; font-weight: 600; }
+.fx-stage-gates { display: flex; flex-direction: column; gap: 2px; }
+
+/* Fan-out dialog */
+.fx-fanout-list, .fx-fanout-results { display: flex; flex-direction: column; gap: 2px; }
