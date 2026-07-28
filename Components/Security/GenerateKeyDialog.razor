@@ -1,0 +1,189 @@
+@* Generate a key pair via Terraform (tls_private_key, optionally aws_key_pair). See docs/28-key-pair-management.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Security
+@using Fenrix.IaCStudio.Contracts.Security
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Environments
+@using Fenrix.IaCStudio.Domain.Security
+@inject IKeyPairService Keys
+@implements IDisposable
+
+<Modal Title="Generate a key pair" IconName="key" Wide="true" OnClose="Close">
+    <ChildContent>
+        <p class="fx-hint" style="margin-top:0;">
+            Fenrix runs Terraform on the backend to create the key and captures the private key straight into the
+            encrypted store — no cloud-console round-trip. Local generation needs no cloud connection.
+        </p>
+
+        <div class="fx-field">
+            <label>Name</label>
+            <input class="fx-input" placeholder="app-bastion" @bind="_name" @bind:event="oninput" disabled="@_busy" />
+        </div>
+
+        <div style="display:flex;gap:12px;">
+            <div class="fx-field" style="flex:1;">
+                <label>Algorithm</label>
+                <select class="fx-select" @bind="_algorithm" disabled="@_busy">
+                    <option value="@KeyAlgorithm.Rsa">RSA</option>
+                    <option value="@KeyAlgorithm.Ecdsa">ECDSA</option>
+                    <option value="@KeyAlgorithm.Ed25519">Ed25519</option>
+                </select>
+            </div>
+            @if (_algorithm == KeyAlgorithm.Rsa)
+            {
+                <div class="fx-field" style="flex:1;">
+                    <label>Key size</label>
+                    <select class="fx-select" @bind="_rsaBits" disabled="@_busy">
+                        <option value="2048">2048</option>
+                        <option value="4096">4096</option>
+                    </select>
+                </div>
+            }
+            else if (_algorithm == KeyAlgorithm.Ecdsa)
+            {
+                <div class="fx-field" style="flex:1;">
+                    <label>Curve</label>
+                    <select class="fx-select" @bind="_curve" disabled="@_busy">
+                        <option value="P256">P-256</option>
+                        <option value="P384">P-384</option>
+                        <option value="P521">P-521</option>
+                    </select>
+                </div>
+            }
+        </div>
+
+        <div class="fx-field">
+            <label class="fx-check">
+                <input type="checkbox" @bind="_register" disabled="@_busy" />
+                <span>Also register in AWS (<span class="fx-mono">aws_key_pair</span>)</span>
+            </label>
+            <p class="fx-hint" style="margin:6px 0 0;">
+                Registers the public key with your cloud account so instances can reference it. Requires an
+                environment with a bound cloud connection.
+            </p>
+        </div>
+
+        @if (_register)
+        {
+            <div class="fx-field">
+                <label>Environment (supplies the cloud connection)</label>
+                <select class="fx-select" value="@_environmentId" @onchange="OnEnvChanged" disabled="@_busy">
+                    <option value="@Guid.Empty">— choose —</option>
+                    @foreach (var env in Environments)
+                    {
+                        <option value="@env.Id">@env.Name@(env.CloudConnectionId is null ? " ⚠ (no connection)" : "")</option>
+                    }
+                </select>
+            </div>
+        }
+
+        <div class="fx-field">
+            <label>Comment <span style="color:var(--fx-faint);">(optional)</span></label>
+            <input class="fx-input" placeholder="bastion access" @bind="_comment" @bind:event="oninput" disabled="@_busy" />
+        </div>
+
+        @if (_output.Count > 0)
+        {
+            <div class="fx-panel-head" style="margin-top:8px;">
+                <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="terminal" Size="15" /></span>
+                <span style="font-weight:500;">Output</span>
+            </div>
+            <OutputConsole Lines="_output" />
+        }
+
+        @if (_error is not null)
+        {
+            <div class="fx-hint" style="color:var(--fx-warn);display:flex;gap:8px;margin-top:8px;">
+                <span class="fx-ico"><Icon Name="alert" Size="14" /></span> @_error
+            </div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="fx-btn ghost" @onclick="Close" disabled="@_busy">Cancel</button>
+        <button class="fx-btn accent" @onclick="GenerateAsync" disabled="@(_busy || !CanGenerate)">
+            @if (_busy)
+            {
+                <span class="fx-ico"><Icon Name="refresh" Size="13" /></span> <span>Generating…</span>
+            }
+            else
+            {
+                <span class="fx-ico"><Icon Name="key" Size="13" /></span> <span>Generate</span>
+            }
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public IReadOnlyList<ProjectEnvironment> Environments { get; set; } = [];
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnGenerated { get; set; }
+
+    private string _name = "", _comment = "";
+    private KeyAlgorithm _algorithm = KeyAlgorithm.Rsa;
+    private int _rsaBits = 4096;
+    private string _curve = "P256";
+    private bool _register;
+    private Guid _environmentId = Guid.Empty;
+
+    private bool _busy;
+    private string? _error;
+    private readonly List<ProcessOutputEvent> _output = [];
+    private CancellationTokenSource? _cts;
+
+    private bool CanGenerate =>
+        !string.IsNullOrWhiteSpace(_name) && (!_register || _environmentId != Guid.Empty);
+
+    private void OnEnvChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id))
+            _environmentId = id;
+    }
+
+    private async Task GenerateAsync()
+    {
+        _busy = true;
+        _error = null;
+        _output.Clear();
+        _cts = new CancellationTokenSource();
+        StateHasChanged();
+
+        try
+        {
+            var request = new GenerateKeyRequest(
+                ProjectId, _name.Trim(), _algorithm,
+                RsaBits: _rsaBits,
+                EcdsaCurve: _algorithm == KeyAlgorithm.Ecdsa ? _curve : null,
+                RegisterInCloud: _register,
+                EnvironmentId: _register ? _environmentId : null,
+                Comment: string.IsNullOrWhiteSpace(_comment) ? null : _comment.Trim());
+
+            var progress = new Progress<ProcessOutputEvent>(e => { _output.Add(e); StateHasChanged(); });
+            var result = await Keys.GenerateAsync(request, progress, _cts.Token);
+            if (result.Succeeded)
+            {
+                await OnGenerated.InvokeAsync();
+                await OnClose.InvokeAsync();
+            }
+            else
+            {
+                _error = result.Error;
+            }
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally
+        {
+            _busy = false;
+            _cts?.Dispose();
+            _cts = null;
+            StateHasChanged();
+        }
+    }
+
+    private Task Close() => _busy ? Task.CompletedTask : OnClose.InvokeAsync();
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

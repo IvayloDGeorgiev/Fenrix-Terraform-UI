@@ -1,0 +1,319 @@
+@page "/projects/{ProjectId:guid}/keys"
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Abstractions.Security
+@using Fenrix.IaCStudio.Contracts.Security
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Environments
+@using Fenrix.IaCStudio.Domain.Projects
+@using Fenrix.IaCStudio.Domain.Security
+@inject IProjectService Projects
+@inject IKeyPairService KeyPairs
+@inject IJSRuntime JS
+
+@if (_project is null)
+{
+    <div class="fx-card" style="text-align:center;color:var(--fx-dim);">@(_loading ? "Loading…" : "Project not found.")</div>
+}
+else
+{
+    <ProjectHeader ProjectId="ProjectId" Name="@_project.Name" Active="ProjectHeader.ProjectPage.Keys">
+        <Actions>
+            <button class="fx-btn ghost" @onclick="() => _showImport = true">
+                <span class="fx-ico"><Icon Name="download" Size="13" /></span> Import
+            </button>
+            <button class="fx-btn accent" @onclick="() => _showGenerate = true">
+                <span class="fx-ico"><Icon Name="key" Size="13" /></span> Generate
+            </button>
+        </Actions>
+    </ProjectHeader>
+
+    <div class="fx-card" style="margin-bottom:16px;">
+        <div class="fx-panel-head">
+            <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="key" Size="16" /></span>
+            <span style="flex:1;font-weight:500;">Key pairs</span>
+            <span class="fx-pill">@_keys.Count</span>
+        </div>
+
+        @if (_keys.Count == 0)
+        {
+            <EmptyState IconName="key" Title="No key pairs yet"
+                        Text="Import an existing SSH/EC2 key or generate a new one — private keys are encrypted at rest and never leave the secure store." />
+        }
+        else
+        {
+            <div class="fx-keys">
+                @foreach (var k in _keys)
+                {
+                    <div class="fx-key">
+                        <div class="fx-key-main">
+                            <div class="fx-key-title">
+                                <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="key" Size="15" /></span>
+                                <span class="fx-key-name">@k.Name</span>
+                                <span class="fx-key-badge">@AlgoLabel(k)</span>
+                                <span class="fx-key-badge @(k.Source == KeyPairSource.Generated ? "accent" : "")">@(k.Source == KeyPairSource.Generated ? "generated" : "imported")</span>
+                                @if (k.IsCloudRegistered)
+                                {
+                                    <span class="fx-key-badge accent"><span class="fx-ico"><Icon Name="cloud" Size="11" /></span> @(k.CloudKeyName ?? "registered")</span>
+                                }
+                            </div>
+                            <div class="fx-key-fp fx-mono" title="SHA-256 fingerprint">@(k.Fingerprint ?? "fingerprint unavailable")</div>
+                            <div class="fx-key-meta">
+                                Added @k.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd")
+                                @if (k.LastExportedAt is not null)
+                                {
+                                    <span> · last exported @k.LastExportedAt.Value.LocalDateTime.ToString("yyyy-MM-dd HH:mm")</span>
+                                }
+                            </div>
+                        </div>
+                        <div class="fx-key-actions">
+                            @if (!string.IsNullOrWhiteSpace(k.PublicKeyOpenSsh))
+                            {
+                                <button class="fx-iconbtn" title="Copy public key" @onclick="() => CopyPubAsync(k)"><Icon Name="copy" Size="15" /></button>
+                            }
+                            <button class="fx-iconbtn" title="Copy secure path" @onclick="() => CopyPathAsync(k)"><Icon Name="link" Size="15" /></button>
+                            <button class="fx-iconbtn" title="Rename" @onclick="() => BeginRename(k)"><Icon Name="pencil" Size="15" /></button>
+                            <button class="fx-iconbtn" title="Export private key" @onclick="() => _exportKey = k"><Icon Name="eye" Size="15" /></button>
+                            <button class="fx-iconbtn" title="Rotate" @onclick="() => BeginOp(k, KeyOp.Rotate)"><Icon Name="rotate" Size="15" /></button>
+                            <button class="fx-iconbtn danger" title="Delete" @onclick="() => BeginOp(k, KeyOp.Delete)"><Icon Name="trash" Size="15" /></button>
+                            @if (_copiedId == k.Id)
+                            {
+                                <span class="fx-pill ok"><span class="fx-ico"><Icon Name="check" Size="11" /></span> @_copiedWhat</span>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    <KeyReferencePicker @ref="_picker" ProjectId="ProjectId" />
+}
+
+@if (_showImport)
+{
+    <ImportKeyDialog ProjectId="ProjectId" OnClose="() => _showImport = false" OnImported="OnChangedAsync" />
+}
+
+@if (_showGenerate)
+{
+    <GenerateKeyDialog ProjectId="ProjectId" Environments="_environments"
+                       OnClose="() => _showGenerate = false" OnGenerated="OnChangedAsync" />
+}
+
+@if (_exportKey is not null)
+{
+    <ExportKeyDialog KeyId="_exportKey.Id" KeyName="@_exportKey.Name" OnClose="() => _exportKey = null" />
+}
+
+@if (_renameKey is not null)
+{
+    <Modal Title="Rename key" IconName="pencil" OnClose="() => _renameKey = null">
+        <ChildContent>
+            <div class="fx-field">
+                <label>Name</label>
+                <input class="fx-input" @bind="_renameText" @bind:event="oninput" />
+            </div>
+            @if (_opError is not null)
+            {
+                <div class="fx-hint" style="color:var(--fx-warn);">@_opError</div>
+            }
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn ghost" @onclick="() => _renameKey = null">Cancel</button>
+            <button class="fx-btn accent" @onclick="RenameAsync" disabled="@string.IsNullOrWhiteSpace(_renameText)">Rename</button>
+        </Footer>
+    </Modal>
+}
+
+@if (_opKey is not null)
+{
+    <Modal Title="@($"{_op} key")" IconName="@OpIcon" Wide="@(_opOutput.Count > 0)" OnClose="CloseOp">
+        <ChildContent>
+            @if (_op == KeyOp.Delete)
+            {
+                <p class="fx-hint" style="margin-top:0;">
+                    Delete <span class="fx-mono">@_opKey.Name</span>? This removes the encrypted private key and its
+                    metadata@(_opKey.IsCloudRegistered ? " and de-registers the key from the cloud (terraform destroy)." : ".")
+                    This cannot be undone.
+                </p>
+            }
+            else
+            {
+                <p class="fx-hint" style="margin-top:0;">
+                    Rotate <span class="fx-mono">@_opKey.Name</span>? A fresh key pair replaces it under the same name
+                    @(_opKey.IsCloudRegistered ? "(the old cloud key is de-registered first, then a new one is created)." : "(local).")
+                </p>
+            }
+            @if (_opOutput.Count > 0)
+            {
+                <OutputConsole Lines="_opOutput" />
+            }
+            @if (_opError is not null)
+            {
+                <div class="fx-hint" style="color:var(--fx-warn);display:flex;gap:8px;margin-top:8px;">
+                    <span class="fx-ico"><Icon Name="alert" Size="14" /></span> @_opError
+                </div>
+            }
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn ghost" @onclick="CloseOp" disabled="@_opBusy">Cancel</button>
+            <button class="fx-btn @(_op == KeyOp.Delete ? "danger" : "accent")" @onclick="RunOpAsync" disabled="@_opBusy">
+                @if (_opBusy)
+                {
+                    <span class="fx-ico"><Icon Name="refresh" Size="13" /></span> <span>Working…</span>
+                }
+                else
+                {
+                    <span>@_op</span>
+                }
+            </button>
+        </Footer>
+    </Modal>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private enum KeyOp { Delete, Rotate }
+
+    private InfrastructureProject? _project;
+    private List<ProjectEnvironment> _environments = [];
+    private List<KeyPairSummary> _keys = [];
+    private bool _loading = true;
+    private Guid _loadedId;
+
+    private bool _showImport, _showGenerate;
+    private KeyPairSummary? _exportKey;
+    private KeyReferencePicker? _picker;
+
+    private KeyPairSummary? _renameKey;
+    private string _renameText = "";
+
+    private KeyPairSummary? _opKey;
+    private KeyOp _op;
+    private bool _opBusy;
+    private string? _opError;
+    private readonly List<ProcessOutputEvent> _opOutput = [];
+
+    private Guid _copiedId;
+    private string _copiedWhat = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == ProjectId) return;
+        _loadedId = ProjectId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _project = await Projects.GetAsync(ProjectId);
+        _loading = false;
+        if (_project is null) return;
+        _environments = _project.Environments.OrderBy(e => e.DisplayOrder).ThenBy(e => e.Name).ToList();
+        await ReloadKeysAsync();
+    }
+
+    private async Task ReloadKeysAsync()
+    {
+        _keys = (await KeyPairs.ListAsync(ProjectId)).ToList();
+        StateHasChanged();
+    }
+
+    private async Task OnChangedAsync()
+    {
+        await ReloadKeysAsync();
+        if (_picker is not null) await _picker.RefreshAsync();
+    }
+
+    private string OpIcon => _op == KeyOp.Delete ? "trash" : "rotate";
+
+    private Task CopyPubAsync(KeyPairSummary k) => CopyAsync(k.PublicKeyOpenSsh!, k.Id, "pub");
+
+    private async Task CopyAsync(string text, Guid id, string what)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            _copiedId = id;
+            _copiedWhat = what == "pub" ? "Public key" : "Path";
+        }
+        catch { /* clipboard unavailable */ }
+    }
+
+    private async Task CopyPathAsync(KeyPairSummary k)
+    {
+        var detail = await KeyPairs.GetAsync(k.Id);
+        if (detail is not null)
+            await CopyAsync(detail.SecurePrivateKeyPath, k.Id, "path");
+    }
+
+    private void BeginRename(KeyPairSummary k)
+    {
+        _renameKey = k;
+        _renameText = k.Name;
+        _opError = null;
+    }
+
+    private async Task RenameAsync()
+    {
+        if (_renameKey is null) return;
+        var result = await KeyPairs.RenameAsync(_renameKey.Id, _renameText.Trim());
+        if (result.Succeeded)
+        {
+            _renameKey = null;
+            await OnChangedAsync();
+        }
+        else
+        {
+            _opError = result.Error;
+        }
+    }
+
+    private void BeginOp(KeyPairSummary k, KeyOp op)
+    {
+        _opKey = k;
+        _op = op;
+        _opError = null;
+        _opOutput.Clear();
+    }
+
+    private async Task RunOpAsync()
+    {
+        if (_opKey is null) return;
+        _opBusy = true;
+        _opError = null;
+        _opOutput.Clear();
+        StateHasChanged();
+        try
+        {
+            var progress = new Progress<ProcessOutputEvent>(e => { _opOutput.Add(e); StateHasChanged(); });
+            var result = _op == KeyOp.Delete
+                ? await KeyPairs.DeleteAsync(_opKey.Id, progress)
+                : await KeyPairs.RotateAsync(_opKey.Id, progress);
+            if (result.Succeeded)
+            {
+                _opKey = null;
+                await OnChangedAsync();
+            }
+            else
+            {
+                _opError = result.Error;
+            }
+        }
+        catch (Exception ex) { _opError = ex.Message; }
+        finally { _opBusy = false; StateHasChanged(); }
+    }
+
+    private void CloseOp()
+    {
+        if (_opBusy) return;
+        _opKey = null;
+        _opOutput.Clear();
+    }
+
+    private static string AlgoLabel(KeyPairSummary k) =>
+        k.Algorithm == KeyAlgorithm.Unknown ? "key" :
+        k.Bits is int b ? $"{k.Algorithm} {b}" : k.Algorithm.ToString();
+}

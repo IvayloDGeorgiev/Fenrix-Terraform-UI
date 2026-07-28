@@ -1,0 +1,97 @@
+@* Gated + audited private-key export. Requires the Settings toggle AND a typed key-name confirmation. See docs/28-key-pair-management.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Security
+@using Fenrix.IaCStudio.Contracts.Security
+@inject IKeyPairService Keys
+@inject IJSRuntime JS
+
+<Modal Title="Export private key" IconName="shield" Wide="@(_result?.Succeeded == true)" OnClose="Close">
+    <ChildContent>
+        @if (_result?.Succeeded == true)
+        {
+            <p class="fx-hint" style="margin-top:0;color:var(--fx-warn);display:flex;gap:8px;">
+                <span class="fx-ico"><Icon Name="alert" Size="14" /></span>
+                This is sensitive material. Copy it where you need it, then close — it is not kept on screen.
+            </p>
+            <textarea class="fx-input fx-mono" rows="12" readonly>@_result.PrivateKey</textarea>
+            <div style="display:flex;gap:8px;margin-top:8px;">
+                <button class="fx-btn ghost" @onclick="CopyAsync">
+                    <span class="fx-ico"><Icon Name="copy" Size="13" /></span> Copy
+                </button>
+                @if (_copied)
+                {
+                    <span class="fx-pill ok"><span class="fx-ico"><Icon Name="check" Size="12" /></span> Copied</span>
+                }
+            </div>
+        }
+        else
+        {
+            <p class="fx-hint" style="margin-top:0;">
+                Revealing a private key is gated and audited. Type the key name
+                <span class="fx-mono">@KeyName</span> to confirm.
+            </p>
+            <div class="fx-field">
+                <label>Confirm key name</label>
+                <input class="fx-input" placeholder="@KeyName" @bind="_confirm" @bind:event="oninput" disabled="@_busy" />
+            </div>
+            @if (_error is not null)
+            {
+                <div class="fx-hint" style="color:var(--fx-warn);display:flex;gap:8px;">
+                    <span class="fx-ico"><Icon Name="alert" Size="14" /></span> @_error
+                </div>
+            }
+        }
+    </ChildContent>
+    <Footer>
+        @if (_result?.Succeeded == true)
+        {
+            <button class="fx-btn accent" @onclick="Close">Done</button>
+        }
+        else
+        {
+            <button class="fx-btn ghost" @onclick="Close" disabled="@_busy">Cancel</button>
+            <button class="fx-btn danger" @onclick="ExportAsync" disabled="@(_busy || _confirm?.Trim() != KeyName)">
+                <span class="fx-ico"><Icon Name="eye" Size="13" /></span> Reveal
+            </button>
+        }
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public Guid KeyId { get; set; }
+    [Parameter] public string KeyName { get; set; } = "";
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string? _confirm;
+    private bool _busy, _copied;
+    private string? _error;
+    private KeyExportResult? _result;
+
+    private async Task ExportAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var result = await Keys.ExportPrivateKeyAsync(KeyId, _confirm?.Trim() ?? "");
+            if (result.Succeeded)
+                _result = result;
+            else
+                _error = result.Error;
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task CopyAsync()
+    {
+        if (_result?.PrivateKey is null) return;
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", _result.PrivateKey);
+            _copied = true;
+        }
+        catch { /* clipboard unavailable */ }
+    }
+
+    private Task Close() => OnClose.InvokeAsync();
+}

@@ -25,6 +25,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<CloudConnection> CloudConnections => Set<CloudConnection>();
     public DbSet<RepositoryConnection> RepositoryConnections => Set<RepositoryConnection>();
     public DbSet<SecretReference> SecretReferences => Set<SecretReference>();
+    public DbSet<KeyPair> KeyPairs => Set<KeyPair>();
     public DbSet<ProjectVersion> ProjectVersions => Set<ProjectVersion>();
     public DbSet<Deployment> Deployments => Set<Deployment>();
     public DbSet<CommandRun> CommandRuns => Set<CommandRun>();

@@ -28,6 +28,7 @@ namespace Fenrix_Terraform_UI
             // UI-layer services.
             builder.Services.AddScoped<ThemeService>();
             builder.Services.AddSingleton<IFolderPicker, FolderPicker>();
+            builder.Services.AddSingleton<IKeyFilePicker, KeyFilePicker>();
 
 #if DEBUG
             builder.Services.AddBlazorWebViewDeveloperTools();

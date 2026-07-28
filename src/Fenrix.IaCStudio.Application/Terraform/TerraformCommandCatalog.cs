@@ -44,6 +44,10 @@ public static class TerraformCommandCatalog
         TerraformCommandKind.Import => BuildImport(spec),
         TerraformCommandKind.PlanGenerateConfig => BuildPlanGenerateConfig(spec),
 
+        // ---- Phase 8.5: backend-less key-pair generation (self-contained throwaway dir) ----
+        TerraformCommandKind.KeyPairGenerateApply => BuildKeyPairGenerateApply(),
+        TerraformCommandKind.KeyPairGenerateDestroy => BuildKeyPairGenerateDestroy(),
+
         _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Kind, "Unsupported command kind.")
     };
 
@@ -213,6 +217,22 @@ public static class TerraformCommandCatalog
         args.Add(o.Id);
         return new CommandDefinition("import", args, TerraformRiskLevel.StateChanging);
     }
+
+    /// <summary>
+    /// <c>apply -input=false -auto-approve</c> for the throwaway key-generation working directory. No saved
+    /// plan is used because the dir has no project state/backend — it exists only to realise a
+    /// <c>tls_private_key</c> (+ optional <c>aws_key_pair</c>) so the private key can be captured. See
+    /// docs/28-key-pair-management.md.
+    /// </summary>
+    private static CommandDefinition BuildKeyPairGenerateApply() =>
+        new("apply", ["apply", "-input=false", "-auto-approve"], TerraformRiskLevel.StateChanging);
+
+    /// <summary>
+    /// <c>destroy -auto-approve</c> for the key-generation working directory — de-registers a cloud-registered
+    /// generated key (e.g. <c>aws_key_pair</c>) on delete/rotate. See docs/28-key-pair-management.md.
+    /// </summary>
+    private static CommandDefinition BuildKeyPairGenerateDestroy() =>
+        new("destroy", ["destroy", "-input=false", "-auto-approve"], TerraformRiskLevel.Destructive);
 
     private static CommandDefinition BuildPlanGenerateConfig(TerraformRunSpec spec)
     {

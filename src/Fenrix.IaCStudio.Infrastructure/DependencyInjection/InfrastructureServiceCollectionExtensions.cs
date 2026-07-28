@@ -124,6 +124,16 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ICloudConnectionProviderFactory, CloudConnectionProviderFactory>();
         services.AddScoped<ICloudEnvironmentComposer, CloudEnvironmentComposer>();
 
+        // Project secrets & key-pair management (Phase 8.5). Private keys are encrypted at rest with DPAPI
+        // (stateless singleton protector) and placed in the secure per-project keys folder by KeyStore; the
+        // generation runner drives Terraform (tls_private_key [+ aws_key_pair]) through the shared coordinator.
+        // The key service touches the DB / secret store and is scoped. Fenrix stores only metadata + a
+        // SecretReference — never the private bytes. See docs/28-key-pair-management.md, docs/11-secrets.md.
+        services.AddSingleton<IKeyProtector, DpapiKeyProtector>();
+        services.AddScoped<KeyStore>();
+        services.AddScoped<KeyGenerationRunner>();
+        services.AddScoped<IKeyPairService, KeyPairService>();
+
         return services;
     }
 }

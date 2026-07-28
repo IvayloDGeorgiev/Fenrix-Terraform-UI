@@ -221,14 +221,16 @@ _✅ Core complete. Cloud provider abstraction + Azure/AWS/Google adapters (offi
 - [x] Verified (MAUI not compiled here): `tests/terraform-fixtures/` real-format state/output/graph/workspace samples + Python reference port — 24/24 assertions (redaction, module recursion, DOT parsing, workspace current)
 - [ ] _Follow-ups:_ read-only inspection currently records a redacted history row per run (like Phase 4 `show -json`) rather than running silently (Phase 5 Git posture) — could be made silent if it proves noisy; `state show` details are derived from `show -json` (structured + redactable) rather than the text `state show` (the literal command is still previewable); graph renderer uses a simple longest-path layering (no crossing-minimisation) — fine for typical project sizes; serial/lineage only populated when present (raw state / `state pull`), not from `show -json`
 
-## Phase 8.5 — Project secrets & key-pair management
+## Phase 8.5 — Project secrets & key-pair management ✅ core complete
 
-- [ ] Per-project **SSH/EC2 key-pair** management: import existing keys into a secure app folder ([28](28-key-pair-management.md))
-- [ ] **Generate** key pairs via Terraform on the backend (`tls_private_key` + `aws_key_pair`), auto-capture the sensitive output into the secure store — no AWS-console round-trip
-- [ ] Encrypted-at-rest (DPAPI) private keys under `Data\keys\<projectId>\`; DB holds only metadata + a `SecretReference` ([11](11-secrets.md))
-- [ ] Keys section inside the project (view fingerprint/public key/source; copy public key or secure path; rotate/delete; gated+audited private-key export)
-- [ ] Reference-picker so `connection`/`provisioner`/`aws_key_pair` blocks point at a managed key
+- [x] Per-project **SSH/EC2 key-pair** management: import existing keys (PEM / OpenSSH / PuTTY `.ppk`) into a secure app folder ([28](28-key-pair-management.md))
+- [x] **Generate** key pairs via Terraform on the backend (`tls_private_key`, optional `aws_key_pair`), auto-capture the sensitive output into the secure store — no AWS-console round-trip (local default + optional cloud register)
+- [x] Encrypted-at-rest (DPAPI) private keys under `Data\keys\<projectId>\`; DB holds only a `KeyPair` metadata row + a `SecretReference` ([11](11-secrets.md))
+- [x] Keys section inside the project (view fingerprint/public key/source; copy public key or secure path; rename/rotate/delete; gated+audited private-key export behind a Settings toggle + typed key-name confirm)
+- [x] Reference-picker so `connection`/`provisioner`/`aws_key_pair` blocks point at a managed key (copy + HCL snippet + insert into a chosen `.tf` file)
+- [x] **Needs one migration:** `AddKeyPairs` (new `KeyPair` entity → table `KeyPairs`). No other schema change.
 - [ ] _Stretch:_ "Connect" (SSH to instance/bastion using a managed key); tfvars secret references; policy/cost/drift add-ons (see [28](28-key-pair-management.md))
+- [ ] _Deferred:_ full PPK conversion for encrypted / non-RSA keys, and Ed25519-from-bare-PEM public derivation (dependency-free build; those keys still import + store, public shown when derivable)
 
 ## Phase 9.5 — CI/CD Pipelines & Deployments
 
@@ -304,3 +306,4 @@ Turn the plain `<textarea>` file editor on the project Files page into a profess
 | 2026-07-24 | Per-environment operation lock is an on-disk lock file in `.fenrix/locks/` (crash-safe, PID-staleness, force-releasable) | [06](06-plan-apply-safety.md) |
 | 2026-07-24 | Keep every saved plan as its own file so any reviewed plan stays exactly applyable (ADR-0003); apply uses `apply -json` for structured per-resource progress | [06](06-plan-apply-safety.md) |
 | 2026-07-24 | `AppInitializer` adopts a legacy `EnsureCreated` DB (create missing tables + stamp migration history) instead of requiring a reset — upgrades never lose data | [12](12-database-design.md) |
+| 2026-07-28 | Managed private keys are DPAPI-encrypted under `Data\keys\<projectId>\` (never in the project/git); DB holds only a `KeyPair` row + `SecretReference`. Import reads the public key without decrypting the private half; generation captures it from Terraform outputs. Dependency-free SSH/PPK handling (no BouncyCastle) — Ivo's call | [28](28-key-pair-management.md), [11](11-secrets.md) |

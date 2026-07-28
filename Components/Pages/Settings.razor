@@ -44,6 +44,17 @@
             </span>
         </span>
     </label>
+
+    <label style="display:flex;align-items:flex-start;gap:9px;font-size:13px;cursor:pointer;margin-top:12px;">
+        <input type="checkbox" checked="@_allowKeyExport" @onchange="OnAllowKeyExportChanged" style="margin-top:2px;" />
+        <span>
+            Allow private-key export
+            <span style="display:block;color:var(--fx-faint);font-size:12px;margin-top:2px;">
+                Off by default. When off, managed private keys can never be revealed or exported. Even when on,
+                export still requires typing the key name and is written to the audit history.
+            </span>
+        </span>
+    </label>
 </div>
 
 <div class="fx-card">
@@ -61,6 +72,7 @@
 @code {
     private bool _reducedMotion;
     private bool _allowInAppDelete;
+    private bool _allowKeyExport;
 
     protected override void OnInitialized() => Theme.Changed += OnChanged;
 
@@ -68,6 +80,7 @@
     {
         _reducedMotion = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.ReducedMotion, false);
         _allowInAppDelete = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.AllowInAppDelete, false);
+        _allowKeyExport = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.AllowPrivateKeyExport, false);
     }
 
     private string Active(string theme) => Theme.Theme == theme ? "accent" : "";
@@ -85,6 +98,12 @@
     {
         _allowInAppDelete = e.Value is true;
         await SettingsSvc.SetAsync(FenrixSettingKeys.AllowInAppDelete, _allowInAppDelete.ToString());
+    }
+
+    private async Task OnAllowKeyExportChanged(ChangeEventArgs e)
+    {
+        _allowKeyExport = e.Value is true;
+        await SettingsSvc.SetAsync(FenrixSettingKeys.AllowPrivateKeyExport, _allowKeyExport.ToString());
     }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);

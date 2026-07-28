@@ -1,0 +1,174 @@
+@* Reusable picker: point a connection / provisioner / aws_key_pair block at a managed key — copy the public
+   key or secure path, copy a ready-made HCL snippet, or insert it into a project .tf file. See docs/28-key-pair-management.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Files
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Abstractions.Security
+@using Fenrix.IaCStudio.Contracts.Files
+@using Fenrix.IaCStudio.Contracts.Security
+@inject IKeyPairService Keys
+@inject IProjectService Projects
+@inject IFileTreeService FileTree
+@inject IJSRuntime JS
+
+<div class="fx-card">
+    <div class="fx-panel-head">
+        <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="link" Size="16" /></span>
+        <span style="flex:1;font-weight:500;">Reference a managed key</span>
+    </div>
+
+    @if (_keys.Count == 0)
+    {
+        <p class="fx-hint" style="margin:0;">No keys yet. Import or generate one to reference it here.</p>
+    }
+    else
+    {
+        <div style="display:flex;gap:12px;">
+            <div class="fx-field" style="flex:1;">
+                <label>Key</label>
+                <select class="fx-select" value="@_keyId" @onchange="OnKeyChanged">
+                    @foreach (var k in _keys)
+                    {
+                        <option value="@k.Id">@k.Name (@k.Algorithm@(k.Bits is int b ? $" {b}" : ""))</option>
+                    }
+                </select>
+            </div>
+            <div class="fx-field" style="flex:1;">
+                <label>Reference</label>
+                <select class="fx-select" @bind="_kind" @bind:after="RebuildAsync">
+                    <option value="@KeyReferenceKind.Connection">connection block</option>
+                    <option value="@KeyReferenceKind.Provisioner">remote-exec provisioner</option>
+                    <option value="@KeyReferenceKind.AwsKeyPair">aws_key_pair resource</option>
+                    <option value="@KeyReferenceKind.PublicKey">OpenSSH public key</option>
+                    <option value="@KeyReferenceKind.SecurePath">secure private-key path</option>
+                </select>
+            </div>
+        </div>
+
+        @if (_snippet is not null)
+        {
+            <textarea class="fx-input fx-mono" rows="@Rows" readonly>@_snippet.Content</textarea>
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center;">
+                <button class="fx-btn ghost" @onclick="CopyAsync">
+                    <span class="fx-ico"><Icon Name="copy" Size="13" /></span> Copy
+                </button>
+                @if (_tfFiles.Count > 0)
+                {
+                    <select class="fx-select" style="width:auto;" @bind="_insertPath">
+                        <option value="">Insert into…</option>
+                        @foreach (var f in _tfFiles)
+                        {
+                            <option value="@f.RelativePath">@f.RelativePath</option>
+                        }
+                    </select>
+                    <button class="fx-btn ghost" @onclick="InsertAsync" disabled="@string.IsNullOrEmpty(_insertPath)">
+                        <span class="fx-ico"><Icon Name="download" Size="13" /></span> Insert
+                    </button>
+                }
+                @if (_status is not null)
+                {
+                    <span class="fx-pill ok"><span class="fx-ico"><Icon Name="check" Size="12" /></span> @_status</span>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private List<KeyPairSummary> _keys = [];
+    private List<FileTreeNode> _tfFiles = [];
+    private string _projectRoot = "";
+    private Guid _keyId;
+    private KeyReferenceKind _kind = KeyReferenceKind.Connection;
+    private KeyReferenceSnippet? _snippet;
+    private string _insertPath = "";
+    private string? _status;
+
+    private int Rows => _kind switch
+    {
+        KeyReferenceKind.PublicKey or KeyReferenceKind.SecurePath => 2,
+        KeyReferenceKind.Provisioner => 9,
+        _ => 6
+    };
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _keys = (await Keys.ListAsync(ProjectId)).ToList();
+        _keyId = _keys.FirstOrDefault()?.Id ?? Guid.Empty;
+
+        var project = await Projects.GetAsync(ProjectId);
+        if (project is not null)
+        {
+            _projectRoot = project.RootPath;
+            try
+            {
+                var tree = await FileTree.GetTreeAsync(ProjectId, project.RootPath);
+                _tfFiles = Flatten(tree)
+                    .Where(n => !n.IsDirectory && !n.IsIgnored && n.Name.EndsWith(".tf", StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(n => n.RelativePath)
+                    .ToList();
+            }
+            catch { /* tree unavailable — insert simply not offered */ }
+        }
+        await RebuildAsync();
+    }
+
+    /// <summary>Re-loads the key list (called by the host after import/generate/delete).</summary>
+    public async Task RefreshAsync() => await LoadAsync();
+
+    private async Task OnKeyChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id))
+            _keyId = id;
+        await RebuildAsync();
+    }
+
+    private async Task RebuildAsync()
+    {
+        _status = null;
+        _snippet = _keyId == Guid.Empty ? null : await Keys.BuildReferenceAsync(_keyId, _kind);
+        StateHasChanged();
+    }
+
+    private async Task CopyAsync()
+    {
+        if (_snippet is null) return;
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", _snippet.Content);
+            _status = "Copied";
+        }
+        catch { /* clipboard unavailable */ }
+    }
+
+    private async Task InsertAsync()
+    {
+        if (_snippet is null || string.IsNullOrEmpty(_insertPath) || string.IsNullOrEmpty(_projectRoot))
+            return;
+        var node = _tfFiles.FirstOrDefault(f => f.RelativePath == _insertPath);
+        if (node is null) return;
+        try
+        {
+            var existing = File.Exists(node.FullPath) ? await File.ReadAllTextAsync(node.FullPath) : "";
+            var sep = existing.Length > 0 && !existing.EndsWith('\n') ? "\n\n" : "\n";
+            var updated = existing + sep + _snippet.Content + "\n";
+            await FileTree.WriteFileAsync(ProjectId, _projectRoot, _insertPath, updated);
+            _status = $"Inserted into {_insertPath}";
+        }
+        catch (Exception ex)
+        {
+            _status = $"Failed: {ex.Message}";
+        }
+    }
+
+    private static IEnumerable<FileTreeNode> Flatten(FileTreeNode node)
+    {
+        yield return node;
+        foreach (var child in node.Children)
+            foreach (var d in Flatten(child))
+                yield return d;
+    }
+}

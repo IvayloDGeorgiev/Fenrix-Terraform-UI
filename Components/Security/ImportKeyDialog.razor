@@ -1,0 +1,95 @@
+@* Import an existing private key (PEM / OpenSSH / PuTTY .ppk) into the secure store. See docs/28-key-pair-management.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Security
+@using Fenrix.IaCStudio.Contracts.Security
+@inject IKeyPairService Keys
+@inject IKeyFilePicker FilePicker
+
+<Modal Title="Import a key pair" IconName="key" OnClose="Close">
+    <ChildContent>
+        <p class="fx-hint" style="margin-top:0;">
+            Fenrix copies the key into an encrypted, app-managed store (DPAPI) outside the project folder, so it
+            can never be committed. The original file is left untouched.
+        </p>
+
+        <div class="fx-field">
+            <label>Name</label>
+            <input class="fx-input" placeholder="app-bastion" @bind="_name" @bind:event="oninput" disabled="@_busy" />
+        </div>
+
+        <div class="fx-field">
+            <label>Private key file</label>
+            <div style="display:flex;gap:8px;">
+                <input class="fx-input fx-mono" style="flex:1;" placeholder="C:\keys\app-bastion.pem"
+                       @bind="_path" @bind:event="oninput" disabled="@_busy" />
+                @if (FilePicker.IsSupported)
+                {
+                    <button class="fx-btn ghost" @onclick="BrowseAsync" disabled="@_busy">Browse…</button>
+                }
+            </div>
+            <p class="fx-hint" style="margin:6px 0 0;">Accepts PEM, OpenSSH, or PuTTY <span class="fx-mono">.ppk</span> private keys.</p>
+        </div>
+
+        <div class="fx-field">
+            <label>Comment <span style="color:var(--fx-faint);">(optional)</span></label>
+            <input class="fx-input" placeholder="imported from laptop" @bind="_comment" @bind:event="oninput" disabled="@_busy" />
+        </div>
+
+        @if (_error is not null)
+        {
+            <div class="fx-hint" style="color:var(--fx-warn);display:flex;gap:8px;margin-top:4px;">
+                <span class="fx-ico"><Icon Name="alert" Size="14" /></span> @_error
+            </div>
+        }
+    </ChildContent>
+    <Footer>
+        <button class="fx-btn ghost" @onclick="Close" disabled="@_busy">Cancel</button>
+        <button class="fx-btn accent" @onclick="ImportAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_name) || string.IsNullOrWhiteSpace(_path))">
+            <span class="fx-ico"><Icon Name="download" Size="13" /></span> Import
+        </button>
+    </Footer>
+</Modal>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnImported { get; set; }
+
+    private string _name = "", _path = "", _comment = "";
+    private bool _busy;
+    private string? _error;
+
+    private async Task BrowseAsync()
+    {
+        var picked = await FilePicker.PickFileAsync();
+        if (!string.IsNullOrWhiteSpace(picked))
+        {
+            _path = picked;
+            if (string.IsNullOrWhiteSpace(_name))
+                _name = Path.GetFileNameWithoutExtension(picked);
+        }
+    }
+
+    private async Task ImportAsync()
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            var result = await Keys.ImportAsync(new ImportKeyRequest(ProjectId, _name.Trim(), _path.Trim(),
+                string.IsNullOrWhiteSpace(_comment) ? null : _comment.Trim()));
+            if (result.Succeeded)
+            {
+                await OnImported.InvokeAsync();
+                await OnClose.InvokeAsync();
+            }
+            else
+            {
+                _error = result.Error;
+            }
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private Task Close() => OnClose.InvokeAsync();
+}

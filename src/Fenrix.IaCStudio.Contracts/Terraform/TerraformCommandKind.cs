@@ -75,5 +75,21 @@ public enum TerraformCommandKind
     /// 1.5+ <c>import{}</c> workflow: with import blocks present in config, this writes generated HCL for the
     /// imported resources. No state is changed (it is a plan). See docs/22-terraform-files-model.md.
     /// </summary>
-    PlanGenerateConfig = 21
+    PlanGenerateConfig = 21,
+
+    /// <summary>
+    /// <c>terraform apply -auto-approve</c> in a <em>self-contained, throwaway</em> working directory used
+    /// only for backend-less key-pair generation (docs/28-key-pair-management.md). This is deliberately
+    /// outside the saved-plan-only-apply rule (docs/06), which governs applies to a project's real state: here
+    /// there is no project state or backend — the dir is created, applied, its sensitive output captured into
+    /// the secure store, and (for local keys) discarded. Never used for project environments.
+    /// </summary>
+    KeyPairGenerateApply = 22,
+
+    /// <summary>
+    /// <c>terraform destroy -auto-approve</c> in the self-contained working directory kept for a
+    /// cloud-registered generated key — used to de-register the cloud object (e.g. <c>aws_key_pair</c>) when
+    /// the key is deleted or rotated. See docs/28-key-pair-management.md.
+    /// </summary>
+    KeyPairGenerateDestroy = 23
 }

@@ -4,6 +4,7 @@ using Fenrix.IaCStudio.Domain.Environments;
 using Fenrix.IaCStudio.Domain.Execution;
 using Fenrix.IaCStudio.Domain.Files;
 using Fenrix.IaCStudio.Domain.Projects;
+using Fenrix.IaCStudio.Domain.Security;
 using Fenrix.IaCStudio.Domain.Settings;
 using Fenrix.IaCStudio.Domain.Terraform;
 using Fenrix.IaCStudio.Domain.Versioning;
@@ -219,6 +220,28 @@ internal sealed class SavedPlanConfiguration : IEntityTypeConfiguration<SavedPla
         // Browsed newest-first, scoped by project and environment.
         b.HasIndex(x => new { x.ProjectId, x.CreatedAt });
         b.HasIndex(x => new { x.EnvironmentId, x.CreatedAt });
+    }
+}
+
+internal sealed class KeyPairConfiguration : IEntityTypeConfiguration<KeyPair>
+{
+    public void Configure(EntityTypeBuilder<KeyPair> b)
+    {
+        b.ToTable("KeyPairs");
+        b.HasKey(x => x.Id);
+        b.Property(x => x.Name).IsRequired().HasMaxLength(200);
+        b.Property(x => x.EncryptedFilePath).IsRequired().HasMaxLength(1024);
+        b.Property(x => x.PublicKeyOpenSsh).HasMaxLength(4096);
+        b.Property(x => x.Fingerprint).HasMaxLength(120);
+        b.Property(x => x.Comment).HasMaxLength(400);
+        b.Property(x => x.CloudKeyName).HasMaxLength(255);
+        b.Property(x => x.RegistrationWorkingDir).HasMaxLength(1024);
+        // Enum names kept human-readable in the table (as with SavedPlan.Mode / CommandRun.Status).
+        b.Property(x => x.Algorithm).HasConversion<string>().HasMaxLength(20);
+        b.Property(x => x.Source).HasConversion<string>().HasMaxLength(20);
+        b.Property(x => x.Format).HasConversion<string>().HasMaxLength(20);
+        // Browsed per project, newest first.
+        b.HasIndex(x => new { x.ProjectId, x.CreatedAt });
     }
 }
 
