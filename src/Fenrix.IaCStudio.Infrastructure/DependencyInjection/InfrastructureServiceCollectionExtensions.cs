@@ -1,4 +1,5 @@
 using Fenrix.IaCStudio.Application.Abstractions;
+using Fenrix.IaCStudio.Application.Abstractions.Authoring;
 using Fenrix.IaCStudio.Application.Abstractions.Cloud;
 using Fenrix.IaCStudio.Application.Abstractions.Connections;
 using Fenrix.IaCStudio.Application.Abstractions.Deployments;
@@ -145,6 +146,15 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IDeploymentRecorder, DeploymentRecorder>();
         services.AddScoped<IPipelineService, PipelineService>();
         services.AddScoped<IDeploymentService, DeploymentService>();
+
+        // Visual resource builder (Phase 10). The schema service captures & caches provider schemas
+        // (read-only providers schema -json, offline cache under Cache/terraform-schemas); the authoring
+        // service writes schema-driven / form-authored HCL to real .tf files through the atomic-write +
+        // file-history path and splices spans for literal round-trip edits. Both touch the process runner /
+        // filesystem and are scoped. No new DB migration (files are the source of truth).
+        // See docs/07-visual-builder.md, docs/22-terraform-files-model.md.
+        services.AddScoped<IProviderSchemaService, ProviderSchemaService>();
+        services.AddScoped<IConfigAuthoringService, ConfigAuthoringService>();
 
         return services;
     }

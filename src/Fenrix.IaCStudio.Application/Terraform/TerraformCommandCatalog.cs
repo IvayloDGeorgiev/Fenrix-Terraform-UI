@@ -48,6 +48,9 @@ public static class TerraformCommandCatalog
         TerraformCommandKind.KeyPairGenerateApply => BuildKeyPairGenerateApply(),
         TerraformCommandKind.KeyPairGenerateDestroy => BuildKeyPairGenerateDestroy(),
 
+        // ---- Phase 10: visual resource builder ----
+        TerraformCommandKind.ProvidersSchema => BuildProvidersSchema(),
+
         _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Kind, "Unsupported command kind.")
     };
 
@@ -233,6 +236,13 @@ public static class TerraformCommandCatalog
     /// </summary>
     private static CommandDefinition BuildKeyPairGenerateDestroy() =>
         new("destroy", ["destroy", "-input=false", "-auto-approve"], TerraformRiskLevel.Destructive);
+
+    /// <summary>
+    /// <c>providers schema -json</c> — the subcommand is <c>providers</c>. Read-only: it prints the installed
+    /// providers' schemas (no infrastructure touched, no secret values). See docs/07-visual-builder.md.
+    /// </summary>
+    private static CommandDefinition BuildProvidersSchema() =>
+        new("providers", ["providers", "schema", "-json"], TerraformRiskLevel.ReadOnly);
 
     private static CommandDefinition BuildPlanGenerateConfig(TerraformRunSpec spec)
     {

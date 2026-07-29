@@ -1,0 +1,193 @@
+@* Round-trip editor: open a .tf file, pick a block, edit its simple literal values, and save. Complex
+   expressions and everything outside the edited spans are preserved byte-for-byte (in-place span splicing via
+   IConfigAuthoringService). See docs/07-visual-builder.md ("edit existing simple blocks / preserve unsupported HCL"). *@
+@using Fenrix.IaCStudio.Application.Abstractions.Authoring
+@using Fenrix.IaCStudio.Application.Authoring
+@using Fenrix.IaCStudio.Application.Hcl
+@inject IConfigAuthoringService Authoring
+
+<div class="fx-card">
+    <div class="fx-field">
+        <label>File</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+            <select class="fx-select" style="max-width:280px;" value="@_selectedFile" @onchange="OnFileChanged">
+                <option value="">Select a file…</option>
+                @foreach (var f in _files)
+                {
+                    <option value="@f">@f</option>
+                }
+            </select>
+            <button class="fx-btn sm" @onclick="ReloadFileAsync" disabled="@string.IsNullOrEmpty(_selectedFile)">
+                <span class="fx-ico"><Icon Name="refresh" Size="12" /></span> Reload
+            </button>
+        </div>
+    </div>
+
+    @if (_file is not null)
+    {
+        <div class="fx-field">
+            <label>Block</label>
+            @if (_file.Blocks.Count == 0)
+            {
+                <div class="fx-hint" style="margin:0;">No top-level blocks found in this file.</div>
+            }
+            else
+            {
+                <select class="fx-select" value="@_selectedBlockIndex" @onchange="OnBlockChanged">
+                    <option value="-1">Select a block…</option>
+                    @foreach (var b in _file.Blocks)
+                    {
+                        <option value="@b.Index">@b.Descriptor (line @b.StartLine)</option>
+                    }
+                </select>
+            }
+        </div>
+    }
+</div>
+
+@if (_selectedHandle is not null)
+{
+    <div class="fx-card">
+        <div class="fx-panel-head">
+            <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="pencil" Size="16" /></span>
+            <span style="flex:1;font-weight:500;">@_selectedHandle.Descriptor</span>
+            <button class="fx-btn accent" @onclick="SaveAsync" disabled="@(_saving || !HasChanges)">
+                <span class="fx-ico"><Icon Name="check" Size="13" /></span> @(_saving ? "Saving…" : "Save changes")
+            </button>
+        </div>
+
+        @if (_args.Count == 0)
+        {
+            <div class="fx-hint" style="margin:0;">This block has no direct arguments.</div>
+        }
+        @foreach (var a in _args)
+        {
+            <div class="fx-schema-row">
+                <div class="fx-schema-rowhead">
+                    <span class="fx-schema-name fx-mono">@a.Arg.Name</span>
+                    @if (!a.Arg.IsSimple)
+                    {
+                        <span class="fx-pill" title="Complex expression — preserved as raw source">expression</span>
+                    }
+                </div>
+                <div class="fx-schema-control">
+                    @if (a.Arg.IsSimple)
+                    {
+                        <input class="fx-input fx-mono" value="@a.Text" @onchange="e => SetText(a, e)" />
+                    }
+                    else
+                    {
+                        <code class="fx-rawval">@a.Arg.RawValueText</code>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (_result is not null)
+        {
+            <span class="fx-pill @(_result.Success ? "ok" : "fail")" style="margin-top:8px;">
+                @(_result.Success ? $"Saved {_result.RelativePath}" : _result.Error)
+            </span>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private sealed class ArgEdit
+    {
+        public required HclParsedArgument Arg { get; init; }
+        public string Text { get; set; } = "";
+        public string Initial { get; set; } = "";
+    }
+
+    private List<string> _files = [];
+    private string _selectedFile = "";
+    private AuthoringFile? _file;
+    private int _selectedBlockIndex = -1;
+    private HclBlockHandle? _selectedHandle;
+    private readonly List<ArgEdit> _args = [];
+    private bool _saving;
+    private AuthoringWriteResult? _result;
+    private Guid _loadedEnv;
+
+    private bool HasChanges => _args.Any(a => a.Arg.IsSimple && a.Text != a.Initial);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedEnv == EnvironmentId) return;
+        _loadedEnv = EnvironmentId;
+        _files = (await Authoring.ListConfigFilesAsync(ProjectId, EnvironmentId)).ToList();
+    }
+
+    private async Task OnFileChanged(ChangeEventArgs e)
+    {
+        _selectedFile = e.Value?.ToString() ?? "";
+        await ReloadFileAsync();
+    }
+
+    private async Task ReloadFileAsync()
+    {
+        _result = null;
+        _selectedBlockIndex = -1;
+        _selectedHandle = null;
+        _args.Clear();
+        _file = string.IsNullOrEmpty(_selectedFile) ? null : await Authoring.ReadFileAsync(ProjectId, _selectedFile);
+    }
+
+    private void OnBlockChanged(ChangeEventArgs e)
+    {
+        _result = null;
+        _selectedBlockIndex = int.TryParse(e.Value?.ToString(), out var i) ? i : -1;
+        _selectedHandle = _file?.Blocks.FirstOrDefault(b => b.Index == _selectedBlockIndex);
+        _args.Clear();
+        if (_file is null || _selectedHandle is null) return;
+
+        foreach (var arg in HclReader.ReadArguments(_file.Content, _selectedHandle))
+            _args.Add(new ArgEdit { Arg = arg, Text = arg.RawValueText, Initial = arg.RawValueText });
+    }
+
+    private void SetText(ArgEdit a, ChangeEventArgs e) => a.Text = e.Value?.ToString() ?? "";
+
+    private async Task SaveAsync()
+    {
+        if (_file is null || _selectedHandle is null) return;
+        var edits = _args
+            .Where(a => a.Arg.IsSimple && a.Text != a.Initial)
+            .Select(a => new LiteralEdit(a.Arg.ValueStart, a.Arg.ValueEnd, a.Text))
+            .ToList();
+        if (edits.Count == 0) return;
+
+        _saving = true;
+        StateHasChanged();
+        try
+        {
+            _result = await Authoring.ApplyLiteralEditsAsync(ProjectId, _selectedFile, edits);
+            if (_result.Success)
+                await ReloadFileAsyncKeepSelection();
+        }
+        catch (Exception ex)
+        {
+            _result = AuthoringWriteResult.Fail(_selectedFile, ex.Message);
+        }
+        finally
+        {
+            _saving = false;
+            StateHasChanged();
+        }
+    }
+
+    // Re-read the file (offsets shift after an edit) and re-open the same block by index.
+    private async Task ReloadFileAsyncKeepSelection()
+    {
+        var index = _selectedBlockIndex;
+        _file = await Authoring.ReadFileAsync(ProjectId, _selectedFile);
+        _selectedHandle = _file?.Blocks.FirstOrDefault(b => b.Index == index);
+        _args.Clear();
+        if (_file is null || _selectedHandle is null) return;
+        foreach (var arg in HclReader.ReadArguments(_file.Content, _selectedHandle))
+            _args.Add(new ArgEdit { Arg = arg, Text = arg.RawValueText, Initial = arg.RawValueText });
+    }
+}

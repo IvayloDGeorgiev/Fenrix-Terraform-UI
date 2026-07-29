@@ -10,6 +10,9 @@
             <button class="fx-ribbon-btn @(Active == ProjectPage.Files ? "active" : "")" @onclick='() => Go("")' title="Files">
                 <Icon Name="folder" Size="14" /> <span>Files</span>
             </button>
+            <button class="fx-ribbon-btn @(Active == ProjectPage.Build ? "active" : "")" @onclick='() => Go("/build")' title="Visual resource builder">
+                <Icon Name="blocks" Size="14" /> <span>Build</span>
+            </button>
             <button class="fx-ribbon-btn @(Active == ProjectPage.Terraform ? "active" : "")" @onclick='() => Go("/terraform")' title="Terraform commands">
                 <Icon Name="terminal" Size="14" /> <span>Terraform</span>
             </button>
@@ -48,7 +51,7 @@
 </div>
 
 @code {
-    public enum ProjectPage { Files, Terraform, Plan, Pipelines, Inspect, Keys, SourceControl }
+    public enum ProjectPage { Files, Build, Terraform, Plan, Pipelines, Inspect, Keys, SourceControl }
 
     [Parameter] public Guid ProjectId { get; set; }
     [Parameter] public string Name { get; set; } = "";
@@ -65,6 +68,7 @@
     private string ActiveLabel => Active switch
     {
         ProjectPage.Files => "Files",
+        ProjectPage.Build => "Build",
         ProjectPage.Terraform => "Terraform",
         ProjectPage.Plan => "Plan & apply",
         ProjectPage.Pipelines => "Pipelines",

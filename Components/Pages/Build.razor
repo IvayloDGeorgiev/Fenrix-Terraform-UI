@@ -1,0 +1,225 @@
+@page "/projects/{ProjectId:guid}/build"
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Environments
+@using Fenrix.IaCStudio.Domain.Projects
+@inject IProjectService Projects
+@inject IProviderSchemaService Schemas
+
+@if (_project is null)
+{
+    <div class="fx-card" style="text-align:center;color:var(--fx-dim);">@(_loading ? "Loading…" : "Project not found.")</div>
+}
+else
+{
+    <ProjectHeader ProjectId="ProjectId" Name="@_project.Name" Active="ProjectHeader.ProjectPage.Build" Trail="@(SelectedEnvironment?.Name)" />
+
+    <div class="fx-card" style="margin-bottom:16px;">
+        <div class="fx-field" style="margin-bottom:0;">
+            <label>Environment</label>
+            <select class="fx-select" value="@_envId" @onchange="OnEnvChanged">
+                @foreach (var env in _environments)
+                {
+                    <option value="@env.Id">@env.Name@(env.IsProduction ? " (production)" : "")</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    @if (SelectedEnvironment is null)
+    {
+        <div class="fx-card"><div class="fx-hint" style="margin:0;">Select an environment to author configuration.</div></div>
+    }
+    else
+    {
+        <div class="fx-card" style="margin-bottom:16px;">
+            <div class="fx-panel-head">
+                <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="database" Size="16" /></span>
+                <span style="flex:1;font-weight:500;">Provider schemas</span>
+                <button class="fx-btn sm" @onclick="RefreshSchemasAsync" disabled="@_capturing">
+                    <span class="fx-ico"><Icon Name="refresh" Size="12" /></span> @(_capturing ? "Capturing…" : (_cacheInfo.Exists ? "Refresh" : "Capture"))
+                </button>
+            </div>
+            @if (_cacheInfo.Exists)
+            {
+                <div class="fx-hint" style="margin:0;">
+                    @_cacheInfo.ProviderCount provider(s) cached @(_cacheInfo.CapturedAt is { } at ? $"· captured {at.LocalDateTime:g}" : "").
+                    Re-run <span class="fx-mono">providers schema</span> after <span class="fx-mono">init -upgrade</span> to refresh.
+                </div>
+            }
+            else
+            {
+                <div class="fx-hint" style="margin:0;">No schemas cached yet. Capture runs <span class="fx-mono">terraform providers schema -json</span> (requires <span class="fx-mono">init</span> to have run).</div>
+            }
+            @if (_captureError is not null)
+            {
+                <span class="fx-pill fail" style="margin-top:8px;">@_captureError</span>
+            }
+            @if (_output.Count > 0)
+            {
+                <div style="margin-top:10px;"><OutputConsole Lines="_output" /></div>
+            }
+        </div>
+
+        <div class="fx-tabs" style="margin-bottom:16px;flex-wrap:wrap;">
+            @foreach (var tab in _tabs)
+            {
+                <button class="fx-tab @(_tab == tab ? "active" : "")" @onclick="() => _tab = tab">@TabLabel(tab)</button>
+            }
+        </div>
+
+        <div @key="TabKey">
+            @switch (_tab)
+            {
+                case BuildTab.Resources:
+                    <ResourceBuilderPanel ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" IsDataSource="false" Schema="_schema" />
+                    break;
+                case BuildTab.Data:
+                    <ResourceBuilderPanel ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" IsDataSource="true" Schema="_schema" />
+                    break;
+                case BuildTab.Variables:
+                    <VariableFormPanel ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                    break;
+                case BuildTab.Outputs:
+                    <OutputFormPanel ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                    break;
+                case BuildTab.Locals:
+                    <LocalsFormPanel ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                    break;
+                case BuildTab.Providers:
+                    <ProviderFormPanel ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" Schema="_schema" />
+                    break;
+                case BuildTab.Settings:
+                    <TerraformSettingsPanel ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                    break;
+                case BuildTab.Modules:
+                    <ModuleFormPanel ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                    break;
+                case BuildTab.Tfvars:
+                    <TfvarsPanel ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                    break;
+                case BuildTab.Edit:
+                    <EditBlockPanel ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
+                    break;
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private enum BuildTab { Resources, Data, Variables, Outputs, Locals, Providers, Settings, Modules, Tfvars, Edit }
+
+    private static readonly BuildTab[] _tabs =
+        [BuildTab.Resources, BuildTab.Data, BuildTab.Variables, BuildTab.Outputs, BuildTab.Locals,
+         BuildTab.Providers, BuildTab.Settings, BuildTab.Modules, BuildTab.Tfvars, BuildTab.Edit];
+
+    private InfrastructureProject? _project;
+    private List<ProjectEnvironment> _environments = [];
+    private Guid _envId;
+    private BuildTab _tab = BuildTab.Resources;
+    private bool _loading = true;
+    private Guid _loadedId;
+
+    private ProviderSchemaSet _schema = ProviderSchemaSet.Empty;
+    private ProviderSchemaCacheInfo _cacheInfo = ProviderSchemaCacheInfo.Missing;
+    private bool _capturing;
+    private string? _captureError;
+    private readonly List<ProcessOutputEvent> _output = [];
+
+    private ProjectEnvironment? SelectedEnvironment => _environments.FirstOrDefault(e => e.Id == _envId);
+
+    // Re-create the active panel when the environment or tab changes.
+    private string TabKey => $"{_envId}:{_tab}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == ProjectId) return;
+        _loadedId = ProjectId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _project = await Projects.GetAsync(ProjectId);
+        _loading = false;
+        if (_project is null) return;
+        _environments = _project.Environments.OrderBy(e => e.DisplayOrder).ThenBy(e => e.Name).ToList();
+        _envId = _environments.FirstOrDefault()?.Id ?? Guid.Empty;
+        await LoadSchemaAsync();
+    }
+
+    private async Task LoadSchemaAsync()
+    {
+        if (SelectedEnvironment is null)
+        {
+            _schema = ProviderSchemaSet.Empty;
+            _cacheInfo = ProviderSchemaCacheInfo.Missing;
+            return;
+        }
+        _schema = await Schemas.GetCachedAsync(ProjectId, _envId);
+        _cacheInfo = await Schemas.GetCacheInfoAsync(ProjectId, _envId);
+    }
+
+    private async Task OnEnvChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id))
+            _envId = id;
+        _output.Clear();
+        _captureError = null;
+        await LoadSchemaAsync();
+    }
+
+    private async Task RefreshSchemasAsync()
+    {
+        if (SelectedEnvironment is null) return;
+        _capturing = true;
+        _captureError = null;
+        _output.Clear();
+        StateHasChanged();
+        try
+        {
+            // The schema JSON is large and lands on stdout; only surface stderr (e.g. the "run init" hint) so
+            // the console stays readable.
+            var progress = new Progress<ProcessOutputEvent>(ev =>
+            {
+                if (ev.Stream == OutputStream.Stderr) { _output.Add(ev); StateHasChanged(); }
+            });
+            var result = await Schemas.RefreshAsync(ProjectId, _envId, progress);
+            if (result.BlockReason is not null)
+                _captureError = result.BlockReason;
+            else if (!result.Succeeded)
+                _captureError = "Could not read provider schemas. Run terraform init for this environment first.";
+            else
+                _schema = result.Schema;
+            _cacheInfo = await Schemas.GetCacheInfoAsync(ProjectId, _envId);
+        }
+        catch (Exception ex)
+        {
+            _captureError = ex.Message;
+        }
+        finally
+        {
+            _capturing = false;
+            StateHasChanged();
+        }
+    }
+
+    private static string TabLabel(BuildTab t) => t switch
+    {
+        BuildTab.Resources => "Resources",
+        BuildTab.Data => "Data sources",
+        BuildTab.Variables => "Variables",
+        BuildTab.Outputs => "Outputs",
+        BuildTab.Locals => "Locals",
+        BuildTab.Providers => "Providers",
+        BuildTab.Settings => "Settings & backend",
+        BuildTab.Modules => "Modules",
+        BuildTab.Tfvars => "tfvars",
+        BuildTab.Edit => "Edit files",
+        _ => t.ToString()
+    };
+}

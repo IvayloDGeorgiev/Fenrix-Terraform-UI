@@ -1,0 +1,60 @@
+@* Form-based locals editor (locals.tf) — a list of name = expression entries. See docs/22-terraform-files-model.md. *@
+@using Fenrix.IaCStudio.Application.Authoring
+@using Fenrix.IaCStudio.Application.Hcl
+
+<div class="fx-card">
+    <div class="fx-panel-head">
+        <span style="flex:1;font-weight:500;">Local values</span>
+        <button class="fx-btn sm" @onclick="Add"><span class="fx-ico"><Icon Name="plus" Size="12" /></span> Add local</button>
+    </div>
+
+    @if (_rows.Count == 0)
+    {
+        <div class="fx-hint" style="margin:0;">Add one or more local values.</div>
+    }
+    @foreach (var row in _rows)
+    {
+        <div class="fx-localrow" @key="row.Id">
+            <input class="fx-input fx-mono" style="max-width:200px;" placeholder="name" value="@row.Name" @onchange="e => SetName(row, e)" />
+            <span class="fx-eq">=</span>
+            <input class="fx-input fx-mono" placeholder="expression" value="@row.Expression" @onchange="e => SetExpr(row, e)" />
+            <button class="fx-btn sm danger" @onclick="() => Remove(row)"><span class="fx-ico"><Icon Name="trash" Size="12" /></span></button>
+        </div>
+    }
+</div>
+
+<HclPreviewPanel ProjectId="ProjectId" EnvironmentId="EnvironmentId" Hcl="@_hcl" DefaultFileName="locals.tf" Disabled="@(!Valid)" />
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private sealed class Row
+    {
+        public Guid Id { get; } = Guid.NewGuid();
+        public string Name { get; set; } = "";
+        public string Expression { get; set; } = "";
+    }
+
+    private readonly List<Row> _rows = [];
+    private string _hcl = "";
+
+    private bool Valid => _rows.Any(r => HclEmitter.IsIdentifier(r.Name) && !string.IsNullOrWhiteSpace(r.Expression));
+
+    protected override void OnInitialized() => Add();
+
+    private void Add() { _rows.Add(new Row()); Regenerate(); }
+    private void Remove(Row row) { _rows.Remove(row); Regenerate(); }
+
+    private void SetName(Row row, ChangeEventArgs e) { row.Name = e.Value?.ToString() ?? ""; Regenerate(); }
+    private void SetExpr(Row row, ChangeEventArgs e) { row.Expression = e.Value?.ToString() ?? ""; Regenerate(); }
+
+    private void Regenerate()
+    {
+        var locals = _rows
+            .Where(r => HclEmitter.IsIdentifier(r.Name) && !string.IsNullOrWhiteSpace(r.Expression))
+            .Select(r => new LocalSpec(r.Name.Trim(), r.Expression.Trim()))
+            .ToList();
+        _hcl = locals.Count == 0 ? "" : HclEmitter.Emit(ConfigHclBuilder.Locals(locals));
+    }
+}

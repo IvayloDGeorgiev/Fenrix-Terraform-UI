@@ -1,0 +1,93 @@
+@* Form-based variable declaration editor (variables.tf). See docs/22-terraform-files-model.md. *@
+@using Fenrix.IaCStudio.Application.Authoring
+@using Fenrix.IaCStudio.Application.Hcl
+
+<div class="fx-card">
+    <div class="fx-formgrid">
+        <div class="fx-field">
+            <label>Name</label>
+            <input class="fx-input fx-mono" placeholder="instance_type" value="@_name" @onchange="e => Set(ref _name, e)" />
+        </div>
+        <div class="fx-field">
+            <label>Type</label>
+            <input class="fx-input fx-mono" placeholder="string" value="@_type" @onchange="e => Set(ref _type, e)" />
+        </div>
+        <div class="fx-field">
+            <label>Default (optional)</label>
+            <div style="display:flex;gap:6px;align-items:center;">
+                <input class="fx-input fx-mono" placeholder="leave blank for required" value="@_default" @onchange="e => Set(ref _default, e)" />
+                <button class="fx-btn sm @(_defaultExpr ? "accent" : "ghost")" title="Treat the default as a raw HCL expression"
+                        @onclick="() => { _defaultExpr = !_defaultExpr; Regenerate(); }">ƒx</button>
+            </div>
+        </div>
+        <div class="fx-field">
+            <label>Description (optional)</label>
+            <input class="fx-input" placeholder="What this variable controls" value="@_description" @onchange="e => Set(ref _description, e)" />
+        </div>
+        <div class="fx-field">
+            <label>Options</label>
+            <div style="display:flex;gap:16px;">
+                <label class="fx-check"><input type="checkbox" checked="@_sensitive" @onchange="e => SetBool(ref _sensitive, e)" /> sensitive</label>
+                <label class="fx-check"><input type="checkbox" checked="@_nonNullable" @onchange="e => SetBool(ref _nonNullable, e)" /> non-nullable</label>
+            </div>
+        </div>
+    </div>
+</div>
+
+<HclPreviewPanel ProjectId="ProjectId" EnvironmentId="EnvironmentId" Hcl="@_hcl" DefaultFileName="variables.tf" Disabled="@(!Valid)" />
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private string _name = "";
+    private string _type = "string";
+    private string _default = "";
+    private bool _defaultExpr;
+    private string _description = "";
+    private bool _sensitive;
+    private bool _nonNullable;
+    private string _hcl = "";
+
+    private bool Valid => HclEmitter.IsIdentifier(_name);
+
+    protected override void OnInitialized() => Regenerate();
+
+    private void Set(ref string field, ChangeEventArgs e)
+    {
+        field = e.Value?.ToString() ?? "";
+        Regenerate();
+    }
+
+    private void SetBool(ref bool field, ChangeEventArgs e)
+    {
+        field = e.Value is true;
+        Regenerate();
+    }
+
+    private void Regenerate()
+    {
+        if (!Valid)
+        {
+            _hcl = "";
+            return;
+        }
+
+        HclValue? def = null;
+        if (!string.IsNullOrWhiteSpace(_default))
+        {
+            var asExpr = _defaultExpr || !_type.Trim().Equals("string", StringComparison.OrdinalIgnoreCase);
+            def = asExpr ? HclValue.Raw(_default) : new HclString(_default);
+        }
+
+        var spec = new VariableSpec(
+            _name.Trim(),
+            string.IsNullOrWhiteSpace(_type) ? null : _type.Trim(),
+            def,
+            string.IsNullOrWhiteSpace(_description) ? null : _description,
+            _sensitive,
+            _nonNullable ? false : null);
+
+        _hcl = HclEmitter.Emit(ConfigHclBuilder.Variable(spec));
+    }
+}

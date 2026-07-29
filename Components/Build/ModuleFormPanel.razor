@@ -1,0 +1,78 @@
+@* Module call builder (module "name" {}). See docs/22-terraform-files-model.md. *@
+@using Fenrix.IaCStudio.Application.Authoring
+@using Fenrix.IaCStudio.Application.Hcl
+
+<div class="fx-card">
+    <div class="fx-formgrid">
+        <div class="fx-field">
+            <label>Name</label>
+            <input class="fx-input fx-mono" placeholder="network" value="@_name" @onchange="e => Set(ref _name, e)" />
+        </div>
+        <div class="fx-field">
+            <label>Source</label>
+            <input class="fx-input fx-mono" placeholder="terraform-aws-modules/vpc/aws" value="@_source" @onchange="e => Set(ref _source, e)" />
+        </div>
+        <div class="fx-field">
+            <label>Version (optional)</label>
+            <input class="fx-input fx-mono" placeholder="~> 5.0" value="@_version" @onchange="e => Set(ref _version, e)" />
+        </div>
+    </div>
+
+    <div class="fx-panel-head">
+        <span style="flex:1;font-weight:500;">Inputs</span>
+        <button class="fx-btn sm" @onclick="AddArg"><span class="fx-ico"><Icon Name="plus" Size="12" /></span> Add input</button>
+    </div>
+    @foreach (var a in _args)
+    {
+        <div class="fx-localrow" @key="a.Id">
+            <input class="fx-input fx-mono" style="max-width:180px;" placeholder="name" value="@a.Key" @onchange="e => SetKey(a, e)" />
+            <span class="fx-eq">=</span>
+            <input class="fx-input fx-mono" placeholder="value or expression" value="@a.Value" @onchange="e => SetValue(a, e)" />
+            <button class="fx-btn sm @(a.AsExpression ? "accent" : "ghost")" title="Raw HCL expression" @onclick="() => ToggleExpr(a)">ƒx</button>
+            <button class="fx-btn sm danger" @onclick="() => RemoveArg(a)"><span class="fx-ico"><Icon Name="trash" Size="12" /></span></button>
+        </div>
+    }
+</div>
+
+<HclPreviewPanel ProjectId="ProjectId" EnvironmentId="EnvironmentId" Hcl="@_hcl" DefaultFileName="main.tf" Disabled="@(!Valid)" />
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private sealed class ArgRow
+    {
+        public Guid Id { get; } = Guid.NewGuid();
+        public string Key { get; set; } = "";
+        public string Value { get; set; } = "";
+        public bool AsExpression { get; set; }
+    }
+
+    private string _name = "";
+    private string _source = "";
+    private string _version = "";
+    private readonly List<ArgRow> _args = [];
+    private string _hcl = "";
+
+    private bool Valid => HclEmitter.IsIdentifier(_name) && !string.IsNullOrWhiteSpace(_source);
+
+    private void Set(ref string field, ChangeEventArgs e) { field = e.Value?.ToString() ?? ""; Regenerate(); }
+
+    private void AddArg() { _args.Add(new ArgRow()); Regenerate(); }
+    private void RemoveArg(ArgRow a) { _args.Remove(a); Regenerate(); }
+    private void SetKey(ArgRow a, ChangeEventArgs e) { a.Key = e.Value?.ToString() ?? ""; Regenerate(); }
+    private void SetValue(ArgRow a, ChangeEventArgs e) { a.Value = e.Value?.ToString() ?? ""; Regenerate(); }
+    private void ToggleExpr(ArgRow a) { a.AsExpression = !a.AsExpression; Regenerate(); }
+
+    private void Regenerate()
+    {
+        if (!Valid) { _hcl = ""; return; }
+        var args = _args
+            .Where(a => HclEmitter.IsIdentifier(a.Key) && !string.IsNullOrWhiteSpace(a.Value))
+            .Select(a => new HclArgument(a.Key.Trim(), a.AsExpression ? HclValue.Raw(a.Value) : new HclString(a.Value)))
+            .ToList();
+        var spec = new ModuleSpec(_name.Trim(), _source.Trim(),
+            string.IsNullOrWhiteSpace(_version) ? null : _version.Trim(), args);
+        _hcl = HclEmitter.Emit(ConfigHclBuilder.Module(spec));
+    }
+}

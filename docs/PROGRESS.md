@@ -249,9 +249,11 @@ _✅ Core complete. Cloud provider abstraction + Azure/AWS/Google adapters (offi
 
 ## Phase 10 — Visual resource builder
 
-- [ ] Provider-schema cache ([07](07-visual-builder.md))
-- [ ] Provider/resource browser · schema forms · HCL preview · generation · templates
-- [ ] Form authoring for all config-side files (providers, versions, variables, outputs, locals, tfvars, backends, data, modules) ([22](22-terraform-files-model.md))
+- [x] Provider-schema cache ([07](07-visual-builder.md)) — `providers schema -json` (new `ProvidersSchema` command kind, read-only, `captureLog:false`), `ProviderSchemaJsonParser` (types incl. list/set/map/object/tuple + nested blocks + nested_type; required/optional/computed/sensitive), offline cache under `Cache/terraform-schemas/<project>_<env>.json` + `.meta.json` (captured-at, provider count, provider-lock hash for staleness). `IProviderSchemaService`/`ProviderSchemaService`.
+- [x] Provider/resource browser · schema forms · HCL preview · generation — provider→resource/data browser with search, recursive schema-driven `SchemaForm` (required first, optional collapsible, nested-block add/remove, expression escape-hatch), live HCL preview, write to a chosen/new `.tf` via the atomic-write + file-history path.
+- [x] Round-trip editing of existing simple blocks — `HclLexer`/`HclReader` locate top-level blocks and classify each argument as a plain literal (editable) or complex expression (preserved as raw); edits applied as in-place value-span splices so unsupported HCL is preserved byte-for-byte.
+- [x] Form authoring for all config-side files (providers, versions/terraform settings, variables, outputs, locals, tfvars, backends, data, modules) ([22](22-terraform-files-model.md)) — pure `ConfigHclBuilder` generators + `HclEmitter` (canonical 2-space HCL) behind per-file panels.
+- [x] _No new migration (files are the source of truth; the schema cache is on disk). Templates deferred (they feed the Phase 11 enterprise metadata DB). Verify port `tests/builder-fixtures/verify_builder.py` (sandbox VM was down — run it)._
 
 ## Phase 10.5 — Terraform-aware code editor
 

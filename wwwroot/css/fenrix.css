@@ -976,3 +976,50 @@ a:hover { color: var(--fx-accent-strong); }
 
 /* Fan-out dialog */
 .fx-fanout-list, .fx-fanout-results { display: flex; flex-direction: column; gap: 2px; }
+
+/* ============================ Phase 10 — Visual resource builder ============================ */
+
+/* Two-column builder layout: provider/type browser on the left, schema form on the right. */
+.fx-build-grid { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.fx-build-col { display: flex; flex-direction: column; gap: 10px; min-width: 240px; }
+.fx-build-col.grow { flex: 1; min-width: 320px; }
+
+.fx-typelist {
+  border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm);
+  max-height: 340px; overflow: auto; background: var(--fx-bg);
+}
+.fx-typerow {
+  display: block; width: 100%; text-align: left; border: none; background: none;
+  padding: 6px 10px; font-size: 12.5px; color: var(--fx-text); cursor: pointer; border-bottom: 1px solid var(--fx-border);
+}
+.fx-typerow:last-child { border-bottom: none; }
+.fx-typerow:hover { background: var(--fx-surface); }
+.fx-typerow.active { background: var(--fx-accent-tint); color: var(--fx-accent-text); font-weight: 600; }
+
+/* Schema-driven form rows */
+.fx-schema-form { display: flex; flex-direction: column; gap: 4px; }
+.fx-schema-section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--fx-faint); margin: 8px 0 2px; }
+.fx-schema-row { padding: 6px 0; border-bottom: 1px solid var(--fx-border); }
+.fx-schema-row.muted { opacity: 0.7; }
+.fx-schema-rowhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fx-schema-name { font-weight: 600; font-size: 13px; }
+.fx-schema-type { font-size: 11px; color: var(--fx-dim); font-family: var(--fx-font-mono); }
+.fx-req { color: var(--fx-accent); font-weight: 700; }
+.fx-schema-control { margin-top: 6px; }
+.fx-schema-desc { font-size: 11.5px; color: var(--fx-faint); margin-top: 4px; }
+.fx-schema-optional { margin-top: 8px; }
+.fx-schema-optional > summary { cursor: pointer; font-size: 12.5px; color: var(--fx-dim); padding: 4px 0; }
+
+.fx-schema-nested { border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm); padding: 10px; margin-top: 10px; }
+.fx-schema-nested-head { display: flex; align-items: center; gap: 8px; }
+.fx-schema-nested-inst { border-left: 2px solid var(--fx-border-strong); padding: 8px 0 8px 10px; margin-top: 8px; }
+.fx-schema-nested-insthead { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 4px; }
+
+/* Simple form grid used by the config-side (variables/outputs/module/settings) panels */
+.fx-formgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+
+/* name = value rows (locals, tfvars, required_providers, backend, module inputs) */
+.fx-localrow { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.fx-eq { color: var(--fx-dim); font-family: var(--fx-font-mono); }
+
+.fx-rawval { font-family: var(--fx-font-mono); font-size: 12px; color: var(--fx-dim); word-break: break-all; }

@@ -1,0 +1,126 @@
+@* terraform {} settings builder (versions.tf / terraform.tf): required_version, required_providers, and an
+   optional backend. See docs/22-terraform-files-model.md. *@
+@using Fenrix.IaCStudio.Application.Authoring
+@using Fenrix.IaCStudio.Application.Hcl
+
+<div class="fx-card">
+    <div class="fx-field">
+        <label>Required Terraform version (optional)</label>
+        <input class="fx-input fx-mono" placeholder=">= 1.5.0" value="@_requiredVersion" @onchange="e => Set(ref _requiredVersion, e)" />
+    </div>
+
+    <div class="fx-panel-head" style="margin-top:8px;">
+        <span style="flex:1;font-weight:500;">Required providers</span>
+        <button class="fx-btn sm" @onclick="AddProvider"><span class="fx-ico"><Icon Name="plus" Size="12" /></span> Add</button>
+    </div>
+    @foreach (var p in _providers)
+    {
+        <div class="fx-localrow" @key="p.Id">
+            <input class="fx-input fx-mono" style="max-width:120px;" placeholder="aws" value="@p.LocalName" @onchange="e => SetProviderLocal(p, e)" />
+            <input class="fx-input fx-mono" placeholder="hashicorp/aws" value="@p.Source" @onchange="e => SetProviderSource(p, e)" />
+            <input class="fx-input fx-mono" style="max-width:140px;" placeholder="~> 5.0" value="@p.Version" @onchange="e => SetProviderVersion(p, e)" />
+            <button class="fx-btn sm danger" @onclick="() => RemoveProvider(p)"><span class="fx-ico"><Icon Name="trash" Size="12" /></span></button>
+        </div>
+    }
+
+    <div class="fx-field" style="margin-top:12px;">
+        <label class="fx-check"><input type="checkbox" checked="@_hasBackend" @onchange="e => SetBool(ref _hasBackend, e)" /> configure a backend</label>
+    </div>
+    @if (_hasBackend)
+    {
+        <div class="fx-formgrid">
+            <div class="fx-field">
+                <label>Backend type</label>
+                <input class="fx-input fx-mono" placeholder="s3" value="@_backendType" @onchange="e => Set(ref _backendType, e)" />
+            </div>
+        </div>
+        <div class="fx-panel-head">
+            <span style="flex:1;font-weight:500;">Backend settings</span>
+            <button class="fx-btn sm" @onclick="AddBackendArg"><span class="fx-ico"><Icon Name="plus" Size="12" /></span> Add</button>
+        </div>
+        @foreach (var a in _backendArgs)
+        {
+            <div class="fx-localrow" @key="a.Id">
+                <input class="fx-input fx-mono" style="max-width:180px;" placeholder="bucket" value="@a.Key" @onchange="e => SetArgKey(a, e)" />
+                <span class="fx-eq">=</span>
+                <input class="fx-input fx-mono" placeholder="my-tfstate" value="@a.Value" @onchange="e => SetArgValue(a, e)" />
+                <button class="fx-btn sm danger" @onclick="() => RemoveBackendArg(a)"><span class="fx-ico"><Icon Name="trash" Size="12" /></span></button>
+            </div>
+        }
+    }
+</div>
+
+<HclPreviewPanel ProjectId="ProjectId" EnvironmentId="EnvironmentId" Hcl="@_hcl" DefaultFileName="versions.tf" Disabled="@(!Valid)" />
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private sealed class ProviderRow
+    {
+        public Guid Id { get; } = Guid.NewGuid();
+        public string LocalName { get; set; } = "";
+        public string Source { get; set; } = "";
+        public string Version { get; set; } = "";
+    }
+
+    private sealed class ArgRow
+    {
+        public Guid Id { get; } = Guid.NewGuid();
+        public string Key { get; set; } = "";
+        public string Value { get; set; } = "";
+    }
+
+    private string _requiredVersion = "";
+    private readonly List<ProviderRow> _providers = [];
+    private bool _hasBackend;
+    private string _backendType = "";
+    private readonly List<ArgRow> _backendArgs = [];
+    private string _hcl = "";
+
+    private bool Valid =>
+        !string.IsNullOrWhiteSpace(_requiredVersion) ||
+        _providers.Any(p => HclEmitter.IsIdentifier(p.LocalName) && !string.IsNullOrWhiteSpace(p.Source));
+
+    protected override void OnInitialized() { AddProvider(); }
+
+    private void Set(ref string field, ChangeEventArgs e) { field = e.Value?.ToString() ?? ""; Regenerate(); }
+    private void SetBool(ref bool field, ChangeEventArgs e) { field = e.Value is true; Regenerate(); }
+
+    private void AddProvider() { _providers.Add(new ProviderRow()); Regenerate(); }
+    private void RemoveProvider(ProviderRow p) { _providers.Remove(p); Regenerate(); }
+    private void SetProviderLocal(ProviderRow p, ChangeEventArgs e) { p.LocalName = e.Value?.ToString() ?? ""; Regenerate(); }
+    private void SetProviderSource(ProviderRow p, ChangeEventArgs e) { p.Source = e.Value?.ToString() ?? ""; Regenerate(); }
+    private void SetProviderVersion(ProviderRow p, ChangeEventArgs e) { p.Version = e.Value?.ToString() ?? ""; Regenerate(); }
+
+    private void AddBackendArg() { _backendArgs.Add(new ArgRow()); Regenerate(); }
+    private void RemoveBackendArg(ArgRow a) { _backendArgs.Remove(a); Regenerate(); }
+    private void SetArgKey(ArgRow a, ChangeEventArgs e) { a.Key = e.Value?.ToString() ?? ""; Regenerate(); }
+    private void SetArgValue(ArgRow a, ChangeEventArgs e) { a.Value = e.Value?.ToString() ?? ""; Regenerate(); }
+
+    private void Regenerate()
+    {
+        if (!Valid) { _hcl = ""; return; }
+
+        var providers = _providers
+            .Where(p => HclEmitter.IsIdentifier(p.LocalName) && !string.IsNullOrWhiteSpace(p.Source))
+            .Select(p => new RequiredProviderSpec(p.LocalName.Trim(), p.Source.Trim(),
+                string.IsNullOrWhiteSpace(p.Version) ? null : p.Version.Trim()))
+            .ToList();
+
+        BackendSpec? backend = null;
+        if (_hasBackend && !string.IsNullOrWhiteSpace(_backendType))
+        {
+            var args = _backendArgs
+                .Where(a => HclEmitter.IsIdentifier(a.Key))
+                .Select(a => new HclArgument(a.Key.Trim(), new HclString(a.Value)))
+                .ToList();
+            backend = new BackendSpec(_backendType.Trim(), args);
+        }
+
+        var spec = new TerraformSettingsSpec(
+            string.IsNullOrWhiteSpace(_requiredVersion) ? null : _requiredVersion.Trim(),
+            providers, backend);
+        _hcl = HclEmitter.Emit(ConfigHclBuilder.TerraformSettings(spec));
+    }
+}

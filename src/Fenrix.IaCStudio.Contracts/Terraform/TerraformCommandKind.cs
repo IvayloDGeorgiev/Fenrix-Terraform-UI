@@ -91,5 +91,16 @@ public enum TerraformCommandKind
     /// cloud-registered generated key — used to de-register the cloud object (e.g. <c>aws_key_pair</c>) when
     /// the key is deleted or rotated. See docs/28-key-pair-management.md.
     /// </summary>
-    KeyPairGenerateDestroy = 23
+    KeyPairGenerateDestroy = 23,
+
+    // ---- Phase 10: visual resource builder (docs/07-visual-builder.md, docs/22-terraform-files-model.md) ----
+
+    /// <summary>
+    /// <c>terraform providers schema -json</c> — read-only export of the machine-readable provider/resource/
+    /// data-source schemas backing the visual builder's schema-driven forms. The output is large but carries
+    /// no secrets (it describes attribute shapes, not values); it is cached offline under
+    /// <c>Cache/terraform-schemas</c> and never written to a run log (parsed in memory to keep logs lean).
+    /// Requires the providers to be installed (i.e. <c>init</c> has run). See docs/07-visual-builder.md.
+    /// </summary>
+    ProvidersSchema = 24
 }

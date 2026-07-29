@@ -1,0 +1,50 @@
+@* Form-based output declaration editor (outputs.tf). See docs/22-terraform-files-model.md. *@
+@using Fenrix.IaCStudio.Application.Authoring
+@using Fenrix.IaCStudio.Application.Hcl
+
+<div class="fx-card">
+    <div class="fx-formgrid">
+        <div class="fx-field">
+            <label>Name</label>
+            <input class="fx-input fx-mono" placeholder="instance_ip" value="@_name" @onchange="e => Set(ref _name, e)" />
+        </div>
+        <div class="fx-field">
+            <label>Value (expression)</label>
+            <input class="fx-input fx-mono" placeholder="aws_instance.main.private_ip" value="@_value" @onchange="e => Set(ref _value, e)" />
+        </div>
+        <div class="fx-field">
+            <label>Description (optional)</label>
+            <input class="fx-input" placeholder="What this output exposes" value="@_description" @onchange="e => Set(ref _description, e)" />
+        </div>
+        <div class="fx-field">
+            <label>Options</label>
+            <label class="fx-check"><input type="checkbox" checked="@_sensitive" @onchange="e => SetBool(ref _sensitive, e)" /> sensitive</label>
+        </div>
+    </div>
+</div>
+
+<HclPreviewPanel ProjectId="ProjectId" EnvironmentId="EnvironmentId" Hcl="@_hcl" DefaultFileName="outputs.tf" Disabled="@(!Valid)" />
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private string _name = "";
+    private string _value = "";
+    private string _description = "";
+    private bool _sensitive;
+    private string _hcl = "";
+
+    private bool Valid => HclEmitter.IsIdentifier(_name) && !string.IsNullOrWhiteSpace(_value);
+
+    private void Set(ref string field, ChangeEventArgs e) { field = e.Value?.ToString() ?? ""; Regenerate(); }
+    private void SetBool(ref bool field, ChangeEventArgs e) { field = e.Value is true; Regenerate(); }
+
+    private void Regenerate()
+    {
+        if (!Valid) { _hcl = ""; return; }
+        var spec = new OutputSpec(_name.Trim(), _value.Trim(),
+            string.IsNullOrWhiteSpace(_description) ? null : _description, _sensitive);
+        _hcl = HclEmitter.Emit(ConfigHclBuilder.Output(spec));
+    }
+}

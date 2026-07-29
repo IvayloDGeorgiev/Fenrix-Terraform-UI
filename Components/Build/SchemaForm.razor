@@ -1,0 +1,153 @@
+@* Recursive schema-driven form for a resource/data/nested block. Renders required attributes first, optional
+   ones in a collapsible section, and nested blocks (add/remove instances, each a recursive SchemaForm). Reports
+   the assembled arguments + nested blocks to the parent on every change. See docs/07-visual-builder.md. *@
+@using Fenrix.IaCStudio.Application.Authoring
+@using Fenrix.IaCStudio.Application.Hcl
+@using Fenrix.IaCStudio.Contracts.Terraform
+
+<div class="fx-schema-form">
+    @if (_required.Count > 0)
+    {
+        <div class="fx-schema-section-label">Required</div>
+        @foreach (var attr in _required)
+        {
+            <SchemaFieldRow @key="attr.Name" Attribute="attr" Field="_fields[attr.Name]" ShowInclude="false" OnChanged="NotifyAsync" />
+        }
+    }
+
+    @if (_optional.Count > 0)
+    {
+        <details class="fx-schema-optional">
+            <summary>Optional attributes (@_optional.Count)</summary>
+            @foreach (var attr in _optional)
+            {
+                <SchemaFieldRow @key="attr.Name" Attribute="attr" Field="_fields[attr.Name]" ShowInclude="true" OnChanged="NotifyAsync" />
+            }
+        </details>
+    }
+
+    @foreach (var group in _nested)
+    {
+        <div class="fx-schema-nested">
+            <div class="fx-schema-nested-head">
+                <span class="fx-schema-name fx-mono">@group.Def.TypeName</span>
+                <span class="fx-schema-type">@NestingLabel(group.Def.NestingMode)</span>
+                <span style="flex:1;"></span>
+                <button class="fx-btn sm" @onclick="() => AddNested(group)">
+                    <span class="fx-ico"><Icon Name="plus" Size="12" /></span> Add
+                </button>
+            </div>
+            @foreach (var inst in group.Instances)
+            {
+                <div class="fx-schema-nested-inst" @key="inst.Id">
+                    <div class="fx-schema-nested-insthead">
+                        <span class="fx-dim">@group.Def.TypeName block</span>
+                        <span style="flex:1;"></span>
+                        <button class="fx-btn sm danger" @onclick="() => RemoveNested(group, inst)">
+                            <span class="fx-ico"><Icon Name="trash" Size="12" /></span>
+                        </button>
+                    </div>
+                    <SchemaForm Block="group.Def.Block" OnChanged="v => OnNestedChanged(inst, v)" />
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public SchemaBlock Block { get; set; } = SchemaBlock.Empty;
+    [Parameter] public EventCallback<SchemaFormValue> OnChanged { get; set; }
+
+    private sealed class NestedInstance
+    {
+        public Guid Id { get; } = Guid.NewGuid();
+        public SchemaFormValue Value { get; set; } = SchemaFormValue.Empty;
+    }
+
+    private sealed class NestedGroup
+    {
+        public required SchemaNestedBlock Def { get; init; }
+        public List<NestedInstance> Instances { get; } = [];
+    }
+
+    private readonly Dictionary<string, SchemaFieldRow.FieldState> _fields = new();
+    private List<SchemaAttribute> _required = [];
+    private List<SchemaAttribute> _optional = [];
+    private List<NestedGroup> _nested = [];
+    private SchemaBlock? _initialized;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_initialized, Block)) return;
+        _initialized = Block;
+
+        _fields.Clear();
+        _required = Block.RequiredAttributes.ToList();
+        _optional = Block.OptionalAttributes.ToList();
+        foreach (var attr in _required)
+            _fields[attr.Name] = new SchemaFieldRow.FieldState { Included = true, AsExpression = DefaultsToExpression(attr) };
+        foreach (var attr in _optional)
+            _fields[attr.Name] = new SchemaFieldRow.FieldState { Included = false, AsExpression = DefaultsToExpression(attr) };
+
+        _nested = Block.NestedBlocks.Select(nb => new NestedGroup { Def = nb }).ToList();
+    }
+
+    private static bool DefaultsToExpression(SchemaAttribute attr) =>
+        attr.NestedType is not null || !attr.Type.IsPrimitive;
+
+    private async Task NotifyAsync() => await OnChanged.InvokeAsync(Build());
+
+    private SchemaFormValue Build()
+    {
+        var args = new List<HclArgument>();
+        foreach (var attr in _required.Concat(_optional))
+        {
+            if (!_fields.TryGetValue(attr.Name, out var fs) || !fs.Included)
+                continue;
+
+            var isStructural = DefaultsToExpression(attr);
+            var isBool = attr.Type.Kind == TfTypeKind.Bool && attr.NestedType is null;
+
+            // Skip empties so the preview stays valid; a bool with an explicit value is kept.
+            if (string.IsNullOrWhiteSpace(fs.Text))
+                continue;
+
+            var value = HclValueFactory.FromInput(attr.Type, fs.Text, isStructural || fs.AsExpression);
+            args.Add(new HclArgument(attr.Name, value));
+        }
+
+        var blocks = new List<HclBlock>();
+        foreach (var group in _nested)
+            foreach (var inst in group.Instances)
+                blocks.Add(new HclBlock(group.Def.TypeName, [], inst.Value.Arguments, inst.Value.Blocks));
+
+        return new SchemaFormValue(args, blocks);
+    }
+
+    private async Task AddNested(NestedGroup group)
+    {
+        group.Instances.Add(new NestedInstance());
+        await NotifyAsync();
+    }
+
+    private async Task RemoveNested(NestedGroup group, NestedInstance inst)
+    {
+        group.Instances.Remove(inst);
+        await NotifyAsync();
+    }
+
+    private async Task OnNestedChanged(NestedInstance inst, SchemaFormValue value)
+    {
+        inst.Value = value;
+        await NotifyAsync();
+    }
+
+    private static string NestingLabel(BlockNestingMode mode) => mode switch
+    {
+        BlockNestingMode.Single => "single",
+        BlockNestingMode.List => "list",
+        BlockNestingMode.Set => "set",
+        BlockNestingMode.Map => "map",
+        _ => "block"
+    };
+}

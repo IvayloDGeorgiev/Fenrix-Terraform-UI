@@ -1,0 +1,57 @@
+@* Per-environment variable values editor (*.tfvars). Bare name = value lines. See docs/22-terraform-files-model.md. *@
+@using Fenrix.IaCStudio.Application.Authoring
+@using Fenrix.IaCStudio.Application.Hcl
+
+<div class="fx-card">
+    <div class="fx-panel-head">
+        <span style="flex:1;font-weight:500;">Variable values</span>
+        <button class="fx-btn sm" @onclick="Add"><span class="fx-ico"><Icon Name="plus" Size="12" /></span> Add value</button>
+    </div>
+    @foreach (var r in _rows)
+    {
+        <div class="fx-localrow" @key="r.Id">
+            <input class="fx-input fx-mono" style="max-width:200px;" placeholder="instance_type" value="@r.Name" @onchange="e => SetName(r, e)" />
+            <span class="fx-eq">=</span>
+            <input class="fx-input fx-mono" placeholder="t3.micro" value="@r.Value" @onchange="e => SetValue(r, e)" />
+            <button class="fx-btn sm @(r.AsExpression ? "accent" : "ghost")" title="Raw HCL expression (list/map/number/bool)" @onclick="() => ToggleExpr(r)">ƒx</button>
+            <button class="fx-btn sm danger" @onclick="() => Remove(r)"><span class="fx-ico"><Icon Name="trash" Size="12" /></span></button>
+        </div>
+    }
+</div>
+
+<HclPreviewPanel ProjectId="ProjectId" EnvironmentId="EnvironmentId" Hcl="@_hcl" DefaultFileName="terraform.tfvars" Disabled="@(!Valid)" />
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+
+    private sealed class Row
+    {
+        public Guid Id { get; } = Guid.NewGuid();
+        public string Name { get; set; } = "";
+        public string Value { get; set; } = "";
+        public bool AsExpression { get; set; }
+    }
+
+    private readonly List<Row> _rows = [];
+    private string _hcl = "";
+
+    private bool Valid => _rows.Any(r => HclEmitter.IsIdentifier(r.Name) && !string.IsNullOrWhiteSpace(r.Value));
+
+    protected override void OnInitialized() => Add();
+
+    private void Add() { _rows.Add(new Row()); Regenerate(); }
+    private void Remove(Row r) { _rows.Remove(r); Regenerate(); }
+    private void SetName(Row r, ChangeEventArgs e) { r.Name = e.Value?.ToString() ?? ""; Regenerate(); }
+    private void SetValue(Row r, ChangeEventArgs e) { r.Value = e.Value?.ToString() ?? ""; Regenerate(); }
+    private void ToggleExpr(Row r) { r.AsExpression = !r.AsExpression; Regenerate(); }
+
+    private void Regenerate()
+    {
+        var entries = _rows
+            .Where(r => HclEmitter.IsIdentifier(r.Name) && !string.IsNullOrWhiteSpace(r.Value))
+            .Select(r => new TfvarsEntry(r.Name.Trim(), r.AsExpression ? HclValue.Raw(r.Value) : new HclString(r.Value)))
+            .ToList();
+        _hcl = entries.Count == 0 ? "" : ConfigHclBuilder.Tfvars(entries);
+    }
+}

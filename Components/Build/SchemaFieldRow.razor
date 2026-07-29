@@ -1,0 +1,105 @@
+@* One attribute row in a schema-driven form. Renders a type-appropriate control (bool select, text input +
+   expression toggle, or a raw HCL textarea for structural types) and reports changes upward. See
+   docs/07-visual-builder.md. *@
+@using Fenrix.IaCStudio.Contracts.Terraform
+
+<div class="fx-schema-row @(Field.Included ? "" : "muted")">
+    <div class="fx-schema-rowhead">
+        @if (ShowInclude)
+        {
+            <input type="checkbox" checked="@Field.Included" @onchange="OnIncludeChanged" title="Include this attribute" />
+        }
+        else
+        {
+            <span class="fx-req" title="Required">•</span>
+        }
+        <span class="fx-schema-name fx-mono">@Attribute.Name</span>
+        <span class="fx-schema-type">@Attribute.Type.Label</span>
+        @if (Attribute.Sensitive)
+        {
+            <span class="fx-pill warn" title="Sensitive">sensitive</span>
+        }
+        @if (Attribute.Deprecated)
+        {
+            <span class="fx-pill fail" title="Deprecated">deprecated</span>
+        }
+    </div>
+
+    @if (Field.Included)
+    {
+        <div class="fx-schema-control">
+            @if (IsBool)
+            {
+                <select class="fx-select" value="@Field.Text" @onchange="OnValueChanged">
+                    <option value="">(unset)</option>
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                </select>
+            }
+            else if (IsStructural)
+            {
+                <textarea class="fx-input fx-mono" rows="2" placeholder="@Placeholder"
+                          value="@Field.Text" @onchange="OnValueChanged"></textarea>
+            }
+            else
+            {
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <input class="fx-input fx-mono" placeholder="@Placeholder"
+                           value="@Field.Text" @onchange="OnValueChanged" />
+                    <button class="fx-btn sm @(Field.AsExpression ? "accent" : "ghost")" title="Treat the value as a raw HCL expression (references, functions, interpolation)"
+                            @onclick="ToggleExpression">ƒx</button>
+                </div>
+            }
+            @if (!string.IsNullOrWhiteSpace(Attribute.Description))
+            {
+                <div class="fx-schema-desc">@Attribute.Description</div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>Mutable per-field UI state, shared with the parent form.</summary>
+    public sealed class FieldState
+    {
+        public bool Included { get; set; }
+        public string Text { get; set; } = "";
+        public bool AsExpression { get; set; }
+    }
+
+    [Parameter] public SchemaAttribute Attribute { get; set; } = default!;
+    [Parameter] public FieldState Field { get; set; } = default!;
+    [Parameter] public bool ShowInclude { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private bool IsBool => Attribute.Type.Kind == TfTypeKind.Bool && Attribute.NestedType is null;
+
+    private bool IsStructural =>
+        Attribute.NestedType is not null ||
+        Attribute.Type.Kind is TfTypeKind.List or TfTypeKind.Set or TfTypeKind.Map
+            or TfTypeKind.Object or TfTypeKind.Tuple or TfTypeKind.Dynamic;
+
+    private string Placeholder => IsStructural
+        ? Attribute.Type.Label
+        : Attribute.Type.Kind == TfTypeKind.Number ? "0" : "value";
+
+    private async Task OnIncludeChanged(ChangeEventArgs e)
+    {
+        Field.Included = e.Value is true || e.Value?.ToString() == "true" || e.Value?.ToString() == "on";
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task OnValueChanged(ChangeEventArgs e)
+    {
+        Field.Text = e.Value?.ToString() ?? "";
+        // Structural types are always emitted as raw expressions.
+        if (IsStructural) Field.AsExpression = true;
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task ToggleExpression()
+    {
+        Field.AsExpression = !Field.AsExpression;
+        await OnChanged.InvokeAsync();
+    }
+}

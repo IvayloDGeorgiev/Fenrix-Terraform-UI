@@ -1,0 +1,144 @@
+@* Schema-driven resource / data-source builder: pick a provider, search its types, name the block, fill the
+   schema form, and write the generated HCL. Advanced expressions round-trip as raw. See docs/07-visual-builder.md. *@
+@using Fenrix.IaCStudio.Application.Authoring
+@using Fenrix.IaCStudio.Application.Hcl
+@using Fenrix.IaCStudio.Contracts.Terraform
+
+@if (Schema.IsEmpty)
+{
+    <div class="fx-card">
+        <div class="fx-hint" style="margin:0;">No provider schemas cached yet. Capture schemas above (requires <span class="fx-mono">terraform init</span> to have run).</div>
+    </div>
+}
+else
+{
+    <div class="fx-card">
+        <div class="fx-build-grid">
+            <div class="fx-build-col">
+                <div class="fx-field">
+                    <label>Provider</label>
+                    <select class="fx-select" value="@_providerAddress" @onchange="OnProviderChanged">
+                        @foreach (var p in Providers)
+                        {
+                            <option value="@p.Address">@p.LocalName (@Count(p))</option>
+                        }
+                    </select>
+                </div>
+                <div class="fx-field">
+                    <label>@(IsDataSource ? "Data source" : "Resource") type</label>
+                    <input class="fx-input fx-mono" placeholder="search…" @bind="_search" @bind:event="oninput" />
+                </div>
+                <div class="fx-typelist">
+                    @foreach (var t in FilteredTypes)
+                    {
+                        <button class="fx-typerow @(t.Type == _selectedType ? "active" : "")" @onclick="() => SelectType(t)">
+                            <span class="fx-mono">@t.Type</span>
+                        </button>
+                    }
+                    @if (FilteredTypes.Count == 0)
+                    {
+                        <div class="fx-hint" style="margin:8px;">No matching types.</div>
+                    }
+                </div>
+            </div>
+
+            <div class="fx-build-col grow">
+                @if (_selectedSchema is null)
+                {
+                    <div class="fx-hint">Select a @(IsDataSource ? "data source" : "resource") type to configure it.</div>
+                }
+                else
+                {
+                    <div class="fx-field">
+                        <label>Name (local identifier)</label>
+                        <input class="fx-input fx-mono" placeholder="main" value="@_name" @onchange="OnNameChanged" />
+                    </div>
+                    <SchemaForm @key="_selectedType" Block="_selectedSchema.Block" OnChanged="OnFormChanged" />
+                }
+            </div>
+        </div>
+    </div>
+
+    <HclPreviewPanel ProjectId="ProjectId" EnvironmentId="EnvironmentId" Hcl="@_hcl"
+                     DefaultFileName="main.tf" Disabled="@(!Valid)" />
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+    [Parameter] public bool IsDataSource { get; set; }
+    [Parameter] public ProviderSchemaSet Schema { get; set; } = ProviderSchemaSet.Empty;
+
+    private string? _providerAddress;
+    private string _search = "";
+    private string? _selectedType;
+    private ResourceTypeSchema? _selectedSchema;
+    private string _name = "main";
+    private SchemaFormValue _formValue = SchemaFormValue.Empty;
+    private string _hcl = "";
+
+    private IReadOnlyList<ProviderSchema> Providers =>
+        Schema.Providers.Where(p => (IsDataSource ? p.DataSourceSchemas.Count : p.ResourceSchemas.Count) > 0).ToList();
+
+    private ProviderSchema? SelectedProvider => Providers.FirstOrDefault(p => p.Address == _providerAddress);
+
+    private int Count(ProviderSchema p) => IsDataSource ? p.DataSourceCount : p.ResourceCount;
+
+    private IReadOnlyList<ResourceTypeSchema> AllTypes =>
+        SelectedProvider is null ? [] : IsDataSource ? SelectedProvider.DataSourceSchemas : SelectedProvider.ResourceSchemas;
+
+    private List<ResourceTypeSchema> FilteredTypes =>
+        AllTypes.Where(t => string.IsNullOrWhiteSpace(_search) || t.Type.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase))
+                .Take(200).ToList();
+
+    private bool Valid => _selectedSchema is not null && HclEmitter.IsIdentifier(_name);
+
+    protected override void OnParametersSet()
+    {
+        if (_providerAddress is null || Providers.All(p => p.Address != _providerAddress))
+        {
+            _providerAddress = Providers.FirstOrDefault()?.Address;
+            _selectedType = null;
+            _selectedSchema = null;
+        }
+    }
+
+    private void OnProviderChanged(ChangeEventArgs e)
+    {
+        _providerAddress = e.Value?.ToString();
+        _selectedType = null;
+        _selectedSchema = null;
+        _hcl = "";
+    }
+
+    private void SelectType(ResourceTypeSchema t)
+    {
+        _selectedType = t.Type;
+        _selectedSchema = t;
+        _formValue = SchemaFormValue.Empty;
+        Regenerate();
+    }
+
+    private void OnNameChanged(ChangeEventArgs e)
+    {
+        _name = e.Value?.ToString() ?? "";
+        Regenerate();
+    }
+
+    private void OnFormChanged(SchemaFormValue value)
+    {
+        _formValue = value;
+        Regenerate();
+    }
+
+    private void Regenerate()
+    {
+        if (_selectedSchema is null || !HclEmitter.IsIdentifier(_name))
+        {
+            _hcl = "";
+            return;
+        }
+        var spec = new ResourceSpec(IsDataSource, _selectedSchema.Type, _name, _formValue.Arguments, _formValue.Blocks);
+        _hcl = HclEmitter.Emit(ConfigHclBuilder.Resource(spec));
+    }
+}

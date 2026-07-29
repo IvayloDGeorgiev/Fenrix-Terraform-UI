@@ -1,0 +1,56 @@
+{
+  "format_version": "1.0",
+  "provider_schemas": {
+    "registry.terraform.io/hashicorp/aws": {
+      "provider": {
+        "version": 0,
+        "block": {
+          "attributes": {
+            "region": { "type": "string", "description": "AWS region", "optional": true },
+            "access_key": { "type": "string", "optional": true, "sensitive": true }
+          },
+          "description_kind": "plain"
+        }
+      },
+      "resource_schemas": {
+        "aws_instance": {
+          "version": 1,
+          "block": {
+            "attributes": {
+              "ami": { "type": "string", "description": "AMI ID to use for the instance.", "required": true },
+              "instance_type": { "type": "string", "required": true },
+              "id": { "type": "string", "computed": true },
+              "monitoring": { "type": "bool", "optional": true },
+              "tags": { "type": ["map", "string"], "optional": true },
+              "user_data": { "type": "string", "optional": true, "sensitive": true }
+            },
+            "block_types": {
+              "ebs_block_device": {
+                "nesting_mode": "set",
+                "block": {
+                  "attributes": {
+                    "device_name": { "type": "string", "required": true },
+                    "volume_size": { "type": "number", "optional": true }
+                  }
+                },
+                "max_items": 0
+              }
+            }
+          }
+        }
+      },
+      "data_source_schemas": {
+        "aws_ami": {
+          "version": 0,
+          "block": {
+            "attributes": {
+              "most_recent": { "type": "bool", "optional": true },
+              "owners": { "type": ["list", "string"], "optional": true },
+              "id": { "type": "string", "computed": true }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,96 @@
+@* Provider configuration builder (providers.tf). Schema-aware: when the chosen provider is cached, its config
+   attributes render as a schema form; otherwise a name + optional alias still generate a block. See docs/22. *@
+@using Fenrix.IaCStudio.Application.Authoring
+@using Fenrix.IaCStudio.Application.Hcl
+@using Fenrix.IaCStudio.Contracts.Terraform
+
+<div class="fx-card">
+    <div class="fx-formgrid">
+        <div class="fx-field">
+            <label>Provider</label>
+            @if (Schema.IsEmpty)
+            {
+                <input class="fx-input fx-mono" placeholder="aws" value="@_name" @onchange="OnNameChanged" />
+            }
+            else
+            {
+                <select class="fx-select" value="@_providerAddress" @onchange="OnProviderChanged">
+                    @foreach (var p in Schema.Providers)
+                    {
+                        <option value="@p.Address">@p.LocalName — @p.Source</option>
+                    }
+                </select>
+            }
+        </div>
+        <div class="fx-field">
+            <label>Local name</label>
+            <input class="fx-input fx-mono" placeholder="aws" value="@_name" @onchange="OnNameChanged" />
+        </div>
+        <div class="fx-field">
+            <label>Alias (optional)</label>
+            <input class="fx-input fx-mono" placeholder="us_east" value="@_alias" @onchange="OnAliasChanged" />
+        </div>
+    </div>
+
+    @if (_configBlock is not null && (_configBlock.Attributes.Count > 0 || _configBlock.NestedBlocks.Count > 0))
+    {
+        <div class="fx-schema-section-label" style="margin-top:8px;">Configuration</div>
+        <SchemaForm @key="_providerAddress" Block="_configBlock" OnChanged="OnFormChanged" />
+    }
+</div>
+
+<HclPreviewPanel ProjectId="ProjectId" EnvironmentId="EnvironmentId" Hcl="@_hcl" DefaultFileName="providers.tf" Disabled="@(!Valid)" />
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [Parameter] public Guid EnvironmentId { get; set; }
+    [Parameter] public ProviderSchemaSet Schema { get; set; } = ProviderSchemaSet.Empty;
+
+    private string? _providerAddress;
+    private string _name = "";
+    private string _alias = "";
+    private SchemaBlock? _configBlock;
+    private SchemaFormValue _formValue = SchemaFormValue.Empty;
+    private string _hcl = "";
+
+    private bool Valid => HclEmitter.IsIdentifier(_name);
+
+    protected override void OnParametersSet()
+    {
+        if (!Schema.IsEmpty && (_providerAddress is null || Schema.FindProvider(_providerAddress) is null))
+        {
+            var first = Schema.Providers.FirstOrDefault();
+            if (first is not null)
+            {
+                _providerAddress = first.Address;
+                _name = first.LocalName;
+                _configBlock = first.ProviderConfig;
+                Regenerate();
+            }
+        }
+    }
+
+    private void OnProviderChanged(ChangeEventArgs e)
+    {
+        _providerAddress = e.Value?.ToString();
+        var p = _providerAddress is null ? null : Schema.FindProvider(_providerAddress);
+        if (p is not null)
+        {
+            _name = p.LocalName;
+            _configBlock = p.ProviderConfig;
+        }
+        _formValue = SchemaFormValue.Empty;
+        Regenerate();
+    }
+
+    private void OnNameChanged(ChangeEventArgs e) { _name = e.Value?.ToString() ?? ""; Regenerate(); }
+    private void OnAliasChanged(ChangeEventArgs e) { _alias = e.Value?.ToString() ?? ""; Regenerate(); }
+    private void OnFormChanged(SchemaFormValue v) { _formValue = v; Regenerate(); }
+
+    private void Regenerate()
+    {
+        if (!Valid) { _hcl = ""; return; }
+        var spec = new ProviderSpec(_name.Trim(), string.IsNullOrWhiteSpace(_alias) ? null : _alias.Trim(), _formValue.Arguments);
+        _hcl = HclEmitter.Emit(ConfigHclBuilder.Provider(spec));
+    }
+}
