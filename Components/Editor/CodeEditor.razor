@@ -1,0 +1,104 @@
+@* Blazor↔JS wrapper around the hand-rolled, offline HCL editor (wwwroot/js/fenrix-editor.js).
+   Owns one editor instance; the parent drives it through the public methods below (@ref). See docs/13-ui-design.md. *@
+@namespace Fenrix_Terraform_UI.Components.Editor
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div @ref="_host" class="fx-cm-host"></div>
+
+@code {
+    /// <summary>Initial buffer contents. Only read on first render; use <see cref="SetValueAsync"/> afterwards.</summary>
+    [Parameter] public string Value { get; set; } = "";
+
+    /// <summary>Editor font size in px.</summary>
+    [Parameter] public int FontSize { get; set; } = 13;
+
+    /// <summary>Whether long lines soft-wrap.</summary>
+    [Parameter] public bool Wrap { get; set; }
+
+    /// <summary>Raised (debounced by the browser's input event) whenever the buffer changes.</summary>
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private ElementReference _host;
+    private DotNetObjectReference<CodeEditor>? _ref;
+    private string? _id;
+    private bool _ready;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _id is not null) return;
+        _ref = DotNetObjectReference.Create(this);
+        _id = await JS.InvokeAsync<string>("fenrixEditor.create", _host, _ref,
+            new { value = Value, fontSize = FontSize, wrap = Wrap });
+        _ready = true;
+    }
+
+    [JSInvokable]
+    public Task OnBufferChanged() => OnChanged.InvokeAsync();
+
+    public ValueTask<string> GetValueAsync() =>
+        _ready ? JS.InvokeAsync<string>("fenrixEditor.getValue", _id) : ValueTask.FromResult("");
+
+    public async Task SetValueAsync(string text, bool keepCaret = false)
+    {
+        if (_ready) await JS.InvokeVoidAsync("fenrixEditor.setValue", _id, text, keepCaret);
+    }
+
+    public async Task SetOptionsAsync(int? fontSize = null, bool? wrap = null)
+    {
+        if (_ready) await JS.InvokeVoidAsync("fenrixEditor.setOptions", _id, new { fontSize, wrap });
+    }
+
+    public async Task SetMarkersAsync(IEnumerable<EditorMarker> markers)
+    {
+        if (_ready) await JS.InvokeVoidAsync("fenrixEditor.setMarkers", _id, markers);
+    }
+
+    public async Task ClearMarkersAsync()
+    {
+        if (_ready) await JS.InvokeVoidAsync("fenrixEditor.clearMarkers", _id);
+    }
+
+    public async Task GotoLineAsync(int line)
+    {
+        if (_ready) await JS.InvokeVoidAsync("fenrixEditor.gotoLine", _id, line);
+    }
+
+    public async Task InsertTextAsync(string text)
+    {
+        if (_ready) await JS.InvokeVoidAsync("fenrixEditor.insertText", _id, text);
+    }
+
+    public async Task ToggleCommentAsync()
+    {
+        if (_ready) await JS.InvokeVoidAsync("fenrixEditor.toggleComment", _id);
+    }
+
+    public async Task FocusAsync()
+    {
+        if (_ready) await JS.InvokeVoidAsync("fenrixEditor.focus", _id);
+    }
+
+    public ValueTask<EditorFindResult> FindAsync(string query, bool caseSensitive, bool backwards) =>
+        _ready
+            ? JS.InvokeAsync<EditorFindResult>("fenrixEditor.find", _id, new { query, caseSensitive, backwards })
+            : ValueTask.FromResult(new EditorFindResult(false, 0));
+
+    public ValueTask<EditorFindResult> ReplaceCurrentAsync(string query, string replacement, bool caseSensitive) =>
+        _ready
+            ? JS.InvokeAsync<EditorFindResult>("fenrixEditor.replaceCurrent", _id, new { query, replacement, caseSensitive })
+            : ValueTask.FromResult(new EditorFindResult(false, 0));
+
+    public ValueTask<EditorReplaceAllResult> ReplaceAllAsync(string query, string replacement, bool caseSensitive) =>
+        _ready
+            ? JS.InvokeAsync<EditorReplaceAllResult>("fenrixEditor.replaceAll", _id, new { query, replacement, caseSensitive })
+            : ValueTask.FromResult(new EditorReplaceAllResult(0));
+
+    public async ValueTask DisposeAsync()
+    {
+        try { if (_id is not null) await JS.InvokeVoidAsync("fenrixEditor.dispose", _id); }
+        catch (JSDisconnectedException) { }
+        catch (Exception) { /* teardown best-effort */ }
+        _ref?.Dispose();
+    }
+}

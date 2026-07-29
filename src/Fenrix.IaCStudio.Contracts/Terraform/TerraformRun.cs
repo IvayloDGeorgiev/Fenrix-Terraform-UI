@@ -57,6 +57,12 @@ public sealed record TerraformRunSpec(Guid ProjectId, Guid EnvironmentId, Terraf
 
     /// <summary>Absolute path to the state file for <see cref="TerraformCommandKind.StatePush"/> (the source).</summary>
     public string? StateFilePath { get; init; }
+
+    /// <summary>
+    /// Text piped to the process's standard input, used by <see cref="TerraformCommandKind.FormatStdin"/>
+    /// (<c>fmt -</c> formats this HCL buffer from stdin). Never appears in args, history, or a run log.
+    /// </summary>
+    public string? StandardInput { get; init; }
 }
 
 /// <summary>

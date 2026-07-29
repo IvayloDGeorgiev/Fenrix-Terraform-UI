@@ -1,0 +1,46 @@
+@* Reference-helper popover: insert var./local./module./data./resource references (schema-aware attributes
+   when the provider-schema cache is present). See docs/07-visual-builder.md, docs/13-ui-design.md. *@
+@namespace Fenrix_Terraform_UI.Components.Editor
+@using Fenrix.IaCStudio.Application.Editor
+
+<div class="fx-ed-pop" @onclick:stopPropagation="true">
+    <div class="fx-ed-pop-head">Insert reference</div>
+    @if (Index.Entries.Count == 0)
+    {
+        <div class="fx-ed-pop-item"><span class="d">No references found. Author some variables, locals, modules, data sources, or resources first.</span></div>
+    }
+    @foreach (var entry in Index.Entries)
+    {
+        <div class="fx-ed-pop-item" @onclick="() => OnInsert.InvokeAsync(entry.Insert)" style="cursor:pointer;">
+            <span class="t mono">@entry.Insert</span>
+            @if (entry.Detail is not null) { <span class="d">@KindLabel(entry.Kind) · @entry.Detail</span> }
+            else { <span class="d">@KindLabel(entry.Kind)</span> }
+            @if (entry.Attributes.Count > 0)
+            {
+                <span class="fx-ed-attrs" @onclick:stopPropagation="true">
+                    @foreach (var attr in entry.Attributes.Take(24))
+                    {
+                        var refText = entry.Insert + "." + attr;
+                        <span class="fx-ed-attr" @onclick="() => OnInsert.InvokeAsync(refText)">@attr</span>
+                    }
+                </span>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public ReferenceIndex Index { get; set; } = ReferenceIndex.Empty;
+    [Parameter] public EventCallback<string> OnInsert { get; set; }
+
+    private static string KindLabel(ReferenceKind kind) => kind switch
+    {
+        ReferenceKind.Variable => "variable",
+        ReferenceKind.Local => "local",
+        ReferenceKind.Output => "output",
+        ReferenceKind.Module => "module",
+        ReferenceKind.DataSource => "data source",
+        ReferenceKind.Resource => "resource",
+        _ => kind.ToString()
+    };
+}

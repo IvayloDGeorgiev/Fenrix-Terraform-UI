@@ -1,0 +1,18 @@
+@* Snippet palette popover — inserts a scaffolded HCL block. See docs/13-ui-design.md. *@
+@namespace Fenrix_Terraform_UI.Components.Editor
+@using Fenrix.IaCStudio.Application.Editor
+
+<div class="fx-ed-pop" @onclick:stopPropagation="true">
+    <div class="fx-ed-pop-head">Insert snippet</div>
+    @foreach (var snip in EditorSnippetCatalog.All)
+    {
+        <button class="fx-ed-pop-item" @onclick="() => OnPick.InvokeAsync(snip)">
+            <span class="t">@snip.Title <span class="d">· @snip.Category</span></span>
+            <span class="d">@snip.Description</span>
+        </button>
+    }
+</div>
+
+@code {
+    [Parameter] public EventCallback<EditorSnippet> OnPick { get; set; }
+}

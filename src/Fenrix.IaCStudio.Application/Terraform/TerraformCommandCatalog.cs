@@ -51,6 +51,9 @@ public static class TerraformCommandCatalog
         // ---- Phase 10: visual resource builder ----
         TerraformCommandKind.ProvidersSchema => BuildProvidersSchema(),
 
+        // ---- Phase 10.5: Terraform-aware code editor ----
+        TerraformCommandKind.FormatStdin => BuildFormatStdin(),
+
         _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Kind, "Unsupported command kind.")
     };
 
@@ -243,6 +246,14 @@ public static class TerraformCommandCatalog
     /// </summary>
     private static CommandDefinition BuildProvidersSchema() =>
         new("providers", ["providers", "schema", "-json"], TerraformRiskLevel.ReadOnly);
+
+    /// <summary>
+    /// <c>fmt -</c> — the trailing <c>-</c> makes Terraform read the source from stdin and print the formatted
+    /// result to stdout (no file is touched). The buffer travels as <see cref="TerraformRunSpec.StandardInput"/>,
+    /// so it never appears in the argument list, the redacted history, or a run log. See docs/05-terraform-engine.md.
+    /// </summary>
+    private static CommandDefinition BuildFormatStdin() =>
+        new("fmt", ["fmt", "-"], TerraformRiskLevel.ReadOnly);
 
     private static CommandDefinition BuildPlanGenerateConfig(TerraformRunSpec spec)
     {

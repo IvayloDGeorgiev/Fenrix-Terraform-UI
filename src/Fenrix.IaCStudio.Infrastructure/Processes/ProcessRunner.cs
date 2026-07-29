@@ -21,7 +21,8 @@ public sealed class ProcessRunner(ILogger<ProcessRunner> logger) : IProcessRunne
         CancellationToken ct = default) =>
         RunCoreAsync(
             request.ExecutablePath, request.WorkingDirectory, request.Arguments,
-            request.EnvironmentVariables, request.Command, request.RequiresInteractiveTerminal, output, ct);
+            request.EnvironmentVariables, request.Command, request.RequiresInteractiveTerminal,
+            request.StandardInput, output, ct);
 
     public Task<ProcessResult> RunAsync(
         ProcessStartRequest request,
@@ -29,7 +30,8 @@ public sealed class ProcessRunner(ILogger<ProcessRunner> logger) : IProcessRunne
         CancellationToken ct = default) =>
         RunCoreAsync(
             request.ExecutablePath, request.WorkingDirectory, request.Arguments,
-            request.EnvironmentVariables, request.CommandLabel, request.RequiresInteractiveTerminal, output, ct);
+            request.EnvironmentVariables, request.CommandLabel, request.RequiresInteractiveTerminal,
+            request.StandardInput, output, ct);
 
     private async Task<ProcessResult> RunCoreAsync(
         string executablePath,
@@ -38,6 +40,7 @@ public sealed class ProcessRunner(ILogger<ProcessRunner> logger) : IProcessRunne
         IReadOnlyDictionary<string, string> environmentVariables,
         string commandLabel,
         bool requiresInteractiveTerminal,
+        string? standardInput,
         IProgress<ProcessOutputEvent>? output,
         CancellationToken ct)
     {
@@ -49,7 +52,9 @@ public sealed class ProcessRunner(ILogger<ProcessRunner> logger) : IProcessRunne
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            RedirectStandardInput = requiresInteractiveTerminal
+            // Redirect stdin when the caller either wants an interactive terminal or has a buffer to pipe
+            // (e.g. `fmt -`, which formats HCL read from stdin).
+            RedirectStandardInput = requiresInteractiveTerminal || standardInput is not null
         };
 
         // Arguments go through ArgumentList so the OS receives them as a proper argv — no shell parsing,
@@ -90,6 +95,24 @@ public sealed class ProcessRunner(ILogger<ProcessRunner> logger) : IProcessRunne
 
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
+
+        // Pipe the buffer to stdin (if any) then close it to signal EOF, so a filter like `fmt -` can
+        // produce its full output and exit. Best-effort: a process that exited first just yields a broken pipe.
+        if (standardInput is not null)
+        {
+            try
+            {
+                await process.StandardInput.WriteAsync(standardInput.AsMemory(), ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+            {
+                _logger.LogDebug(ex, "Writing stdin to {Executable} failed (process may have exited early).", executablePath);
+            }
+            finally
+            {
+                try { process.StandardInput.Close(); } catch { /* already closed */ }
+            }
+        }
 
         var cancelled = false;
         try

@@ -57,6 +57,35 @@
     </label>
 </div>
 
+<div class="fx-card" style="margin-bottom:16px;">
+    <h2 style="font-size:15px;margin:0 0 4px;">Code editor</h2>
+    <p style="font-size:12.5px;color:var(--fx-dim);margin:0 0 12px;">
+        The Terraform-aware editor on the Files page. Beautify runs <span class="fx-mono">terraform fmt</span>;
+        Validate surfaces <span class="fx-mono">terraform validate</span> diagnostics inline.
+    </p>
+
+    <label style="display:flex;align-items:flex-start;gap:9px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" checked="@_formatOnSave" @onchange="OnFormatOnSaveChanged" style="margin-top:2px;" />
+        <span>
+            Format on save
+            <span style="display:block;color:var(--fx-faint);font-size:12px;margin-top:2px;">
+                Off by default. When on, the buffer is run through <span class="fx-mono">terraform fmt</span> before each save.
+            </span>
+        </span>
+    </label>
+
+    <label style="display:flex;align-items:center;gap:9px;font-size:13px;cursor:pointer;margin-top:12px;">
+        <input type="checkbox" checked="@_wordWrap" @onchange="OnWordWrapChanged" />
+        Soft-wrap long lines
+    </label>
+
+    <div style="display:flex;align-items:center;gap:9px;font-size:13px;margin-top:12px;">
+        <span>Font size</span>
+        <input class="fx-input" type="number" min="10" max="22" style="width:80px;" value="@_fontSize" @onchange="OnFontSizeChanged" />
+        <span style="color:var(--fx-faint);">px</span>
+    </div>
+</div>
+
 <div class="fx-card">
     <h2 style="font-size:15px;margin:0 0 12px;">Workspace</h2>
     <div style="font-size:13px;line-height:1.9;">
@@ -73,6 +102,9 @@
     private bool _reducedMotion;
     private bool _allowInAppDelete;
     private bool _allowKeyExport;
+    private bool _formatOnSave;
+    private bool _wordWrap;
+    private int _fontSize = 13;
 
     protected override void OnInitialized() => Theme.Changed += OnChanged;
 
@@ -81,6 +113,9 @@
         _reducedMotion = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.ReducedMotion, false);
         _allowInAppDelete = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.AllowInAppDelete, false);
         _allowKeyExport = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.AllowPrivateKeyExport, false);
+        _formatOnSave = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.EditorFormatOnSave, false);
+        _wordWrap = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.EditorWordWrap, false);
+        _fontSize = await SettingsSvc.GetOrDefaultAsync(FenrixSettingKeys.EditorFontSize, 13);
     }
 
     private string Active(string theme) => Theme.Theme == theme ? "accent" : "";
@@ -104,6 +139,27 @@
     {
         _allowKeyExport = e.Value is true;
         await SettingsSvc.SetAsync(FenrixSettingKeys.AllowPrivateKeyExport, _allowKeyExport.ToString());
+    }
+
+    private async Task OnFormatOnSaveChanged(ChangeEventArgs e)
+    {
+        _formatOnSave = e.Value is true;
+        await SettingsSvc.SetAsync(FenrixSettingKeys.EditorFormatOnSave, _formatOnSave.ToString());
+    }
+
+    private async Task OnWordWrapChanged(ChangeEventArgs e)
+    {
+        _wordWrap = e.Value is true;
+        await SettingsSvc.SetAsync(FenrixSettingKeys.EditorWordWrap, _wordWrap.ToString());
+    }
+
+    private async Task OnFontSizeChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var px))
+        {
+            _fontSize = Math.Clamp(px, 10, 22);
+            await SettingsSvc.SetAsync(FenrixSettingKeys.EditorFontSize, _fontSize.ToString());
+        }
     }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);

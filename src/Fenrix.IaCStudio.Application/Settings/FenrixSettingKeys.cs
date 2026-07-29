@@ -25,6 +25,14 @@ public static class FenrixSettingKeys
     public const string TerraformExecutable = "terraform.executable";
     public const string TerraformDefaultParallelism = "terraform.defaultParallelism";
 
+    // Terraform-aware code editor (Phase 10.5). See docs/13-ui-design.md, docs/14-settings.md.
+    /// <summary>Run <c>terraform fmt</c> on the buffer automatically before each save. Off by default.</summary>
+    public const string EditorFormatOnSave = "editor.formatOnSave";   // true | false (default false)
+    /// <summary>Editor font size in px (default 13).</summary>
+    public const string EditorFontSize = "editor.fontSize";           // int
+    /// <summary>Soft-wrap long lines in the editor (default false).</summary>
+    public const string EditorWordWrap = "editor.wordWrap";           // true | false (default false)
+
     // Git
     public const string GitExecutable = "git.executable";
 

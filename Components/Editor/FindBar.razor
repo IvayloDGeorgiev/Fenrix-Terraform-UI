@@ -1,0 +1,56 @@
+@* Find & replace bar bound to a CodeEditor instance. See docs/13-ui-design.md. *@
+@namespace Fenrix_Terraform_UI.Components.Editor
+
+<div class="fx-ed-find" @onkeydown="OnKeyDown">
+    <span class="fx-ico" style="color:var(--fx-dim);"><Icon Name="search" Size="13" /></span>
+    <input class="fx-input" placeholder="Find" @bind="_query" @bind:event="oninput" />
+    <input class="fx-input" placeholder="Replace" @bind="_replacement" @bind:event="oninput" />
+    <label class="fx-check" title="Case sensitive" style="display:inline-flex;align-items:center;gap:4px;font-size:12px;">
+        <input type="checkbox" @bind="_caseSensitive" /> Aa
+    </label>
+    <button class="fx-btn sm" @onclick="() => FindAsync(false)" title="Find next">Next</button>
+    <button class="fx-btn sm" @onclick="() => FindAsync(true)" title="Find previous">Prev</button>
+    <button class="fx-btn sm" @onclick="ReplaceOneAsync" title="Replace">Replace</button>
+    <button class="fx-btn sm" @onclick="ReplaceAllAsync" title="Replace all">All</button>
+    <span class="count">@_status</span>
+    <button class="fx-iconbtn" title="Close" @onclick="OnClose"><Icon Name="x" Size="14" /></button>
+</div>
+
+@code {
+    [Parameter] public CodeEditor? Editor { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string _query = "";
+    private string _replacement = "";
+    private bool _caseSensitive;
+    private string _status = "";
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await FindAsync(e.ShiftKey);
+        else if (e.Key == "Escape") await OnClose.InvokeAsync();
+    }
+
+    private async Task FindAsync(bool backwards)
+    {
+        if (Editor is null || string.IsNullOrEmpty(_query)) { _status = ""; return; }
+        var r = await Editor.FindAsync(_query, _caseSensitive, backwards);
+        _status = r.Found ? $"{r.Count} match{(r.Count == 1 ? "" : "es")}" : "No matches";
+    }
+
+    private async Task ReplaceOneAsync()
+    {
+        if (Editor is null || string.IsNullOrEmpty(_query)) return;
+        var r = await Editor.ReplaceCurrentAsync(_query, _replacement, _caseSensitive);
+        _status = r.Found ? $"{r.Count} left" : "Done";
+    }
+
+    private async Task ReplaceAllAsync()
+    {
+        if (Editor is null || string.IsNullOrEmpty(_query)) return;
+        var r = await Editor.ReplaceAllAsync(_query, _replacement, _caseSensitive);
+        _status = $"Replaced {r.Count}";
+    }
+
+    public void Reset() => _status = "";
+}

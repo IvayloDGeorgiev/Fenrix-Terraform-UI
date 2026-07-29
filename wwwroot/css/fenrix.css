@@ -1023,3 +1023,159 @@ a:hover { color: var(--fx-accent-strong); }
 .fx-eq { color: var(--fx-dim); font-family: var(--fx-font-mono); }
 
 .fx-rawval { font-family: var(--fx-font-mono); font-size: 12px; color: var(--fx-dim); word-break: break-all; }
+
+/* ============================ Phase 10.5 — Terraform-aware code editor ============================ */
+/* Token colours (Dark default + Light). Kept as variables so the highlighter is theme-agnostic. */
+:root, :root[data-theme="dark"] {
+  --fx-cm-bg: #0d0f1e;
+  --fx-cm-gutter-bg: #0b0d18;
+  --fx-cm-current: rgba(127, 125, 255, 0.10);
+  --fx-cm-gnum: #5b6180;
+  --fx-cm-gnum-active: #c9c8ff;
+  --fx-cm-match: rgba(127, 125, 255, 0.35);
+  --fx-cm-t-com: #6b7186;
+  --fx-cm-t-str: #7ee0a8;
+  --fx-cm-t-intp: #22d3ee;
+  --fx-cm-t-num: #f0b866;
+  --fx-cm-t-kw: #9b8cff;
+  --fx-cm-t-const: #ff9d6b;
+  --fx-cm-t-fn: #6fd3ff;
+  --fx-cm-t-id: #e8eaf2;
+  --fx-cm-t-op: #9aa0b4;
+  --fx-cm-t-br: #c9ccdd;
+}
+:root[data-theme="light"] {
+  --fx-cm-bg: #ffffff;
+  --fx-cm-gutter-bg: #f3f5fb;
+  --fx-cm-current: rgba(79, 70, 229, 0.08);
+  --fx-cm-gnum: #9aa1b8;
+  --fx-cm-gnum-active: #4338ca;
+  --fx-cm-match: rgba(79, 70, 229, 0.28);
+  --fx-cm-t-com: #8a92a6;
+  --fx-cm-t-str: #0f7b47;
+  --fx-cm-t-intp: #0e7490;
+  --fx-cm-t-num: #b45309;
+  --fx-cm-t-kw: #5b46d6;
+  --fx-cm-t-const: #b0480c;
+  --fx-cm-t-fn: #1560a8;
+  --fx-cm-t-id: #14161f;
+  --fx-cm-t-op: #5b6478;
+  --fx-cm-t-br: #3a4058;
+}
+
+.fx-cm {
+  --fx-cm-fs: 13px;
+  display: flex;
+  height: 100%;
+  min-height: 320px;
+  border: 1px solid var(--fx-border);
+  border-radius: var(--fx-radius-sm);
+  overflow: hidden;
+  background: var(--fx-cm-bg);
+  font-family: var(--fx-font-mono);
+  font-size: var(--fx-cm-fs);
+  line-height: 1.55;
+}
+.fx-cm-gutter {
+  flex: 0 0 auto;
+  min-width: 46px;
+  padding: 8px 0;
+  background: var(--fx-cm-gutter-bg);
+  border-right: 1px solid var(--fx-border);
+  overflow: hidden;
+  user-select: none;
+  color: var(--fx-cm-gnum);
+}
+.fx-cm-gline {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  height: 1.55em;
+  padding: 0 8px 0 6px;
+  white-space: nowrap;
+}
+.fx-cm-gline.current { background: var(--fx-cm-current); }
+.fx-cm-gline.current .fx-cm-gnum { color: var(--fx-cm-gnum-active); }
+.fx-cm-gnum { font-variant-numeric: tabular-nums; font-size: calc(var(--fx-cm-fs) - 1px); }
+.fx-cm-gmark { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.fx-cm-gerr { background: var(--fx-danger); }
+.fx-cm-gwarn { background: var(--fx-warn); }
+
+.fx-cm-area { position: relative; flex: 1 1 auto; overflow: hidden; }
+.fx-cm-activeline {
+  position: absolute; left: 0; right: 0; top: 8px;
+  background: var(--fx-cm-current);
+  pointer-events: none; display: none; will-change: transform;
+}
+.fx-cm-highlight, .fx-cm-input {
+  position: absolute; inset: 0; margin: 0;
+  padding: 8px 12px;
+  border: 0; outline: none;
+  font: inherit; line-height: inherit;
+  tab-size: 2; -moz-tab-size: 2;
+  white-space: pre; overflow: auto;
+  word-wrap: normal;
+}
+.fx-cm-highlight { overflow: hidden; pointer-events: none; color: var(--fx-cm-t-id); z-index: 1; }
+.fx-cm-input {
+  z-index: 2; resize: none; background: transparent;
+  color: transparent; caret-color: var(--fx-accent);
+}
+.fx-cm-input::selection { background: rgba(127, 125, 255, 0.30); }
+.fx-cm.wrap .fx-cm-highlight, .fx-cm.wrap .fx-cm-input { white-space: pre-wrap; word-wrap: break-word; overflow-x: hidden; }
+.fx-cm-line { min-height: 1.55em; }
+.fx-cm-errline { text-decoration: underline wavy var(--fx-danger); text-underline-offset: 3px; }
+.fx-cm-warnline { text-decoration: underline wavy var(--fx-warn); text-underline-offset: 3px; }
+
+.fx-cm-com { color: var(--fx-cm-t-com); font-style: italic; }
+.fx-cm-str { color: var(--fx-cm-t-str); }
+.fx-cm-intp { color: var(--fx-cm-t-intp); }
+.fx-cm-num { color: var(--fx-cm-t-num); }
+.fx-cm-kw { color: var(--fx-cm-t-kw); font-weight: 600; }
+.fx-cm-const { color: var(--fx-cm-t-const); }
+.fx-cm-fn { color: var(--fx-cm-t-fn); }
+.fx-cm-id { color: var(--fx-cm-t-id); }
+.fx-cm-op { color: var(--fx-cm-t-op); }
+.fx-cm-br { color: var(--fx-cm-t-br); }
+.fx-cm-match { background: var(--fx-cm-match); border-radius: 2px; }
+
+/* Editor toolbar / ribbon */
+.fx-ed-toolbar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--fx-border);
+}
+.fx-ed-toolbar .sep { width: 1px; height: 18px; background: var(--fx-border); margin: 0 3px; }
+.fx-ed-spacer { flex: 1 1 auto; }
+.fx-ed-dirty { color: var(--fx-warn); font-size: 12px; }
+
+/* Find bar */
+.fx-ed-find {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 8px; margin-bottom: 8px;
+  background: var(--fx-panel-2); border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm);
+}
+.fx-ed-find input { width: 160px; }
+.fx-ed-find .count { font-size: 12px; color: var(--fx-dim); min-width: 60px; }
+
+/* Popover panels: snippets, outline, references */
+.fx-ed-pop {
+  position: absolute; z-index: 40; margin-top: 6px;
+  min-width: 260px; max-width: 360px; max-height: 340px; overflow: auto;
+  background: var(--fx-panel); border: 1px solid var(--fx-border-strong);
+  border-radius: var(--fx-radius-sm); box-shadow: 0 12px 32px rgba(0,0,0,0.34); padding: 6px;
+}
+.fx-ed-pop-item {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 7px 9px; border-radius: 7px; cursor: pointer; border: none; background: transparent;
+  width: 100%; text-align: left; color: var(--fx-text);
+}
+.fx-ed-pop-item:hover { background: var(--fx-surface-2); }
+.fx-ed-pop-item .t { font-size: 13px; }
+.fx-ed-pop-item .d { font-size: 11px; color: var(--fx-dim); }
+.fx-ed-pop-item .mono { font-family: var(--fx-font-mono); }
+.fx-ed-pop-head { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--fx-faint); padding: 6px 9px 3px; }
+.fx-ed-attrs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.fx-ed-attr { font-family: var(--fx-font-mono); font-size: 11px; padding: 1px 6px; border-radius: 5px; background: var(--fx-surface-2); color: var(--fx-accent-text); cursor: pointer; border: 1px solid var(--fx-border); }
+.fx-ed-attr:hover { border-color: var(--fx-accent); }
+.fx-ed-anchor { position: relative; display: inline-block; }

@@ -1,13 +1,25 @@
 @page "/projects/{ProjectId:guid}"
+@using Fenrix.IaCStudio.Application.Abstractions.Authoring
+@using Fenrix.IaCStudio.Application.Abstractions.Editor
 @using Fenrix.IaCStudio.Application.Abstractions.Files
 @using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Application.Editor
 @using Fenrix.IaCStudio.Application.Files
+@using Fenrix.IaCStudio.Application.Settings
 @using Fenrix.IaCStudio.Contracts.Files
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Environments
 @using Fenrix.IaCStudio.Domain.Projects
 @inject IProjectService Projects
 @inject IFileTreeService Tree
 @inject IFileHistoryStore History
 @inject IProjectFileSynchronizer Sync
+@inject IEditorFormatService EditorFormat
+@inject ITerraformExecutor Terraform
+@inject IProviderSchemaService Schemas
+@inject IConfigAuthoringService Authoring
+@inject ISettingsService Settings
 @inject NavigationManager Nav
 @implements IAsyncDisposable
 
@@ -64,27 +76,156 @@ else
         <div class="fx-card" style="min-height:340px;">
             @if (_mode == Mode.Editor)
             {
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-                    <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="file-text" Size="16" /></span>
-                    <span class="grow fx-mono" style="flex:1;font-size:13px;">@_selectedPath</span>
-                    <button class="fx-btn sm" @onclick="() => ShowHistoryForPathAsync(_selectedPath!)"><span class="fx-ico"><Icon Name="history" Size="13" /></span> History</button>
-                    @if (_selectedIsText)
-                    {
-                        <button class="fx-btn sm accent" @onclick="SaveAsync" disabled="@(!_dirty || _busy)">@(_busy ? "Saving…" : "Save")</button>
-                    }
-                </div>
                 @if (_selectedIsText)
                 {
-                    <textarea class="fx-textarea fx-mono" style="min-height:340px;width:100%;font-size:12.5px;"
-                              @bind="_editorContent" @bind:event="oninput" @bind:after="() => _dirty = true"></textarea>
+                    <div class="fx-ed-toolbar">
+                        <select class="fx-select" style="width:auto;min-width:130px;padding:5px 8px;" value="@_envId" @onchange="OnEnvChanged" title="Environment for fmt / validate / schema">
+                            @if (_environments.Count == 0)
+                            {
+                                <option value="">no environments</option>
+                            }
+                            @foreach (var env in _environments)
+                            {
+                                <option value="@env.Id">@env.Name@(env.IsProduction ? " (prod)" : "")</option>
+                            }
+                        </select>
+                        <span class="sep"></span>
+
+                        <button class="fx-btn sm" @onclick="FormatAsync" disabled="@(_busy || _envId == Guid.Empty)" title="terraform fmt on the buffer">
+                            <span class="fx-ico"><Icon Name="wrench" Size="13" /></span> Beautify
+                        </button>
+                        <button class="fx-btn sm" @onclick="ValidateAsync" disabled="@(_busy || _envId == Guid.Empty)" title="terraform validate (inline diagnostics)">
+                            <span class="fx-ico"><Icon Name="shield-check" Size="13" /></span> Validate
+                        </button>
+                        <span class="sep"></span>
+
+                        <button class="fx-iconbtn" title="Toggle comment (Ctrl+/)" @onclick="ToggleCommentAsync"><Icon Name="hash" Size="15" /></button>
+                        <button class="fx-iconbtn @(_findOpen ? "active" : "")" title="Find & replace" @onclick="ToggleFind"><Icon Name="search" Size="15" /></button>
+
+                        <span class="fx-ed-anchor">
+                            <button class="fx-iconbtn @(_gotoOpen ? "active" : "")" title="Go to line" @onclick="() => Toggle(ref _gotoOpen)"><Icon Name="corner-down-left" Size="15" /></button>
+                            @if (_gotoOpen)
+                            {
+                                <div class="fx-ed-pop" style="min-width:auto;padding:8px;" @onclick:stopPropagation="true">
+                                    <div style="display:flex;gap:6px;align-items:center;">
+                                        <input class="fx-input" style="width:80px;" type="number" min="1" @bind="_gotoLine" @onkeydown="GotoKeyDown" placeholder="line" />
+                                        <button class="fx-btn sm accent" @onclick="GotoAsync">Go</button>
+                                    </div>
+                                </div>
+                            }
+                        </span>
+
+                        <span class="fx-ed-anchor">
+                            <button class="fx-iconbtn @(_snipOpen ? "active" : "")" title="Insert snippet" @onclick="() => Toggle(ref _snipOpen)"><Icon Name="code" Size="15" /></button>
+                            @if (_snipOpen)
+                            {
+                                <SnippetMenu OnPick="InsertSnippetAsync" />
+                            }
+                        </span>
+
+                        <span class="fx-ed-anchor">
+                            <button class="fx-iconbtn @(_outlineOpen ? "active" : "")" title="Outline / go to symbol" @onclick="OpenOutlineAsync"><Icon Name="list" Size="15" /></button>
+                            @if (_outlineOpen)
+                            {
+                                <OutlineMenu Symbols="_outline" OnGoto="GotoSymbolAsync" />
+                            }
+                        </span>
+
+                        <span class="fx-ed-anchor">
+                            <button class="fx-iconbtn @(_refOpen ? "active" : "")" title="Insert reference (var./local./module./data.)" @onclick="OpenReferencesAsync" disabled="@(_envId == Guid.Empty)"><Icon Name="link" Size="15" /></button>
+                            @if (_refOpen)
+                            {
+                                <ReferenceMenu Index="_refIndex" OnInsert="InsertReferenceAsync" />
+                            }
+                        </span>
+
+                        <span class="fx-ed-spacer"></span>
+
+                        <button class="fx-iconbtn @(_wrap ? "active" : "")" title="Toggle word wrap" @onclick="ToggleWrapAsync"><Icon Name="wrap" Size="15" /></button>
+                        <button class="fx-iconbtn" title="Smaller font" @onclick="() => ChangeFontAsync(-1)"><Icon Name="minus" Size="15" /></button>
+                        <span style="font-size:11px;color:var(--fx-dim);width:26px;text-align:center;">@_fontSize</span>
+                        <button class="fx-iconbtn" title="Larger font" @onclick="() => ChangeFontAsync(1)"><Icon Name="plus" Size="15" /></button>
+                        <span class="sep"></span>
+
+                        @if (_dirty)
+                        {
+                            <span class="fx-ed-dirty" title="Unsaved changes">● unsaved</span>
+                        }
+                        <button class="fx-btn sm" @onclick="() => ShowHistoryForPathAsync(_selectedPath!)"><span class="fx-ico"><Icon Name="history" Size="13" /></span> History</button>
+                        <button class="fx-btn sm accent" @onclick="SaveAsync" disabled="@(!_dirty || _busy)">@(_busy ? "Saving…" : "Save")</button>
+                    </div>
+
+                    @if (_findOpen)
+                    {
+                        <FindBar Editor="_editor" OnClose="ToggleFind" />
+                    }
+
+                    @if (_menusOpen)
+                    {
+                        <div class="fx-ed-backdrop" style="position:fixed;inset:0;z-index:30;" @onclick="CloseMenus"></div>
+                    }
+
+                    <div style="height:460px;position:relative;">
+                        <CodeEditor @ref="_editor" @key="_selectedPath" Value="@_editorContent"
+                                    FontSize="_fontSize" Wrap="_wrap" OnChanged="MarkDirty" />
+                    </div>
+
+                    @if (_formatMsg is not null)
+                    {
+                        <div class="@(_formatOk ? "fx-hint" : "fx-error")" style="margin-top:10px;">@_formatMsg</div>
+                    }
+                    @if (_validation is not null)
+                    {
+                        <div style="margin-top:10px;">
+                            <div style="display:flex;align-items:center;gap:8px;font-size:13px;">
+                                @if (_validation.Valid)
+                                {
+                                    <span class="fx-pill ok"><Icon Name="check" Size="12" /> Valid</span>
+                                }
+                                else
+                                {
+                                    <span class="fx-pill fail">@_validation.ErrorCount error(s)</span>
+                                }
+                                @if (_validation.WarningCount > 0)
+                                {
+                                    <span class="fx-pill warn">@_validation.WarningCount warning(s)</span>
+                                }
+                                <span style="color:var(--fx-dim);">against saved files in @(SelectedEnvironment?.Name ?? "environment")</span>
+                            </div>
+                            @foreach (var d in _validation.Diagnostics)
+                            {
+                                <div class="fx-row" style="margin-top:6px;">
+                                    <span class="lead" style="color:@(d.Severity == DiagnosticSeverity.Warning ? "var(--fx-warn)" : "var(--fx-danger)");">
+                                        <Icon Name="alert" Size="14" />
+                                    </span>
+                                    <div class="grow">
+                                        <div class="title">@d.Summary</div>
+                                        <div class="meta">
+                                            @(d.FileName ?? "—")@(d.Line is int ln ? $":{ln}" : "")
+                                            @if (!string.IsNullOrWhiteSpace(d.Detail)) { <text> · @d.Detail</text> }
+                                        </div>
+                                    </div>
+                                    @if (d.Line is int gl && SameFile(d.FileName))
+                                    {
+                                        <button class="fx-btn sm" @onclick="() => GotoAsyncLine(gl)">Go</button>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                    @if (_error is not null)
+                    {
+                        <div class="fx-error" style="margin-top:10px;">@_error</div>
+                    }
                 }
                 else
                 {
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                        <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="file-text" Size="16" /></span>
+                        <span class="grow fx-mono" style="flex:1;font-size:13px;">@_selectedPath</span>
+                        <button class="fx-btn sm" @onclick="() => ShowHistoryForPathAsync(_selectedPath!)"><span class="fx-ico"><Icon Name="history" Size="13" /></span> History</button>
+                    </div>
                     <div class="fx-hint">Binary or non-text file — preview not available. Use History to recover past versions.</div>
-                }
-                @if (_error is not null)
-                {
-                    <div class="fx-error">@_error</div>
                 }
             }
             else if (_mode == Mode.History)
@@ -176,13 +317,13 @@ else
 
 @if (_confirmOpen)
 {
-    <Modal Title="Delete" IconName="alert" OnClose="() => _confirmOpen = false">
+    <Modal Title="@_confirmTitle" IconName="alert" OnClose="() => _confirmOpen = false">
         <ChildContent>
             <p style="font-size:13px;margin:0;">@_confirmMessage</p>
         </ChildContent>
         <Footer>
             <button class="fx-btn ghost" @onclick="() => _confirmOpen = false">Cancel</button>
-            <button class="fx-btn danger" @onclick="RunConfirmAsync">Delete</button>
+            <button class="fx-btn @(_confirmDanger ? "danger" : "accent")" @onclick="RunConfirmAsync">@_confirmConfirmLabel</button>
         </Footer>
     </Modal>
 }
@@ -206,6 +347,26 @@ else
     private bool _selectedIsText;
     private bool _dirty;
 
+    // Editor state
+    private CodeEditor? _editor;
+    private List<ProjectEnvironment> _environments = [];
+    private Guid _envId;
+    private int _fontSize = 13;
+    private bool _wrap;
+    private bool _formatOnSave;
+    private bool _findOpen;
+    private bool _gotoOpen, _snipOpen, _outlineOpen, _refOpen;
+    private int? _gotoLine;
+    private string? _formatMsg;
+    private bool _formatOk;
+    private TerraformValidationResult? _validation;
+    private List<OutlineSymbol> _outline = [];
+    private ReferenceIndex _refIndex = ReferenceIndex.Empty;
+    private bool _hasMarkers;
+
+    private bool _menusOpen => _gotoOpen || _snipOpen || _outlineOpen || _refOpen;
+    private ProjectEnvironment? SelectedEnvironment => _environments.FirstOrDefault(e => e.Id == _envId);
+
     private List<FileHistoryEntry> _history = [];
     private string _historyPath = "";
 
@@ -219,7 +380,8 @@ else
 
     // confirm modal
     private bool _confirmOpen;
-    private string _confirmMessage = "";
+    private string _confirmTitle = "Delete", _confirmMessage = "", _confirmConfirmLabel = "Delete";
+    private bool _confirmDanger = true;
     private Func<Task>? _confirmAction;
 
     protected override async Task OnParametersSetAsync()
@@ -240,6 +402,14 @@ else
         _loading = false;
         if (_project is null)
             return;
+
+        _environments = _project.Environments.OrderBy(e => e.DisplayOrder).ThenBy(e => e.Name).ToList();
+        _envId = _environments.FirstOrDefault()?.Id ?? Guid.Empty;
+
+        // Editor preferences (global scope).
+        _fontSize = await Settings.GetOrDefaultAsync(FenrixSettingKeys.EditorFontSize, 13);
+        _wrap = await Settings.GetOrDefaultAsync(FenrixSettingKeys.EditorWordWrap, false);
+        _formatOnSave = await Settings.GetOrDefaultAsync(FenrixSettingKeys.EditorFormatOnSave, false);
 
         await Projects.TouchAsync(ProjectId);
         await ReloadTreeAsync();
@@ -282,7 +452,23 @@ else
 
     private async Task SelectFileAsync(FileTreeNode node)
     {
+        if (_dirty && _selectedIsText)
+        {
+            var target = node;
+            ConfirmDiscard(() => OpenFileAsync(target));
+            return;
+        }
+        await OpenFileAsync(node);
+    }
+
+    private async Task OpenFileAsync(FileTreeNode node)
+    {
         _error = null;
+        _formatMsg = null;
+        _validation = null;
+        _hasMarkers = false;
+        CloseMenus();
+        _findOpen = false;
         _selectedPath = node.RelativePath;
         _selectedIsText = FileTrackingPolicy.IsVersioned(node.RelativePath);
         _mode = Mode.Editor;
@@ -299,17 +485,242 @@ else
         }
     }
 
+    private void MarkDirty()
+    {
+        if (!_dirty) { _dirty = true; StateHasChanged(); }
+        if (_hasMarkers)
+        {
+            _hasMarkers = false;
+            _ = _editor?.ClearMarkersAsync();
+        }
+    }
+
+    private void OnEnvChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id))
+            _envId = id;
+        _validation = null;
+        _formatMsg = null;
+    }
+
     private async Task SaveAsync()
     {
-        if (_project is null || _selectedPath is null) return;
-        _busy = true; _error = null;
+        if (_project is null || _selectedPath is null || _editor is null) return;
+        _busy = true; _error = null; _formatMsg = null;
         try
         {
-            await Tree.WriteFileAsync(ProjectId, _project.RootPath, _selectedPath, _editorContent);
+            var buffer = await _editor.GetValueAsync();
+
+            if (_formatOnSave && _envId != Guid.Empty)
+            {
+                var fmt = await EditorFormat.FormatAsync(ProjectId, _envId, buffer);
+                if (fmt.Succeeded && fmt.FormattedText is not null)
+                {
+                    buffer = fmt.FormattedText;
+                    await _editor.SetValueAsync(buffer, keepCaret: true);
+                }
+                else if (fmt.Error is not null)
+                {
+                    // Save the raw buffer but warn the formatting couldn't run (e.g. a syntax error).
+                    _formatMsg = $"Saved without formatting: {fmt.Error}";
+                    _formatOk = false;
+                }
+            }
+
+            await Tree.WriteFileAsync(ProjectId, _project.RootPath, _selectedPath, buffer);
             _dirty = false;
         }
         catch (Exception ex) { _error = ex.Message; }
         finally { _busy = false; }
+    }
+
+    private async Task FormatAsync()
+    {
+        if (_editor is null || _envId == Guid.Empty) return;
+        _busy = true; _formatMsg = null; _error = null;
+        try
+        {
+            var buffer = await _editor.GetValueAsync();
+            var result = await EditorFormat.FormatAsync(ProjectId, _envId, buffer);
+            if (result.BlockReason is not null)
+            {
+                _formatMsg = result.BlockReason; _formatOk = false;
+            }
+            else if (!result.Succeeded)
+            {
+                _formatMsg = result.Error ?? "Formatting failed."; _formatOk = false;
+            }
+            else if (result.FormattedText is not null)
+            {
+                if (result.Changed)
+                {
+                    await _editor.SetValueAsync(result.FormattedText, keepCaret: true);
+                    _dirty = true;
+                    _formatMsg = "Formatted."; _formatOk = true;
+                }
+                else
+                {
+                    _formatMsg = "Already formatted."; _formatOk = true;
+                }
+            }
+        }
+        catch (Exception ex) { _formatMsg = ex.Message; _formatOk = false; }
+        finally { _busy = false; }
+    }
+
+    private async Task ValidateAsync()
+    {
+        if (_editor is null || _envId == Guid.Empty) return;
+
+        // Validate reads files from disk — save first so squiggles reflect the buffer.
+        if (_dirty) await SaveAsync();
+
+        _busy = true; _validation = null; _error = null; _formatMsg = null;
+        try
+        {
+            var spec = new TerraformRunSpec(ProjectId, _envId, TerraformCommandKind.Validate);
+            var plan = await Terraform.PlanAsync(spec);
+            if (!plan.CanRun)
+            {
+                _error = plan.BlockReason;
+                return;
+            }
+            var run = await Terraform.ExecuteAsync(plan, null);
+            _validation = run.Validation;
+
+            var markers = (run.Validation?.Diagnostics ?? [])
+                .Where(d => d.Line is int && SameFile(d.FileName))
+                .Select(d => new EditorMarker(d.Line!.Value,
+                    d.Severity == DiagnosticSeverity.Warning ? "warning" : "error", d.Summary))
+                .ToList();
+            await _editor.SetMarkersAsync(markers);
+            _hasMarkers = markers.Count > 0;
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private bool SameFile(string? diagnosticFile)
+    {
+        if (string.IsNullOrWhiteSpace(diagnosticFile) || _selectedPath is null) return false;
+        var a = Path.GetFileName(diagnosticFile.Replace('\\', '/'));
+        var b = Path.GetFileName(_selectedPath.Replace('\\', '/'));
+        return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task ToggleCommentAsync()
+    {
+        if (_editor is not null) await _editor.ToggleCommentAsync();
+    }
+
+    private void ToggleFind()
+    {
+        _findOpen = !_findOpen;
+        CloseMenus();
+    }
+
+    private void Toggle(ref bool flag)
+    {
+        var v = !flag;
+        CloseMenus();
+        flag = v;
+    }
+
+    private void CloseMenus()
+    {
+        _gotoOpen = _snipOpen = _outlineOpen = _refOpen = false;
+    }
+
+    private async Task GotoAsync()
+    {
+        if (_editor is not null && _gotoLine is int l && l > 0)
+            await _editor.GotoLineAsync(l);
+        _gotoOpen = false;
+    }
+
+    private async Task GotoAsyncLine(int line)
+    {
+        if (_editor is not null) await _editor.GotoLineAsync(line);
+    }
+
+    private async Task GotoKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await GotoAsync();
+    }
+
+    private async Task InsertSnippetAsync(EditorSnippet snippet)
+    {
+        if (_editor is not null) await _editor.InsertTextAsync(snippet.Body);
+        _snipOpen = false;
+    }
+
+    private async Task OpenOutlineAsync()
+    {
+        if (_outlineOpen) { _outlineOpen = false; return; }
+        CloseMenus();
+        if (_editor is not null)
+        {
+            var buffer = await _editor.GetValueAsync();
+            _outline = EditorOutlineBuilder.Build(buffer).ToList();
+        }
+        _outlineOpen = true;
+    }
+
+    private async Task GotoSymbolAsync(int line)
+    {
+        if (_editor is not null) await _editor.GotoLineAsync(line);
+        _outlineOpen = false;
+    }
+
+    private async Task OpenReferencesAsync()
+    {
+        if (_refOpen) { _refOpen = false; return; }
+        CloseMenus();
+        await BuildReferenceIndexAsync();
+        _refOpen = true;
+    }
+
+    private async Task BuildReferenceIndexAsync()
+    {
+        _refIndex = ReferenceIndex.Empty;
+        if (_envId == Guid.Empty || _editor is null) return;
+        try
+        {
+            var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var configFiles = await Authoring.ListConfigFilesAsync(ProjectId, _envId);
+            foreach (var rel in configFiles)
+            {
+                var file = await Authoring.ReadFileAsync(ProjectId, rel);
+                if (file is not null) files[rel] = file.Content;
+            }
+            // Override the file being edited with the live (possibly unsaved) buffer.
+            if (_selectedPath is not null)
+                files[_selectedPath] = await _editor.GetValueAsync();
+
+            var schema = await Schemas.GetCachedAsync(ProjectId, _envId);
+            _refIndex = ReferenceIndexBuilder.Build(files, schema);
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    private async Task InsertReferenceAsync(string reference)
+    {
+        if (_editor is not null) await _editor.InsertTextAsync(reference);
+        _refOpen = false;
+    }
+
+    private async Task ToggleWrapAsync()
+    {
+        _wrap = !_wrap;
+        if (_editor is not null) await _editor.SetOptionsAsync(wrap: _wrap);
+        await Settings.SetAsync(FenrixSettingKeys.EditorWordWrap, _wrap ? "true" : "false");
+    }
+
+    private async Task ChangeFontAsync(int delta)
+    {
+        _fontSize = Math.Clamp(_fontSize + delta, 10, 22);
+        if (_editor is not null) await _editor.SetOptionsAsync(fontSize: _fontSize);
+        await Settings.SetAsync(FenrixSettingKeys.EditorFontSize, _fontSize.ToString());
     }
 
     private async Task ShowHistoryAsync(FileTreeNode node) => await ShowHistoryForPathAsync(node.RelativePath);
@@ -407,13 +818,30 @@ else
         catch (Exception ex) { _promptError = ex.Message; }
     }
 
+    private void ConfirmDiscard(Func<Task> onProceed)
+    {
+        _confirmTitle = "Unsaved changes";
+        _confirmMessage = $"Discard unsaved changes in '{_selectedPath}'?";
+        _confirmConfirmLabel = "Discard";
+        _confirmDanger = true;
+        _confirmAction = async () =>
+        {
+            _dirty = false;
+            await onProceed();
+        };
+        _confirmOpen = true;
+    }
+
     private void ConfirmDelete(FileTreeNode node)
     {
+        _confirmTitle = "Delete";
+        _confirmConfirmLabel = "Delete";
+        _confirmDanger = true;
         _confirmMessage = $"Send '{node.RelativePath}' to the Recycle Bin? It stays recoverable from history.";
         _confirmAction = async () =>
         {
             await Tree.DeleteAsync(ProjectId, _project!.RootPath, node.RelativePath);
-            if (_selectedPath == node.RelativePath) { _selectedPath = null; _mode = Mode.Welcome; }
+            if (_selectedPath == node.RelativePath) { _selectedPath = null; _mode = Mode.Welcome; _dirty = false; }
             await ReloadTreeAsync();
             await ReloadRecoverableAsync();
         };
@@ -422,6 +850,9 @@ else
 
     private void ConfirmPurgeItem(RecoverableFile r)
     {
+        _confirmTitle = "Discard";
+        _confirmConfirmLabel = "Discard";
+        _confirmDanger = true;
         _confirmMessage = $"Permanently discard the recoverable content for '{r.RelativePath}'? This can't be undone.";
         _confirmAction = async () =>
         {
@@ -435,6 +866,9 @@ else
 
     private void ConfirmClearAll()
     {
+        _confirmTitle = "Clear all";
+        _confirmConfirmLabel = "Clear all";
+        _confirmDanger = true;
         _confirmMessage = $"Permanently discard all {_recoverable.Count} recoverable item(s)? Their retained content will be gone for good. Files currently on disk are not affected.";
         _confirmAction = async () =>
         {

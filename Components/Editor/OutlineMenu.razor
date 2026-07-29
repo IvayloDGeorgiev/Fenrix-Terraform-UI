@@ -1,0 +1,41 @@
+@* Go-to-symbol outline popover for the current file. See docs/13-ui-design.md. *@
+@namespace Fenrix_Terraform_UI.Components.Editor
+@using Fenrix.IaCStudio.Application.Editor
+
+<div class="fx-ed-pop" @onclick:stopPropagation="true">
+    <div class="fx-ed-pop-head">Outline</div>
+    @if (Symbols.Count == 0)
+    {
+        <div class="fx-ed-pop-item"><span class="d">No blocks in this file.</span></div>
+    }
+    @foreach (var sym in Symbols)
+    {
+        <button class="fx-ed-pop-item" @onclick="() => OnGoto.InvokeAsync(sym.Line)">
+            <span class="t">
+                <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="@IconFor(sym.Kind)" Size="12" /></span>
+                <span class="mono">@sym.Label</span>
+                @if (sym.Detail is not null) { <span class="d">· @sym.Detail</span> }
+            </span>
+            <span class="d">line @sym.Line</span>
+        </button>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<OutlineSymbol> Symbols { get; set; } = [];
+    [Parameter] public EventCallback<int> OnGoto { get; set; }
+
+    private static string IconFor(OutlineSymbolKind kind) => kind switch
+    {
+        OutlineSymbolKind.Resource => "box",
+        OutlineSymbolKind.DataSource => "database",
+        OutlineSymbolKind.Variable => "type",
+        OutlineSymbolKind.Output => "corner-down-left",
+        OutlineSymbolKind.Local => "hash",
+        OutlineSymbolKind.Module => "blocks",
+        OutlineSymbolKind.Provider => "plug",
+        OutlineSymbolKind.Terraform => "terminal",
+        OutlineSymbolKind.Backend => "server",
+        _ => "file"
+    };
+}

@@ -31,7 +31,9 @@ public static class CommandPreviewBuilder
             def.Command,
             def.Arguments,
             environmentVariables ?? NoEnvironment,
-            def.Risk);
+            def.Risk,
+            // fmt - pipes the editor buffer through stdin; it never enters the argument list or the preview.
+            StandardInput: spec.StandardInput);
     }
 
     /// <summary>Builds a redacted, copyable preview of a request, with optional extra context chips.</summary>

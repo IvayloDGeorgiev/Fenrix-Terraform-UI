@@ -18,4 +18,9 @@ public sealed record TerraformCommandRequest(
     IReadOnlyList<string> Arguments,
     IReadOnlyDictionary<string, string> EnvironmentVariables,
     TerraformRiskLevel RiskLevel,
-    bool RequiresInteractiveTerminal = false);
+    bool RequiresInteractiveTerminal = false,
+    /// <summary>
+    /// Optional text piped to the process's standard input (used by <c>fmt -</c>, which formats an HCL buffer
+    /// from stdin). When set, the runner redirects and writes stdin, then closes it to signal EOF. Never logged.
+    /// </summary>
+    string? StandardInput = null);

@@ -259,25 +259,27 @@ _✅ Core complete. Cloud provider abstraction + Azure/AWS/Google adapters (offi
 
 Turn the plain `<textarea>` file editor on the project Files page into a professional, Terraform-focused code editor. Everything runs through the existing process runner + command preview (no shell strings); `fmt`/`validate` use the resolved Terraform binary. The editor foundation + `fmt`/`validate` ribbon are independent of provider/cloud work and can be pulled earlier as a quality pass; the schema-aware completion reuses the Phase 10 provider-schema cache (hence the placement).
 
+_Status: **core complete** (2026-07-29). Editor engine is a **hand-rolled, dependency-free** vanilla-JS HCL editor (`wwwroot/js/fenrix-editor.js`) — Ivo's call, since CodeMirror 6 can't be bundled offline here without an npm/rollup build step, and it matches the house style (the hand-rolled `fenrix-graph.js` renderer + HCL toolkit). Full ribbon + schema-aware reference helpers done in one batch. **No DB migration.** Verified by hand-trace only — the sandbox VM was down, so nothing was executed; run a build + the editor smoke test in Visual Studio._
+
 **Editor foundation**
 
-- [ ] Replace the textarea with a bundled, **offline** code-editor component — recommend **CodeMirror 6** (lightweight, HCL/Terraform language support; Monaco is the heavier fallback). Blazor↔JS interop wrapper; assets bundled in `wwwroot` (no CDN).
-- [ ] **Line numbers** + current-line highlight + gutter; HCL **syntax highlighting** (blocks, strings, comments, `${…}` interpolations); bracket matching + auto-close; 2-space indent; whitespace/EOL normalization; word-wrap toggle; adjustable font size.
-- [ ] Dark/Light themes matched to the app tokens; reduced-motion aware.
+- [x] Replace the textarea with a bundled, **offline** code-editor component — **hand-rolled dependency-free** editor (`fenrix-editor.js`) instead of CodeMirror 6 (can't bundle CM6's ES modules offline without a build toolchain; hand-rolled matches the dependency-free house style). Blazor↔JS interop wrapper (`Components/Editor/CodeEditor.razor`); assets in `wwwroot` (no CDN).
+- [x] **Line numbers** + current-line highlight + gutter; HCL **syntax highlighting** (blocks, strings, comments, `${…}`/`%{…}` interpolations, heredocs, numbers, functions); bracket matching + auto-close; 2-space indent (auto-indent on Enter, Tab/Shift-Tab block indent); word-wrap toggle; adjustable font size.
+- [x] Dark/Light themes matched to the app tokens (`--fx-cm-*` variables); reduced-motion aware (no transitions).
 
 **Editor ribbon (Terraform-specific)**
 
-- [ ] **Format ("Beautify")** — run `terraform fmt -` (stdin→stdout) on the buffer via the command catalog and replace the buffer with canonical formatting; optional **format-on-save** (Settings).
-- [ ] **Validate** — run validate for the environment and surface diagnostics **inline** (gutter markers + squiggles), reusing the Phase 3 validate pipeline/parser.
-- [ ] Comment/uncomment toggle (`#`); find & replace in file; go-to-line.
-- [ ] **Snippet palette** — insert scaffolded HCL blocks (resource, variable, output, provider, module, backend, data, locals).
-- [ ] **Outline / go-to-symbol** — jump to resource/variable/output/module blocks in the current file.
-- [ ] **Reference helpers** — quick-insert `var.` / `local.` / `module.` / `data.` references (schema-aware once the Phase 10 cache exists).
+- [x] **Format ("Beautify")** — runs `terraform fmt -` (stdin→stdout) on the buffer via the command catalog (`FormatStdin` kind), replaces the buffer with canonical formatting; optional **format-on-save** (Settings → Code editor).
+- [x] **Validate** — runs the Phase 3 validate pipeline for the environment and surfaces diagnostics **inline** (gutter markers + wavy squiggles for the current file) plus a full diagnostic list.
+- [x] Comment/uncomment toggle (`#`, Ctrl+/); find & replace in file; go-to-line.
+- [x] **Snippet palette** — inserts scaffolded HCL blocks (resource, variable, output, provider, module, backend, data, locals) via `EditorSnippetCatalog`.
+- [x] **Outline / go-to-symbol** — jumps to resource/variable/output/module/data/locals blocks in the current file (`EditorOutlineBuilder`).
+- [x] **Reference helpers** — quick-insert `var.` / `local.` / `module.` / `data.` / resource references (`ReferenceIndexBuilder`), schema-aware attribute chips reusing the Phase 10 provider-schema cache.
 
 **Safety & consistency**
 
-- [ ] Editor writes go through the same atomic-write + file-history + command-preview path as today (unsaved-changes guard, dirty indicator preserved).
-- [ ] No new secrets/shell strings; `fmt`/`validate` runs recorded as redacted history like other Terraform commands.
+- [x] Editor writes go through the same atomic-write + file-history path as today (`IFileTreeService.WriteFileAsync`); unsaved-changes guard + dirty indicator preserved.
+- [x] No new secrets/shell strings; `fmt` runs via the shared `ArgumentList` catalog with the buffer piped through **stdin** (never in args/history/log; `captureLog:false`) and recorded as redacted history; `validate` recorded like other Terraform commands.
 
 ## Phase 11 — Enterprise capability
 
@@ -311,3 +313,4 @@ Turn the plain `<textarea>` file editor on the project Files page into a profess
 | 2026-07-24 | `AppInitializer` adopts a legacy `EnsureCreated` DB (create missing tables + stamp migration history) instead of requiring a reset — upgrades never lose data | [12](12-database-design.md) |
 | 2026-07-28 | Managed private keys are DPAPI-encrypted under `Data\keys\<projectId>\` (never in the project/git); DB holds only a `KeyPair` row + `SecretReference`. Import reads the public key without decrypting the private half; generation captures it from Terraform outputs. Dependency-free SSH/PPK handling (no BouncyCastle) — Ivo's call | [28](28-key-pair-management.md), [11](11-secrets.md) |
 | 2026-07-28 | Deployments recorded by a single `IDeploymentRecorder` inside the apply service, so every successful apply (Plan & apply page *or* governed Pipelines flow) lands on the board; resolves/creates the `ProjectVersion` from the plan's commit. Governed deploy = plan → gates → apply the exact saved plan (no bypass of ADR-0003); a deploy first checks the version's commit out so what deploys is what was cut. Approval gate is a local self-ack (multi-user role approvals stay Phase 11). State serial/lineage read from the local `terraform.tfstate` (only the two non-sensitive top-level fields). One migration: `AddDeploymentPipelines` (pipeline-config tables only) | [20](20-pipelines-deployments.md) |
+| 2026-07-29 | Phase 10.5 code editor is a **hand-rolled, dependency-free** vanilla-JS HCL editor (`fenrix-editor.js`), not CodeMirror 6 — CM6's ES modules can't be bundled offline here without an npm/rollup toolchain, and hand-rolling matches the dependency-free house style (`fenrix-graph.js`, the HCL toolkit). "Beautify" = `terraform fmt -` over the buffer via **stdin** (new `FormatStdin` kind + a `StandardInput` field threaded through the request/runner; `captureLog:false`, never in args/history/log). Validate reuses the Phase 3 pipeline for inline gutter markers/squiggles. Outline/snippets/reference-helpers are pure Application logic; references are schema-aware via the Phase 10 cache. Saves keep the atomic-write + file-history path. **No new migration.** | [05](05-terraform-engine.md), [13](13-ui-design.md) |

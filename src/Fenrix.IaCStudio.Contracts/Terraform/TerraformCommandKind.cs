@@ -102,5 +102,16 @@ public enum TerraformCommandKind
     /// <c>Cache/terraform-schemas</c> and never written to a run log (parsed in memory to keep logs lean).
     /// Requires the providers to be installed (i.e. <c>init</c> has run). See docs/07-visual-builder.md.
     /// </summary>
-    ProvidersSchema = 24
+    ProvidersSchema = 24,
+
+    // ---- Phase 10.5: Terraform-aware code editor (docs/05-terraform-engine.md, docs/13-ui-design.md) ----
+
+    /// <summary>
+    /// <c>terraform fmt -</c> — reads an HCL buffer from <em>stdin</em> and writes the canonically-formatted
+    /// result to <em>stdout</em>, touching no files. Backs the editor's "Beautify" action on the live buffer
+    /// (the formatted text replaces the buffer; the on-disk save still goes through the atomic-write +
+    /// file-history path). Read-only with respect to the filesystem and infrastructure. The buffer is passed
+    /// as <see cref="TerraformRunSpec.StandardInput"/> and is never written to a run log. See docs/05-terraform-engine.md.
+    /// </summary>
+    FormatStdin = 25
 }

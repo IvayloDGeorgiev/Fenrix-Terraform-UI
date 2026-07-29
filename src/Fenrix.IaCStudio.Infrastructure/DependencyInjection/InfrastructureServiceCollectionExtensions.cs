@@ -2,6 +2,7 @@ using Fenrix.IaCStudio.Application.Abstractions;
 using Fenrix.IaCStudio.Application.Abstractions.Authoring;
 using Fenrix.IaCStudio.Application.Abstractions.Cloud;
 using Fenrix.IaCStudio.Application.Abstractions.Connections;
+using Fenrix.IaCStudio.Application.Abstractions.Editor;
 using Fenrix.IaCStudio.Application.Abstractions.Deployments;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
@@ -155,6 +156,12 @@ public static class InfrastructureServiceCollectionExtensions
         // See docs/07-visual-builder.md, docs/22-terraform-files-model.md.
         services.AddScoped<IProviderSchemaService, ProviderSchemaService>();
         services.AddScoped<IConfigAuthoringService, ConfigAuthoringService>();
+
+        // Terraform-aware code editor (Phase 10.5). The format service runs `fmt -` over the editor buffer
+        // (stdin → stdout) through the shared executor + coordinator (captureLog:false, redacted history);
+        // outline, snippets, and reference helpers are pure Application logic invoked directly from the UI.
+        // No new DB migration. See docs/05-terraform-engine.md, docs/13-ui-design.md.
+        services.AddScoped<IEditorFormatService, EditorFormatService>();
 
         return services;
     }

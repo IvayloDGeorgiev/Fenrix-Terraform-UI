@@ -13,4 +13,6 @@ public sealed record ProcessStartRequest(
     IReadOnlyList<string> Arguments,
     IReadOnlyDictionary<string, string> EnvironmentVariables,
     string CommandLabel,
-    bool RequiresInteractiveTerminal = false);
+    bool RequiresInteractiveTerminal = false,
+    /// <summary>Optional text piped to the process's standard input, then closed (EOF). Never logged.</summary>
+    string? StandardInput = null);
