@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Fenrix.IaCStudio.Application.Abstractions.Deployments;
+using Fenrix.IaCStudio.Application.Abstractions.Enterprise;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Contracts.Terraform;
 using Fenrix.IaCStudio.Domain.Common;
@@ -23,12 +24,14 @@ namespace Fenrix.IaCStudio.Infrastructure.Deployments;
 public sealed class DeploymentRecorder(
     AppDbContext db,
     IProjectService projects,
+    IUserContext userContext,
     ILogger<DeploymentRecorder> logger) : IDeploymentRecorder
 {
     private const string StateFileName = "terraform.tfstate";
 
     private readonly AppDbContext _db = db;
     private readonly IProjectService _projects = projects;
+    private readonly IUserContext _userContext = userContext;
     private readonly ILogger<DeploymentRecorder> _logger = logger;
 
     public async Task<Guid?> RecordApplyAsync(SavedPlan plan, ApplyResult result, CancellationToken ct = default)
@@ -69,7 +72,7 @@ public sealed class DeploymentRecorder(
                 Status = DeploymentStatus.Succeeded,
                 StartedAt = plan.AppliedAt ?? DateTimeOffset.UtcNow,
                 CompletedAt = DateTimeOffset.UtcNow,
-                InitiatedBy = System.Environment.UserName,
+                InitiatedBy = _userContext.Current.DisplayName,
                 AddCount = result.Added,
                 ChangeCount = result.Changed,
                 DestroyCount = result.Destroyed,
@@ -126,7 +129,7 @@ public sealed class DeploymentRecorder(
             ProviderLockHash = plan.LockHash ?? string.Empty,
             RequiredTerraformVersion = plan.TerraformVersion,
             Notes = "Captured automatically from an apply.",
-            CreatedBy = System.Environment.UserName
+            CreatedBy = _userContext.Current.DisplayName
         };
         _db.ProjectVersions.Add(created);
         await _db.SaveChangesAsync(ct);

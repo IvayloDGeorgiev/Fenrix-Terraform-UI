@@ -9,6 +9,8 @@ Short, dated records of significant architectural decisions. Each captures conte
 | [0003](0003-saved-plan-only-apply.md) | Apply only the exact reviewed saved plan | Accepted |
 | [0004](0004-db-file-version-history.md) | Database-backed file version history for recovery | Accepted |
 | [0005](0005-connections-model.md) | Connections: global library + per-environment binding | Accepted |
+| [0006](0006-enterprise-metadata-and-identity.md) | Enterprise metadata store, identity, and RBAC | Accepted |
+| [0007](0007-execution-host-seam.md) | Execution-host seam (agent-ready, agent deferred) | Accepted |
 
 ## Template
 

@@ -4,6 +4,8 @@ using Fenrix.IaCStudio.Application.Abstractions.Cloud;
 using Fenrix.IaCStudio.Application.Abstractions.Connections;
 using Fenrix.IaCStudio.Application.Abstractions.Editor;
 using Fenrix.IaCStudio.Application.Abstractions.Deployments;
+using Fenrix.IaCStudio.Application.Abstractions.Enterprise;
+using Fenrix.IaCStudio.Application.Abstractions.Execution;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
@@ -13,6 +15,8 @@ using Fenrix.IaCStudio.Application.Abstractions.Terraform;
 using Fenrix.IaCStudio.Infrastructure.Cloud;
 using Fenrix.IaCStudio.Infrastructure.Connections;
 using Fenrix.IaCStudio.Infrastructure.Deployments;
+using Fenrix.IaCStudio.Infrastructure.Enterprise;
+using Fenrix.IaCStudio.Infrastructure.Execution;
 using Fenrix.IaCStudio.Infrastructure.Files;
 using Fenrix.IaCStudio.Infrastructure.Git;
 using Fenrix.IaCStudio.Infrastructure.Persistence;
@@ -40,14 +44,55 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<IWorkspacePaths>(sp =>
             new WorkspacePaths(sp.GetRequiredService<ILogger<WorkspacePaths>>(), dataRootOverride));
 
+        // Enterprise bootstrap (Phase 11). Read once at startup from enterprise.json in the data root — this
+        // must happen before the DbContext is configured, because the metadata provider (SQLite vs SQL Server)
+        // is chosen here and can't come from the Settings table (which lives in the database). Absent/disabled
+        // /unresolved ⇒ local SQLite + single-user posture. See docs/29-enterprise.md, ADR-0006.
+        services.AddSingleton<EnterpriseBootstrap>(sp => EnterpriseBootstrap.Load(
+            sp.GetRequiredService<IWorkspacePaths>(),
+            sp.GetService<ILoggerFactory>()?.CreateLogger<EnterpriseBootstrap>()));
+        services.AddSingleton<IEnterpriseConfig>(sp => sp.GetRequiredService<EnterpriseBootstrap>());
+
         services.AddDbContext<AppDbContext>((sp, options) =>
         {
-            var paths = sp.GetRequiredService<IWorkspacePaths>();
-            options.UseSqlite($"Data Source={paths.DatabaseFilePath}");
+            var bootstrap = sp.GetRequiredService<EnterpriseBootstrap>();
+            if (bootstrap.UseSqlServer && !string.IsNullOrWhiteSpace(bootstrap.SqlConnectionString))
+            {
+                options.UseSqlServer(bootstrap.SqlConnectionString,
+                    o => o.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName));
+            }
+            else
+            {
+                var paths = sp.GetRequiredService<IWorkspacePaths>();
+                options.UseSqlite($"Data Source={paths.DatabaseFilePath}");
+            }
         });
 
         services.AddScoped<ISettingsStore, EfSettingsStore>();
         services.AddSingleton<IAppInitializer, AppInitializer>();
+
+        // Identity + execution seam (Phase 11). The user context resolves the current OS user (SID + name),
+        // replacing inlined Environment.UserName; it's a singleton because the OS user is stable per session
+        // and is a narrow seam for a future Entra/OIDC sign-in. The local execution host is the only
+        // IExecutionHost this phase — a future AgentExecutionHost implements the same seam. See ADR-0006/0007.
+        services.AddSingleton<IUserContext, WindowsUserContext>();
+        services.AddSingleton<IExecutionHost, LocalExecutionHost>();
+
+        // Enterprise governance (Phase 11). Audit is the central sink (best-effort, redacted); authorization
+        // unions in-scope role grants (allow-all when enterprise mode is off); the role service is admin CRUD;
+        // the seeder installs built-in roles + a bootstrap admin on first enterprise run. All touch the DB and
+        // are scoped. See docs/29-enterprise.md, ADR-0006.
+        services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<IAuthorizationService, AuthorizationService>();
+        services.AddScoped<IRoleService, RoleService>();
+        services.AddScoped<EnterpriseSeeder>();
+
+        // Shared policy, templates, and role-gated approvals (Phase 11). Policy is evaluated purely and folds
+        // into the deploy/preflight gates; templates instantiate through the Phase 10 authoring write path;
+        // approvals replace the local self-ack with a role-gated request/decision. All scoped.
+        services.AddScoped<IPolicyService, PolicyService>();
+        services.AddScoped<ITemplateService, TemplateService>();
+        services.AddScoped<IApprovalService, ApprovalService>();
 
         // Projects (Phase 2). Stateless helpers are singletons; DB-touching services are scoped.
         services.AddSingleton<IProjectScaffolder, ProjectScaffolder>();

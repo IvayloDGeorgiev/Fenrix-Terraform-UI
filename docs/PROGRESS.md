@@ -283,8 +283,60 @@ _Status: **core complete** (2026-07-29). Editor engine is a **hand-rolled, depen
 
 ## Phase 11 — Enterprise capability
 
-- [ ] SQL Server metadata · shared policies/templates · central audit
-- [ ] Role-based restrictions · Fenrix Agent · approval workflows · org-controlled versions
+Turn the single-user desktop into an organisation-governed tool: a shared **metadata** layer (SQLite by
+default / **SQL Server** opt-in), an **identity** seam, **role-based restrictions**, **central audit**,
+**shared policies + templates**, **role-gated approvals**, **organisation-controlled Terraform versions**, and
+the **Fenrix Agent** seam (design only). Scope decisions (Ivo, 2026-07-29): **one big batch**; **full
+dual-provider** SQL Server wiring; **Windows identity now** behind a pluggable `IUserContext`; the **Agent is
+design-only** (seam + docs, no service). See [29-enterprise.md](29-enterprise.md), [30-fenrix-agent.md](30-fenrix-agent.md),
+[ADR-0006](adr/0006-enterprise-metadata-and-identity.md), [ADR-0007](adr/0007-execution-host-seam.md).
+
+_Status: **backends + docs complete** (2026-07-29); **UI pages + call-site enforcement wiring remain** as the
+next clean boundary (see below). Needs **two migration sets** (SQLite + SQL Server). **Nothing was executed —
+the sandbox VM was down this session**, so the reference port is hand-traced; build + run in Visual Studio._
+
+**Foundation (done)**
+
+- [x] `IUserContext` (Application) + `WindowsUserContext` (Infrastructure, SID + name + UPN, safe fallback);
+  replaced inlined `Environment.UserName` in `DeploymentRecorder` + `ProjectVersionService`.
+- [x] Dual-provider `AppDbContext`: added `Microsoft.EntityFrameworkCore.SqlServer`; provider chosen at DI time
+  from the `enterprise.json` bootstrap (`EnterpriseBootstrap`/`IEnterpriseConfig`); `DateTimeOffset`-as-binary
+  stays SQLite-only; design-time factory switches provider via `FENRIX_DESIGNTIME_PROVIDER`.
+- [x] `IExecutionHost` seam + `LocalExecutionHost` (only impl this phase) so governed runs can route to a future
+  agent without touching callers (ADR-0007). No service.
+
+**Enterprise metadata + governance (backends done)**
+
+- [x] **RBAC** — `OrgUser`/`OrgRole`/`Permission [Flags]`/`RoleAssignment` (Global/Project/Environment scope);
+  pure `PermissionEvaluator`; `IAuthorizationService` (allow-all when mode off, else union of in-scope grants,
+  audits denials); `IRoleService` admin CRUD + current-user upsert; `EnterpriseSeeder` (built-in roles +
+  bootstrap Administrator on first enterprise run).
+- [x] **Central audit** — `AuditEvent` + `IAuditService` (best-effort redacted sink to the metadata DB +
+  filtered paged reader); the doc-15 catalogue + Phase 11 additions (role/policy/template/approval/export/denied).
+- [x] **Shared policies** — `OrgPolicy` (approve-prod / approve-envs / block-prod-destroy / require-private-repo
+  / required-prod-branch / allowed-TF-version); pure `PolicyEvaluator`; `IPolicyService` (single active row).
+- [x] **Shared templates** — `ConfigTemplate` + `TemplateParameter`; pure `TemplateInstantiator` (typed
+  `{{placeholder}}` substitution, String quoted via `HclEmitter`); `ITemplateService` writes through the Phase 10
+  authoring atomic-write path; stored in the metadata DB. (The Phase 10 deferred templates.)
+- [x] **Approvals** — `ApprovalRequest`; pure `ApprovalResolver` (separation-of-duties + `ApproveDeployment`
+  gate + expiry); `IApprovalService` (create / role-scoped inbox / decide / `IsPlanApprovedAsync`) — replaces the
+  Phase 9.5 local self-ack.
+- [x] **Org-controlled Terraform versions** — `OrgPolicy.AllowedTerraformVersionConstraint` +
+  `IPolicyService.CheckTerraformVersionAsync` reusing the Phase 3 `TerraformVersionConstraint` grammar.
+- [x] DI registered (identity/execution singletons; audit/authz/role/policy/template/approval + seeder scoped);
+  `AppInitializer` runs `EnterpriseSeeder` after schema bring-up (no-op when mode off).
+- [x] Reference port `tests/enterprise-fixtures/verify_enterprise.py` (PermissionEvaluator / PolicyEvaluator /
+  TemplateInstantiator / ApprovalResolver) — hand-traced; **run it** (VM was down).
+
+**Remaining (next boundary — UI + wiring; no new schema):**
+
+- [ ] UI pages: **Enterprise admin** (roles, users/assignments, policy editor), **Audit viewer** (paged/filtered),
+  **Template gallery** in the Build page (apply-with-parameters), **Approvals inbox**, and a read-only
+  **Settings → Enterprise** status section.
+- [ ] Enforcement wiring at call sites via `IAuthorizationService.AuthorizeAsync` (apply/destroy/state/force-unlock/
+  key-export/admin) and folding `IPolicyService`/`IApprovalService` into the governed deploy (`DeploymentService`) +
+  apply preflight (prod-destroy block, org-version block, approval-required → real approval instead of self-ack).
+  Deferred deliberately: these edit Phase-4/9.5 verified services and Razor that can't be compiled here.
 
 ## Phase 12 — Release preparation
 
@@ -313,4 +365,5 @@ _Status: **core complete** (2026-07-29). Editor engine is a **hand-rolled, depen
 | 2026-07-24 | `AppInitializer` adopts a legacy `EnsureCreated` DB (create missing tables + stamp migration history) instead of requiring a reset — upgrades never lose data | [12](12-database-design.md) |
 | 2026-07-28 | Managed private keys are DPAPI-encrypted under `Data\keys\<projectId>\` (never in the project/git); DB holds only a `KeyPair` row + `SecretReference`. Import reads the public key without decrypting the private half; generation captures it from Terraform outputs. Dependency-free SSH/PPK handling (no BouncyCastle) — Ivo's call | [28](28-key-pair-management.md), [11](11-secrets.md) |
 | 2026-07-28 | Deployments recorded by a single `IDeploymentRecorder` inside the apply service, so every successful apply (Plan & apply page *or* governed Pipelines flow) lands on the board; resolves/creates the `ProjectVersion` from the plan's commit. Governed deploy = plan → gates → apply the exact saved plan (no bypass of ADR-0003); a deploy first checks the version's commit out so what deploys is what was cut. Approval gate is a local self-ack (multi-user role approvals stay Phase 11). State serial/lineage read from the local `terraform.tfstate` (only the two non-sensitive top-level fields). One migration: `AddDeploymentPipelines` (pipeline-config tables only) | [20](20-pipelines-deployments.md) |
+| 2026-07-29 | Phase 11 enterprise: **dual-provider metadata** (SQLite default / SQL Server opt-in) chosen at DI time from an `enterprise.json` **bootstrap** (connection string via a named env var, never on disk); **Windows identity** behind a pluggable `IUserContext` (Entra/OIDC later); **additive RBAC that only tightens** (allow-all when mode off) with a pure `PermissionEvaluator`; **central audit** to the metadata DB; **shared policy/templates**; **role-gated approvals** replacing the Phase 9.5 self-ack; **Fenrix Agent = design-only** via an `IExecutionHost` seam (local impl only). One big batch (Ivo). | [29](29-enterprise.md), [30](30-fenrix-agent.md), [ADR-0006](adr/0006-enterprise-metadata-and-identity.md), [ADR-0007](adr/0007-execution-host-seam.md) |
 | 2026-07-29 | Phase 10.5 code editor is a **hand-rolled, dependency-free** vanilla-JS HCL editor (`fenrix-editor.js`), not CodeMirror 6 — CM6's ES modules can't be bundled offline here without an npm/rollup toolchain, and hand-rolling matches the dependency-free house style (`fenrix-graph.js`, the HCL toolkit). "Beautify" = `terraform fmt -` over the buffer via **stdin** (new `FormatStdin` kind + a `StandardInput` field threaded through the request/runner; `captureLog:false`, never in args/history/log). Validate reuses the Phase 3 pipeline for inline gutter markers/squiggles. Outline/snippets/reference-helpers are pure Application logic; references are schema-aware via the Phase 10 cache. Saves keep the atomic-write + file-history path. **No new migration.** | [05](05-terraform-engine.md), [13](13-ui-design.md) |

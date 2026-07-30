@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using Fenrix.IaCStudio.Application.Abstractions;
+using Fenrix.IaCStudio.Infrastructure.Enterprise;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -40,6 +41,23 @@ public sealed class AppInitializer(
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+        await EnsureSchemaAsync(db, cancellationToken);
+
+        // Enterprise seeding (Phase 11) — a no-op unless enterprise mode is enabled. Seeds built-in roles and a
+        // bootstrap Administrator so a fresh shared store always has an admin. See docs/29-enterprise.md.
+        try
+        {
+            await scope.ServiceProvider.GetRequiredService<EnterpriseSeeder>().SeedAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Enterprise seeding failed; the app will start but roles may be unset.");
+        }
+    }
+
+    /// <summary>Brings the database schema up to date without ever destroying data (see the class remarks).</summary>
+    private async Task EnsureSchemaAsync(AppDbContext db, CancellationToken cancellationToken)
+    {
         var migrations = db.Database.GetMigrations().ToList();
         if (migrations.Count == 0)
         {

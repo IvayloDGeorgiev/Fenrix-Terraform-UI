@@ -1,4 +1,5 @@
 using Fenrix.IaCStudio.Application.Abstractions.Deployments;
+using Fenrix.IaCStudio.Application.Abstractions.Enterprise;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Contracts.Deployments;
@@ -21,11 +22,13 @@ public sealed class ProjectVersionService(
     AppDbContext db,
     IProjectService projects,
     IGitService git,
+    IUserContext userContext,
     ILogger<ProjectVersionService> logger) : IProjectVersionService
 {
     private readonly AppDbContext _db = db;
     private readonly IProjectService _projects = projects;
     private readonly IGitService _git = git;
+    private readonly IUserContext _userContext = userContext;
     private readonly ILogger<ProjectVersionService> _logger = logger;
 
     public async Task<IReadOnlyList<ProjectVersionSummary>> ListAsync(Guid projectId, CancellationToken ct = default)
@@ -95,7 +98,7 @@ public sealed class ProjectVersionService(
             ProviderLockHash = lockHash,
             RequiredTerraformVersion = project.RequiredTerraformVersion,
             Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes!.Trim(),
-            CreatedBy = System.Environment.UserName
+            CreatedBy = _userContext.Current.DisplayName
         };
 
         string? warning = prov.IsDirty
