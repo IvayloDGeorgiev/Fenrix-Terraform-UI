@@ -1,9 +1,11 @@
 using Fenrix.IaCStudio.Application.Abstractions.Cloud;
+using Fenrix.IaCStudio.Application.Abstractions.Enterprise;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Application.Abstractions.Terraform;
 using Fenrix.IaCStudio.Application.Terraform;
 using Fenrix.IaCStudio.Contracts.Terraform;
 using Fenrix.IaCStudio.Domain.Common;
+using Fenrix.IaCStudio.Domain.Enterprise;
 using Fenrix.IaCStudio.Domain.Environments;
 using Fenrix.IaCStudio.Domain.Projects;
 using Fenrix.IaCStudio.Domain.Terraform;
@@ -24,6 +26,7 @@ public sealed class TerraformStateService(
     TerraformProcessCoordinator coordinator,
     IEnvironmentLockService locks,
     ICloudEnvironmentComposer cloud,
+    IAuthorizationService authorization,
     ILogger<TerraformStateService> logger) : ITerraformStateService
 {
     private const string DefaultExecutable = "terraform";
@@ -33,6 +36,7 @@ public sealed class TerraformStateService(
     private readonly TerraformProcessCoordinator _coordinator = coordinator;
     private readonly IEnvironmentLockService _locks = locks;
     private readonly ICloudEnvironmentComposer _cloud = cloud;
+    private readonly IAuthorizationService _authorization = authorization;
     private readonly ILogger<TerraformStateService> _logger = logger;
 
     public async Task<StateOpContext> PrepareAsync(TerraformRunSpec spec, CancellationToken ct = default)
@@ -74,6 +78,14 @@ public sealed class TerraformStateService(
 
         if (!string.Equals(confirmation.TypedValue?.Trim(), prepared.ConfirmationPhrase, StringComparison.Ordinal))
             return StateOpResult.Blocked($"Type '{prepared.ConfirmationPhrase}' to confirm this {prepared.OperationLabel}.");
+
+        // Enterprise RBAC: force-unlock needs ForceUnlock; every other state mutation needs ManageState
+        // (allow-all when mode off). A denial self-audits.
+        var permission = context.Kind == TerraformCommandKind.ForceUnlock ? Permission.ForceUnlock : Permission.ManageState;
+        var authz = await _authorization.AuthorizeAsync(
+            permission, context.ProjectId, context.EnvironmentId, target: prepared.OperationLabel, cancellationToken: ct);
+        if (!authz.Allowed)
+            return StateOpResult.Blocked(authz.Reason ?? "You are not permitted to run this state operation.");
 
         var resolved = await ResolveAsync(context.ProjectId, context.EnvironmentId, ct);
         if (resolved.Project is null || resolved.Environment is null)
@@ -126,6 +138,12 @@ public sealed class TerraformStateService(
         var resolved = await ResolveAsync(projectId, environmentId, ct);
         if (resolved.BlockReason is not null || resolved.Project is null)
             return StateOpResult.Blocked(resolved.BlockReason ?? "Project not found.");
+
+        // state pull exposes plaintext state (secrets) → treat as a state operation and require ManageState.
+        var authz = await _authorization.AuthorizeAsync(
+            Permission.ManageState, projectId, environmentId, target: "state pull", cancellationToken: ct);
+        if (!authz.Allowed)
+            return StateOpResult.Blocked(authz.Reason ?? "You are not permitted to pull remote state.");
 
         var spec = new TerraformRunSpec(projectId, environmentId, TerraformCommandKind.StatePull);
         var cloudEnv = await _cloud.ComposeAsync(resolved.Environment?.CloudConnectionId, ct);

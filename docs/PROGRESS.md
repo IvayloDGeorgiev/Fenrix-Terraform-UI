@@ -328,15 +328,33 @@ the sandbox VM was down this session**, so the reference port is hand-traced; bu
 - [x] Reference port `tests/enterprise-fixtures/verify_enterprise.py` (PermissionEvaluator / PolicyEvaluator /
   TemplateInstantiator / ApprovalResolver) — hand-traced; **run it** (VM was down).
 
-**Remaining (next boundary — UI + wiring; no new schema):**
+**UI + wiring (done 2026-07-30; no new schema) — build + smoke-test in Visual Studio (VM was down):**
 
-- [ ] UI pages: **Enterprise admin** (roles, users/assignments, policy editor), **Audit viewer** (paged/filtered),
-  **Template gallery** in the Build page (apply-with-parameters), **Approvals inbox**, and a read-only
-  **Settings → Enterprise** status section.
-- [ ] Enforcement wiring at call sites via `IAuthorizationService.AuthorizeAsync` (apply/destroy/state/force-unlock/
-  key-export/admin) and folding `IPolicyService`/`IApprovalService` into the governed deploy (`DeploymentService`) +
-  apply preflight (prod-destroy block, org-version block, approval-required → real approval instead of self-ack).
-  Deferred deliberately: these edit Phase-4/9.5 verified services and Razor that can't be compiled here.
+- [x] UI pages: **Enterprise admin** (`/enterprise/admin` — roles + permission grid, users, role assignments at
+  Global/Project/Environment scope, org-policy editor), **Audit viewer** (`/enterprise/audit` — filtered + paged
+  over `IAuditService.QueryAsync`), **Template gallery** in the Build page (new **Templates** tab →
+  `TemplateGalleryPanel`: pick → fill parameters → preview → apply via the Phase 10 authoring path; authoring
+  gated by `ManageTemplates`), **Approvals inbox** (`/enterprise/approvals` — decide with note), and a read-only
+  **Settings → Enterprise** status card from `IEnterpriseConfig.Status`. Nav shows an **Enterprise** group only
+  when governance is enabled. New CSS (`.fx-table`, `.fx-checkline`, `.fx-permgrid`, `.fx-filterbar`, `.fx-pager`,
+  `.fx-approval*`).
+- [x] Enforcement wiring via `IAuthorizationService.AuthorizeAsync` at the guarded call sites: **key export**
+  (`KeyPairService.ExportPrivateKeyAsync` → `ExportPrivateKey`), **state ops / force-unlock**
+  (`TerraformStateService.ExecuteAsync`/`PullToFileAsync` → `ManageState`/`ForceUnlock`), **plan/destroy**
+  (`TerraformPlanService.PreparePlanAsync` → `RunPlan`, +`RunDestroy` for destroy), **apply** (folded into the
+  apply preflight, below), and **admin CRUD** (`RoleService`/`PolicyService`/`TemplateService` mutations →
+  `ManageRoles`/`ManagePolicy`/`ManageTemplates`). Audit reads gate at the page (`ViewAudit`) to avoid an
+  `AuditService`↔`AuthorizationService` DI cycle.
+- [x] Folded `IPolicyService` + `IApprovalService` into the governed deploy + apply preflight: **apply preflight**
+  (`TerraformApplyService.PreflightAsync`) adds RBAC (`RunApply`/`RunApplyProduction`/`RunDestroy`), the
+  org-controlled Terraform-version block, the shared-policy hard blocks (**production-destroy**, required prod
+  branch, **private-repo** — visibility resolved via the Phase 7 host adapter, enforced now), and the role-gated
+  **approval** check — all no-op when mode off. `DeploymentService` replaces the self-ack: enterprise mode →
+  `IApprovalService.IsPlanApprovedAsync`; mode off → the prior self-ack is preserved (a single user can't approve
+  their own request). `DeployPreparation` gained `ApprovalGranted`/`ApprovalRequested`/`UsesRoleGatedApproval`;
+  the deploy dialog shows request → awaiting → approved (enterprise) or the self-ack checkbox (off).
+- [ ] **Not compiled here (sandbox VM down):** build on develop + smoke-test the pages and the governed-deploy
+  approval path with `enterprise.json` toggled on/off. No new migration.
 
 ## Phase 12 — Release preparation
 

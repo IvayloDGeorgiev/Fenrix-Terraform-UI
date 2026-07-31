@@ -1,8 +1,10 @@
 using Fenrix.IaCStudio.Application.Abstractions.Deployments;
+using Fenrix.IaCStudio.Application.Abstractions.Enterprise;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Application.Abstractions.Terraform;
 using Fenrix.IaCStudio.Application.Deployments;
+using Fenrix.IaCStudio.Application.Enterprise;
 using Fenrix.IaCStudio.Contracts.Deployments;
 using Fenrix.IaCStudio.Contracts.Git;
 using Fenrix.IaCStudio.Contracts.Terraform;
@@ -34,6 +36,9 @@ public sealed class DeploymentService(
     ITerraformApplyService applyService,
     IGitService git,
     IEnvironmentLockService locks,
+    IPolicyService policy,
+    IApprovalService approval,
+    IEnterpriseConfig enterprise,
     ILogger<DeploymentService> logger) : IDeploymentService
 {
     private readonly AppDbContext _db = db;
@@ -44,6 +49,9 @@ public sealed class DeploymentService(
     private readonly ITerraformApplyService _applyService = applyService;
     private readonly IGitService _git = git;
     private readonly IEnvironmentLockService _locks = locks;
+    private readonly IPolicyService _policy = policy;
+    private readonly IApprovalService _approval = approval;
+    private readonly IEnterpriseConfig _enterprise = enterprise;
     private readonly ILogger<DeploymentService> _logger = logger;
 
     // ---- read models ----
@@ -204,12 +212,37 @@ public sealed class DeploymentService(
         var gateResult = EvaluateGates(env, version, prov, stage, previousStageHasVersion);
         var confirmationPhrase = gateResult.RequiresTypedConfirmation ? env.Name : null;
 
+        // Fold the shared organisation policy into the governed deploy (enterprise mode only): a policy block
+        // surfaces as a block reason, and a policy-required approval is OR-ed with the stage's approval gate.
+        // When enterprise mode is off, the prior single-user posture (stage self-ack) is preserved exactly.
+        // See docs/29-enterprise.md.
+        var enterpriseOn = _enterprise.IsEnabled;
+        var policyVerdict = enterpriseOn
+            ? await _policy.EvaluateAsync(new PolicyEvaluator.PolicyInputs(
+                env.IsProduction, env.Name, false, prov.Branch, null, null), ct)
+            : PolicyVerdict.Clear;
+        if (blockReason is null && policyVerdict.Blocked)
+            blockReason = string.Join(" ", policyVerdict.Reasons);
+
+        var requiresApproval = gateResult.RequiresApproval || policyVerdict.RequiresApproval;
+
+        // In enterprise mode, resolve the role-gated approval state for the produced plan so the UI can show
+        // request / awaiting / approved. Off ⇒ the dialog falls back to the local self-ack.
+        var approvalGranted = false;
+        var approvalRequested = false;
+        if (enterpriseOn && requiresApproval && savedPlanId is not null)
+        {
+            var existing = await _approval.GetForPlanAsync(savedPlanId.Value, ct);
+            approvalRequested = existing is not null;
+            approvalGranted = await _approval.IsPlanApprovedAsync(savedPlanId.Value, ct);
+        }
+
         return new DeployPreparation(
             project.Id, versionId, version.Label, env.Id, env.Name, env.IsProduction,
             version.GitCommit, atVersion, canCheckout,
             savedPlanId, review, planPreview,
-            gateResult.Gates, gateResult.RequiresApproval, gateResult.RequiresTypedConfirmation,
-            confirmationPhrase, blockReason);
+            gateResult.Gates, requiresApproval, gateResult.RequiresTypedConfirmation,
+            confirmationPhrase, blockReason, approvalGranted, approvalRequested, enterpriseOn);
     }
 
     public async Task<(bool Ok, string? Detail)> CheckoutVersionAsync(Guid versionId, CancellationToken ct = default)
@@ -266,8 +299,27 @@ public sealed class DeploymentService(
         if (failing is not null)
             return DeployExecutionResult.Fail(failing.Detail ?? $"Blocked: {failing.Label}.");
 
-        if (gateResult.RequiresApproval && !confirmation.Approved)
-            return DeployExecutionResult.Fail("This stage requires approval before deploying.");
+        // Approval gate. In enterprise mode the Phase 9.5 self-ack is replaced by a role-gated approval: a valid
+        // (approved, unexpired) request for THIS exact saved plan must exist (the apply preflight re-enforces the
+        // org-policy approval, so this can't be bypassed). With enterprise mode off, the prior self-ack applies.
+        var enterpriseOn = _enterprise.IsEnabled;
+        var policyVerdict = enterpriseOn
+            ? await _policy.EvaluateAsync(new PolicyEvaluator.PolicyInputs(
+                env.IsProduction, env.Name, false, prov.Branch, null, null), ct)
+            : PolicyVerdict.Clear;
+        if (gateResult.RequiresApproval || policyVerdict.RequiresApproval)
+        {
+            if (enterpriseOn)
+            {
+                if (!await _approval.IsPlanApprovedAsync(savedPlanId, ct))
+                    return DeployExecutionResult.Fail(
+                        "This deployment requires an approved request before it can proceed. Request approval, then have an authorised approver decide it.");
+            }
+            else if (!confirmation.Approved)
+            {
+                return DeployExecutionResult.Fail("This stage requires approval before deploying.");
+            }
+        }
 
         try
         {

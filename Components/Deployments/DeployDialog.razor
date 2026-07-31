@@ -1,9 +1,12 @@
 @* Governed one-click deploy: plan → gates → apply the exact saved plan (ADR-0003). See docs/20-pipelines-deployments.md. *@
 @using Fenrix.IaCStudio.Application.Abstractions.Deployments
+@using Fenrix.IaCStudio.Application.Abstractions.Enterprise
 @using Fenrix.IaCStudio.Contracts.Deployments
+@using Fenrix.IaCStudio.Contracts.Enterprise
 @using Fenrix.IaCStudio.Contracts.Terraform
 @using Fenrix.IaCStudio.Domain.Terraform
 @inject IDeploymentService Deployments
+@inject IApprovalService Approvals
 @implements IDisposable
 
 <Modal Title="@Title" IconName="git-pull-request" Wide="true" OnClose="OnClose" CloseOnBackdrop="false">
@@ -82,13 +85,48 @@
             </div>
         }
 
-        @* Interactive gates: approval + production typed confirmation. *@
-        @if (_prep.PlanReady && _prep.RequiresApproval && !_deployed)
+        @* Approval. Enterprise mode → role-gated (request → awaiting → approved); otherwise the local self-ack. *@
+        @if (_prep.PlanReady && _prep.RequiresApproval && !_prep.UsesRoleGatedApproval && !_deployed)
         {
             <label class="fx-approve">
                 <input type="checkbox" checked="@_approved" @onchange="e => _approved = (bool)e.Value!" disabled="@_busy" />
                 <span>I approve this deployment to <strong>@_prep.EnvironmentName</strong>.</span>
             </label>
+        }
+        @if (_prep.RequiresApproval && _prep.UsesRoleGatedApproval && !_deployed)
+        {
+            <div class="fx-card" style="margin-top:12px;">
+                @if (_prep.ApprovalGranted)
+                {
+                    <div class="fx-checkrow pass">
+                        <span class="fx-ico"><Icon Name="check" Size="15" /></span>
+                        <div>Approved — this deployment has a valid approval.</div>
+                    </div>
+                }
+                else if (_prep.ApprovalRequested)
+                {
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span class="fx-ico" style="color:var(--fx-warn);"><Icon Name="clock" Size="15" /></span>
+                        <div style="flex:1;">
+                            <div style="font-size:13px;font-weight:500;">Awaiting approval</div>
+                            <div class="fx-hint" style="margin:2px 0 0;">An authorised approver must decide the pending request from the Approvals inbox.</div>
+                        </div>
+                        <button class="fx-btn" @onclick="PrepareAsync" disabled="@_busy"><span class="fx-ico"><Icon Name="refresh" Size="13" /></span> Refresh</button>
+                    </div>
+                }
+                else
+                {
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span class="fx-ico" style="color:var(--fx-warn);"><Icon Name="inbox" Size="15" /></span>
+                        <div style="flex:1;">
+                            <div style="font-size:13px;font-weight:500;">Approval required</div>
+                            <div class="fx-hint" style="margin:2px 0 0;">Someone else must approve this exact deployment before it can proceed.</div>
+                        </div>
+                        <button class="fx-btn accent" @onclick="RequestApprovalAsync" disabled="@_busy"><span class="fx-ico"><Icon Name="inbox" Size="13" /></span> Request approval</button>
+                    </div>
+                    @if (_approvalMsg is not null) { <div class="fx-hint" style="margin-top:8px;">@_approvalMsg</div> }
+                }
+            </div>
         }
         @if (_prep.PlanReady && _prep.RequiresTypedConfirmation && !_deployed)
         {
@@ -142,15 +180,20 @@
     private string _typed = "";
     private string? _error;
     private string? _checkoutMsg;
+    private string? _approvalMsg;
     private (string Cls, string Text)? _resultPill;
     private CancellationTokenSource? _cts;
 
     private string Title => "Deploy version";
     private IReadOnlyList<ApplyProgressEvent> OrderedRows => _applyOrder.Select(a => _applyRows[a]).ToList();
 
+    private bool ApprovalSatisfied =>
+        _prep is null || !_prep.RequiresApproval
+        || (_prep.UsesRoleGatedApproval ? _prep.ApprovalGranted : _approved);
+
     private bool CanDeploy =>
         !_busy && !_deployed && _prep is { PlanReady: true }
-        && (!_prep.RequiresApproval || _approved)
+        && ApprovalSatisfied
         && (!_prep.RequiresTypedConfirmation || string.Equals(_typed.Trim(), _prep.ConfirmationPhrase, StringComparison.Ordinal));
 
     protected override async Task OnInitializedAsync() => await PrepareAsync();
@@ -192,6 +235,23 @@
         finally { _busy = false; StateHasChanged(); }
     }
 
+    private async Task RequestApprovalAsync()
+    {
+        if (_prep?.SavedPlanId is null) return;
+        _busy = true;
+        _approvalMsg = null;
+        StateHasChanged();
+        try
+        {
+            await Approvals.CreateAsync(new CreateApprovalRequest(
+                _prep.ProjectId, _prep.EnvironmentId, _prep.EnvironmentName, _prep.ProjectVersionId,
+                _prep.VersionLabel, _prep.VersionCommit, _prep.SavedPlanId, null, null, null));
+            await PrepareAsync(); // re-read approval state (now "awaiting")
+        }
+        catch (Exception ex) { _approvalMsg = ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
     private async Task DeployAsync()
     {
         if (_prep?.SavedPlanId is null || !CanDeploy) return;
@@ -212,7 +272,7 @@
                 StateHasChanged();
             });
             var result = await Deployments.ExecuteDeployAsync(
-                _prep.SavedPlanId.Value, new DeployConfirmation(_approved || !_prep.RequiresApproval, _typed), raw, structured, _cts.Token);
+                _prep.SavedPlanId.Value, new DeployConfirmation(ApprovalSatisfied, _typed), raw, structured, _cts.Token);
 
             if (result.Succeeded)
             {

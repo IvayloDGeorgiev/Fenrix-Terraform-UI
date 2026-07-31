@@ -1,0 +1,215 @@
+@page "/enterprise/audit"
+@using Fenrix.IaCStudio.Application.Abstractions.Enterprise
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Contracts.Enterprise
+@using Fenrix.IaCStudio.Contracts.Projects
+@using Fenrix.IaCStudio.Domain.Enterprise
+@inject IEnterpriseConfig Enterprise
+@inject IAuthorizationService Authz
+@inject IAuditService Audit
+@inject IProjectService Projects
+
+@* Central audit trail viewer: filtered + paged over IAuditService.QueryAsync. Read requires ViewAudit. See docs/15-logging-auditing.md, docs/29-enterprise.md. *@
+
+<h1 class="fx-page-title">Audit log</h1>
+<p class="fx-page-sub">Every safety-relevant action, redacted (summaries only — never secrets or raw output).</p>
+
+@if (!Enterprise.IsEnabled)
+{
+    <EmptyState IconName="list" Title="Enterprise mode is off"
+                Text="The central audit trail is part of enterprise governance. Enable it via enterprise.json (Settings → Enterprise)." />
+}
+else if (!_ready)
+{
+    <div class="fx-hint">Loading…</div>
+}
+else if (!_canView)
+{
+    <EmptyState IconName="alert" Title="Not permitted"
+                Text="You need the ViewAudit permission to read the audit log." />
+}
+else
+{
+    <div class="fx-card">
+        <div class="fx-filterbar">
+            <div class="fx-field">
+                <label>Action</label>
+                <select class="fx-input" value="@(_action?.ToString())"
+                        @onchange="e => { _action = Enum.TryParse<AuditAction>(e.Value?.ToString(), out var a) ? a : null; }">
+                    <option value="">Any action</option>
+                    @foreach (var a in Enum.GetValues<AuditAction>())
+                    {
+                        <option value="@a">@Pretty(a.ToString())</option>
+                    }
+                </select>
+            </div>
+            <div class="fx-field">
+                <label>Outcome</label>
+                <select class="fx-input" value="@(_outcome?.ToString())"
+                        @onchange="e => { _outcome = Enum.TryParse<AuditOutcome>(e.Value?.ToString(), out var o) ? o : null; }">
+                    <option value="">Any outcome</option>
+                    @foreach (var o in Enum.GetValues<AuditOutcome>())
+                    {
+                        <option value="@o">@o</option>
+                    }
+                </select>
+            </div>
+            <div class="fx-field">
+                <label>Project</label>
+                <select class="fx-input" value="@(_projectId?.ToString())"
+                        @onchange="e => { _projectId = Guid.TryParse(e.Value?.ToString(), out var g) ? g : null; }">
+                    <option value="">Any project</option>
+                    @foreach (var p in _projects)
+                    {
+                        <option value="@p.Id">@p.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="fx-field">
+                <label>User key</label>
+                <input class="fx-input fx-mono" placeholder="any user" @bind="_userKey" />
+            </div>
+            <div class="fx-field">
+                <label>From</label>
+                <input class="fx-input" type="date" @bind="_from" />
+            </div>
+            <div class="fx-field">
+                <label>To</label>
+                <input class="fx-input" type="date" @bind="_to" />
+            </div>
+            <div style="display:flex;gap:6px;">
+                <button class="fx-btn accent" @onclick="ApplyFilters" disabled="@_busy">
+                    <span class="fx-ico"><Icon Name="list" Size="13" /></span> Apply
+                </button>
+                <button class="fx-btn" @onclick="ClearFilters" disabled="@_busy">Clear</button>
+            </div>
+        </div>
+
+        @if (_error is not null) { <div class="fx-pill fail" style="margin-bottom:10px;">@_error</div> }
+
+        @if (_page is null || _page.Items.Count == 0)
+        {
+            <div class="fx-hint">No audit events match these filters.</div>
+        }
+        else
+        {
+            <table class="fx-table">
+                <thead>
+                    <tr><th>When</th><th>User</th><th>Action</th><th>Outcome</th><th>Scope</th><th>Target / detail</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var e in _page.Items)
+                    {
+                        <tr>
+                            <td style="white-space:nowrap;">@e.OccurredAt.LocalDateTime.ToString("g")</td>
+                            <td><div>@e.UserDisplayName</div><div class="fx-hint fx-mono">@e.UserKey</div></td>
+                            <td>@Pretty(e.Action.ToString())</td>
+                            <td>@OutcomePill(e.Outcome)</td>
+                            <td>
+                                @if (e.ProjectName is not null)
+                                {
+                                    <div>@e.ProjectName</div>
+                                }
+                                @if (e.EnvironmentName is not null)
+                                {
+                                    <div class="fx-hint">@e.EnvironmentName</div>
+                                }
+                                @if (e.ProjectName is null && e.EnvironmentName is null) { <span class="fx-hint">—</span> }
+                            </td>
+                            <td>
+                                @if (!string.IsNullOrWhiteSpace(e.Target)) { <div class="fx-mono" style="font-size:11.5px;">@e.Target</div> }
+                                @if (!string.IsNullOrWhiteSpace(e.Detail)) { <div class="fx-hint">@e.Detail</div> }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <div class="fx-pager">
+                <button class="fx-btn small" @onclick="PrevPage" disabled="@(_skip == 0 || _busy)">Previous</button>
+                <span>@(_skip + 1)–@(_skip + _page.Items.Count) of @_page.TotalCount</span>
+                <button class="fx-btn small" @onclick="NextPage" disabled="@(_skip + _take >= _page.TotalCount || _busy)">Next</button>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private bool _ready;
+    private bool _busy;
+    private bool _canView;
+    private string? _error;
+
+    private List<ProjectSummary> _projects = [];
+    private AuditPage? _page;
+
+    private AuditAction? _action;
+    private AuditOutcome? _outcome;
+    private Guid? _projectId;
+    private string _userKey = "";
+    private DateTime? _from;
+    private DateTime? _to;
+
+    private int _skip;
+    private const int _take = 100;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Enterprise.IsEnabled) { _ready = true; return; }
+        _canView = await Authz.HasPermissionAsync(Permission.ViewAudit);
+        if (_canView)
+        {
+            try { _projects = (await Projects.ListAsync(true)).ToList(); } catch { /* non-fatal */ }
+            await LoadAsync();
+        }
+        _ready = true;
+    }
+
+    private async Task ApplyFilters() { _skip = 0; await LoadAsync(); }
+
+    private async Task ClearFilters()
+    {
+        _action = null; _outcome = null; _projectId = null; _userKey = ""; _from = null; _to = null; _skip = 0;
+        await LoadAsync();
+    }
+
+    private async Task NextPage() { _skip += _take; await LoadAsync(); }
+    private async Task PrevPage() { _skip = Math.Max(0, _skip - _take); await LoadAsync(); }
+
+    private async Task LoadAsync()
+    {
+        _busy = true; _error = null; StateHasChanged();
+        try
+        {
+            var query = new AuditQuery(
+                string.IsNullOrWhiteSpace(_userKey) ? null : _userKey.Trim(),
+                _projectId, _action, _outcome,
+                _from is { } f ? new DateTimeOffset(f, TimeSpan.Zero) : null,
+                _to is { } t ? new DateTimeOffset(t.AddDays(1), TimeSpan.Zero) : null,
+                _skip, _take);
+            _page = await Audit.QueryAsync(query);
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private static string Pretty(string pascal)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (var i = 0; i < pascal.Length; i++)
+        {
+            if (i > 0 && char.IsUpper(pascal[i])) sb.Append(' ');
+            sb.Append(i == 0 ? pascal[i] : char.ToLowerInvariant(pascal[i]));
+        }
+        return sb.ToString();
+    }
+
+    private static RenderFragment OutcomePill(AuditOutcome o) => builder =>
+    {
+        var cls = o switch { AuditOutcome.Allowed => "ok", AuditOutcome.Blocked => "warn", _ => "fail" };
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", $"fx-pill {cls}");
+        builder.AddContent(2, o.ToString());
+        builder.CloseElement();
+    };
+}

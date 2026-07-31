@@ -1,4 +1,6 @@
 @* Global left navigation rail. See docs/13-ui-design.md. *@
+@using Fenrix.IaCStudio.Application.Abstractions.Enterprise
+@inject IEnterpriseConfig Enterprise
 
 <nav class="fx-rail">
     <div class="fx-brand">
@@ -24,6 +26,20 @@
     <NavLink class="fx-nav" href="templates">
         <span class="fx-ico"><Icon Name="template" /></span> Templates
     </NavLink>
+
+    @if (Enterprise.IsEnabled)
+    {
+        <div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--fx-faint);padding:14px 16px 4px;">Enterprise</div>
+        <NavLink class="fx-nav" href="enterprise/admin">
+            <span class="fx-ico"><Icon Name="shield" /></span> Administration
+        </NavLink>
+        <NavLink class="fx-nav" href="enterprise/approvals">
+            <span class="fx-ico"><Icon Name="inbox" /></span> Approvals
+        </NavLink>
+        <NavLink class="fx-nav" href="enterprise/audit">
+            <span class="fx-ico"><Icon Name="list" /></span> Audit log
+        </NavLink>
+    }
 
     <div class="fx-nav-spacer"></div>
 

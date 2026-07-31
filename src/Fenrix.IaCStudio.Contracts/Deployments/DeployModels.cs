@@ -42,7 +42,13 @@ public sealed record DeployPreparation(
     bool RequiresApproval,
     bool RequiresTypedConfirmation,
     string? ConfirmationPhrase,
-    string? BlockReason)
+    string? BlockReason,
+    // Phase 11 — role-gated approval state. When UsesRoleGatedApproval is true (enterprise mode on), the UI
+    // shows request/awaiting/approved and gates on ApprovalGranted; when false, the prior local self-ack applies.
+    // Defaults keep single-user callers unchanged.
+    bool ApprovalGranted = false,
+    bool ApprovalRequested = false,
+    bool UsesRoleGatedApproval = false)
 {
     /// <summary>True when a plan exists and every blocking gate passes (interactive gates enforced at execute).</summary>
     public bool PlanReady =>

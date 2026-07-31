@@ -1,15 +1,19 @@
 using Fenrix.IaCStudio.Application.Abstractions.Cloud;
 using Fenrix.IaCStudio.Application.Abstractions.Deployments;
+using Fenrix.IaCStudio.Application.Abstractions.Enterprise;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
+using Fenrix.IaCStudio.Application.Abstractions.Providers;
 using Fenrix.IaCStudio.Application.Abstractions.Terraform;
+using Fenrix.IaCStudio.Application.Enterprise;
 using Fenrix.IaCStudio.Application.Files;
 using Fenrix.IaCStudio.Application.Terraform;
 using Fenrix.IaCStudio.Contracts.Files;
 using Fenrix.IaCStudio.Contracts.Git;
 using Fenrix.IaCStudio.Contracts.Terraform;
 using Fenrix.IaCStudio.Domain.Common;
+using Fenrix.IaCStudio.Domain.Enterprise;
 using Fenrix.IaCStudio.Domain.Environments;
 using Fenrix.IaCStudio.Domain.Files;
 using Fenrix.IaCStudio.Domain.Projects;
@@ -34,6 +38,11 @@ public sealed class TerraformApplyService(
     IGitService git,
     ICloudEnvironmentComposer cloud,
     IDeploymentRecorder deployments,
+    IAuthorizationService authorization,
+    IPolicyService policy,
+    IApprovalService approval,
+    IRepositoryHostService repositoryHost,
+    IEnterpriseConfig enterprise,
     ILogger<TerraformApplyService> logger) : ITerraformApplyService
 {
     private const string DefaultExecutable = "terraform";
@@ -48,6 +57,11 @@ public sealed class TerraformApplyService(
     private readonly IGitService _git = git;
     private readonly ICloudEnvironmentComposer _cloud = cloud;
     private readonly IDeploymentRecorder _deployments = deployments;
+    private readonly IAuthorizationService _authorization = authorization;
+    private readonly IPolicyService _policy = policy;
+    private readonly IApprovalService _approval = approval;
+    private readonly IRepositoryHostService _repositoryHost = repositoryHost;
+    private readonly IEnterpriseConfig _enterprise = enterprise;
     private readonly ILogger<TerraformApplyService> _logger = logger;
 
     public async Task<ApplyPreflight> PreflightAsync(Guid savedPlanId, CancellationToken ct = default)
@@ -126,6 +140,11 @@ public sealed class TerraformApplyService(
         // reviewed. Non-blocking — the saved plan still applies exactly, but the reviewer should know the
         // repository no longer matches what they looked at (docs/06-plan-apply-safety.md, docs/08-git-engine.md).
         await AddGitProvenanceWarningsAsync(plan, checks, ct);
+
+        // Enterprise governance (Phase 11): RBAC guards, org-controlled Terraform version, shared policy
+        // (production-destroy block, required prod branch, private-repo requirement), and the role-gated
+        // approval that replaces the local self-ack. All no-op when enterprise mode is off. See docs/29-enterprise.md.
+        await AddGovernanceChecksAsync(plan, environment, installation, checks, ct);
 
         var cloudEnv = await _cloud.ComposeAsync(environment?.CloudConnectionId, ct);
         var preview = BuildApplyPreview(plan, environment, installation, cloudEnv);
@@ -269,6 +288,123 @@ public sealed class TerraformApplyService(
         }
 
         static string Short(string sha) => sha.Length > 8 ? sha[..8] : sha;
+    }
+
+    /// <summary>
+    /// Appends the Phase 11 governance checks to the preflight: RBAC (RunApply / RunApplyProduction / RunDestroy),
+    /// the org-controlled Terraform version, the shared policy's hard blocks (production-destroy, required
+    /// production branch, private-repository requirement), and the role-gated approval that replaces the local
+    /// self-ack. Everything here is a no-op when enterprise mode is off (authorize returns allowed, policy is null).
+    /// </summary>
+    private async Task AddGovernanceChecksAsync(
+        SavedPlan plan, ProjectEnvironment? environment, TerraformInstallation? installation,
+        List<PreflightCheck> checks, CancellationToken ct)
+    {
+        // Single-user posture is byte-for-byte unchanged: no governance rows unless enterprise mode is on.
+        if (!_enterprise.IsEnabled)
+            return;
+
+        var isProduction = environment?.IsProduction ?? plan.IsProductionTarget;
+        var isDestroy = plan.Mode == PlanMode.Destroy;
+
+        // --- RBAC (a denial self-audits) ---
+        var applyAuth = await _authorization.AuthorizeAsync(
+            Permission.RunApply, plan.ProjectId, plan.EnvironmentId, target: plan.EnvironmentName, cancellationToken: ct);
+        checks.Add(new PreflightCheck("Permitted to apply", applyAuth.Allowed, PreflightSeverity.Blocker, applyAuth.Reason));
+
+        if (isProduction)
+        {
+            var prodAuth = await _authorization.AuthorizeAsync(
+                Permission.RunApplyProduction, plan.ProjectId, plan.EnvironmentId, target: plan.EnvironmentName, cancellationToken: ct);
+            checks.Add(new PreflightCheck("Permitted to apply to production", prodAuth.Allowed, PreflightSeverity.Blocker, prodAuth.Reason));
+        }
+        if (isDestroy)
+        {
+            var destroyAuth = await _authorization.AuthorizeAsync(
+                Permission.RunDestroy, plan.ProjectId, plan.EnvironmentId, target: "destroy", cancellationToken: ct);
+            checks.Add(new PreflightCheck("Permitted to destroy", destroyAuth.Allowed, PreflightSeverity.Blocker, destroyAuth.Reason));
+        }
+
+        // --- Org-controlled Terraform version (Phase 3 constraint grammar) ---
+        var versionReason = await _policy.CheckTerraformVersionAsync(installation?.Version?.ToString(), ct);
+        if (versionReason is not null)
+            checks.Add(new PreflightCheck("Terraform version allowed by organisation policy", false, PreflightSeverity.Blocker, versionReason));
+
+        // --- Shared policy (only when a policy row exists, i.e. enterprise mode on) ---
+        var activePolicy = await _policy.GetActiveAsync(ct);
+        if (activePolicy is null)
+            return;
+
+        var provenance = await SafeReadProvenanceAsync(plan.WorkingDirectory, ct);
+
+        // Production-destroy hard block.
+        if (isDestroy && isProduction && activePolicy.BlockProductionDestroy)
+            checks.Add(new PreflightCheck("Production destroy permitted by policy", false, PreflightSeverity.Blocker,
+                "Organisation policy forbids destroying production infrastructure."));
+
+        // Required production branch.
+        if (isProduction && !string.IsNullOrWhiteSpace(activePolicy.RequiredBranchForProduction))
+        {
+            var onBranch = provenance.Branch is not null &&
+                           string.Equals(provenance.Branch, activePolicy.RequiredBranchForProduction, StringComparison.Ordinal);
+            checks.Add(new PreflightCheck($"On the policy-required production branch '{activePolicy.RequiredBranchForProduction}'",
+                onBranch, PreflightSeverity.Blocker,
+                onBranch ? null : $"Organisation policy requires production to deploy from '{activePolicy.RequiredBranchForProduction}' (currently on '{provenance.Branch ?? "?"}')."));
+        }
+
+        // Private-repository requirement (enforced now — resolve visibility only when the policy needs it).
+        if (activePolicy.RequirePrivateRepositories)
+        {
+            var repoPrivate = await TryResolveRepositoryIsPrivateAsync(plan.ProjectId, ct);
+            if (repoPrivate == false)
+                checks.Add(new PreflightCheck("Repository is private (policy)", false, PreflightSeverity.Blocker,
+                    "Organisation policy requires a private repository (plans/state may carry secrets)."));
+            else if (repoPrivate is null)
+                checks.Add(new PreflightCheck("Repository visibility verified against policy", false, PreflightSeverity.Warning,
+                    "Organisation policy requires a private repository, but its visibility could not be confirmed."));
+        }
+
+        // Role-gated approval (replaces the Phase 9.5 local self-ack). Uses the pure evaluator for the
+        // requires-approval decision (production + any named environment), then checks for a valid request.
+        var verdict = PolicyEvaluator.Evaluate(activePolicy, new PolicyEvaluator.PolicyInputs(
+            isProduction, environment?.Name ?? plan.EnvironmentName, isDestroy,
+            provenance.Branch, null, installation?.Version?.ToString()));
+        if (verdict.RequiresApproval)
+        {
+            var approved = await _approval.IsPlanApprovedAsync(plan.Id, ct);
+            checks.Add(new PreflightCheck("Deployment approved", approved, PreflightSeverity.Blocker,
+                approved ? null : "Organisation policy requires an approved request for this deployment. Request approval, then have an authorised approver decide it."));
+        }
+    }
+
+    private async Task<GitProvenance> SafeReadProvenanceAsync(string workingDir, CancellationToken ct)
+    {
+        try { return await _git.ReadProvenanceAsync(workingDir, ct); }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not read Git provenance for governance checks.");
+            return GitProvenance.None;
+        }
+    }
+
+    private async Task<bool?> TryResolveRepositoryIsPrivateAsync(Guid projectId, CancellationToken ct)
+    {
+        try
+        {
+            var binding = await _repositoryHost.DescribeAsync(projectId, ct);
+            if (!binding.HasConnection || string.IsNullOrEmpty(binding.RepositoryId))
+                return null;
+            var repos = await _repositoryHost.GetRepositoriesAsync(projectId, ct);
+            if (!repos.Succeeded || repos.Value is null)
+                return null;
+            var match = repos.Value.FirstOrDefault(r => string.Equals(r.Id, binding.RepositoryId, StringComparison.OrdinalIgnoreCase));
+            return match?.IsPrivate;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not resolve repository visibility for policy check.");
+            return null;
+        }
     }
 
     private CommandPreview BuildApplyPreview(

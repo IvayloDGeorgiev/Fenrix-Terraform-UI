@@ -1179,3 +1179,36 @@ a:hover { color: var(--fx-accent-strong); }
 .fx-ed-attr { font-family: var(--fx-font-mono); font-size: 11px; padding: 1px 6px; border-radius: 5px; background: var(--fx-surface-2); color: var(--fx-accent-text); cursor: pointer; border: 1px solid var(--fx-border); }
 .fx-ed-attr:hover { border-color: var(--fx-accent); }
 .fx-ed-anchor { position: relative; display: inline-block; }
+
+/* ============================ Phase 11 — Enterprise capability ============================ */
+
+/* Generic data table (roles, users, assignments, audit rows). */
+.fx-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.fx-table thead th {
+  text-align: left; font-weight: 600; color: var(--fx-dim);
+  border-bottom: 1px solid var(--fx-border-strong); padding: 7px 10px; white-space: nowrap;
+}
+.fx-table tbody td { border-bottom: 1px solid var(--fx-border); padding: 8px 10px; vertical-align: top; }
+.fx-table tbody tr:hover { background: var(--fx-surface); }
+
+/* Checkbox line with an optional inline hint (policy switches, permission grid). */
+.fx-checkline { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; cursor: pointer; padding: 5px 0; }
+.fx-checkline input { margin-top: 2px; flex: 0 0 auto; }
+.fx-checkline .fx-hint { display: block; margin-top: 2px; }
+
+/* Two-column grid of permission checkboxes in the role editor. */
+.fx-permgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 2px 16px; }
+
+/* Audit / approval filter bar. */
+.fx-filterbar { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.fx-filterbar .fx-field { margin-bottom: 0; min-width: 150px; }
+.fx-pager { display: flex; align-items: center; gap: 12px; margin-top: 12px; font-size: 12.5px; color: var(--fx-dim); }
+
+/* Approval request card (inbox + deploy flow). */
+.fx-approval { border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm); padding: 12px 14px; background: var(--fx-surface); margin-bottom: 8px; }
+.fx-approval.pending { border-left: 3px solid var(--fx-warn); }
+.fx-approval.approved { border-left: 3px solid var(--fx-success); }
+.fx-approval.rejected, .fx-approval.expired { border-left: 3px solid var(--fx-danger); }
+.fx-approval-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.fx-approval-meta { font-size: 12px; color: var(--fx-dim); }
+.fx-approval-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }

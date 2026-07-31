@@ -102,6 +102,9 @@ else
                 case BuildTab.Edit:
                     <EditBlockPanel ProjectId="ProjectId" EnvironmentId="SelectedEnvironment.Id" />
                     break;
+                case BuildTab.Templates:
+                    <TemplateGalleryPanel ProjectId="ProjectId" />
+                    break;
             }
         </div>
     }
@@ -110,11 +113,11 @@ else
 @code {
     [Parameter] public Guid ProjectId { get; set; }
 
-    private enum BuildTab { Resources, Data, Variables, Outputs, Locals, Providers, Settings, Modules, Tfvars, Edit }
+    private enum BuildTab { Resources, Data, Variables, Outputs, Locals, Providers, Settings, Modules, Tfvars, Edit, Templates }
 
     private static readonly BuildTab[] _tabs =
         [BuildTab.Resources, BuildTab.Data, BuildTab.Variables, BuildTab.Outputs, BuildTab.Locals,
-         BuildTab.Providers, BuildTab.Settings, BuildTab.Modules, BuildTab.Tfvars, BuildTab.Edit];
+         BuildTab.Providers, BuildTab.Settings, BuildTab.Modules, BuildTab.Tfvars, BuildTab.Edit, BuildTab.Templates];
 
     private InfrastructureProject? _project;
     private List<ProjectEnvironment> _environments = [];
@@ -220,6 +223,7 @@ else
         BuildTab.Modules => "Modules",
         BuildTab.Tfvars => "tfvars",
         BuildTab.Edit => "Edit files",
+        BuildTab.Templates => "Templates",
         _ => t.ToString()
     };
 }

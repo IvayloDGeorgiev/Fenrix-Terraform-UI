@@ -1,0 +1,298 @@
+@using Fenrix.IaCStudio.Application.Abstractions.Enterprise
+@using Fenrix.IaCStudio.Contracts.Enterprise
+@using Fenrix.IaCStudio.Domain.Enterprise
+@inject ITemplateService Templates
+@inject IAuthorizationService Authz
+
+@* Shared config-template gallery (the Phase 10 deferred templates): pick a template, fill parameters, preview the
+   instantiated HCL, and apply it into a project .tf file through the atomic-write + file-history path. See docs/29-enterprise.md. *@
+
+<div class="fx-build-grid">
+    <div class="fx-build-col" style="min-width:260px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-weight:600;font-size:13px;flex:1;">Template library</span>
+            @if (_canManage)
+            {
+                <button class="fx-btn sm" @onclick="NewTemplate"><span class="fx-ico"><Icon Name="plus" Size="12" /></span> New</button>
+            }
+        </div>
+        @if (_templates.Count == 0)
+        {
+            <div class="fx-hint">No templates yet. @(_canManage ? "Create one to share reusable config across the team." : "An administrator can publish reusable templates here.")</div>
+        }
+        else
+        {
+            <div class="fx-typelist">
+                @foreach (var t in _templates)
+                {
+                    <button class="fx-typerow @(t.Id == _selectedId ? "active" : "")" @onclick="() => SelectAsync(t.Id)">
+                        <div>@t.Name</div>
+                        <div class="fx-hint" style="margin:0;">@(string.IsNullOrWhiteSpace(t.Category) ? "" : t.Category + " · ")@t.ParameterCount param(s)</div>
+                    </button>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="fx-build-col grow">
+        @if (_editing is not null)
+        {
+            @* ---- authoring ---- *@
+            <div class="fx-card">
+                <div style="font-size:14px;font-weight:600;margin-bottom:10px;">@(_editing.Id is null ? "New template" : "Edit template")</div>
+                <div class="fx-formgrid">
+                    <div class="fx-field"><label>Name</label><input class="fx-input" @bind="_edName" /></div>
+                    <div class="fx-field"><label>Category</label><input class="fx-input" @bind="_edCategory" /></div>
+                </div>
+                <div class="fx-field"><label>Description</label><input class="fx-input" @bind="_edDescription" /></div>
+                <div class="fx-field"><label>Default target file</label><input class="fx-input fx-mono" placeholder="main.tf" @bind="_edTarget" /></div>
+                <div class="fx-field">
+                    <label>Body — use <span class="fx-mono">@("{{name}}")</span> placeholders</label>
+                    <textarea class="fx-input fx-mono" rows="10" @bind="_edBody"></textarea>
+                </div>
+
+                <div style="display:flex;align-items:center;gap:8px;margin:4px 0 6px;">
+                    <span style="font-weight:600;font-size:12.5px;flex:1;">Parameters</span>
+                    <button class="fx-btn sm" @onclick="AddParam"><span class="fx-ico"><Icon Name="plus" Size="12" /></span> Add</button>
+                </div>
+                @foreach (var p in _edParams)
+                {
+                    <div class="fx-localrow">
+                        <input class="fx-input fx-mono" style="max-width:150px;" placeholder="name" @bind="p.Name" />
+                        <select class="fx-input" style="max-width:130px;" value="@p.Type" @onchange="e => p.Type = Enum.TryParse<TemplateParameterType>(e.Value?.ToString(), out var t) ? t : TemplateParameterType.String">
+                            @foreach (var tp in Enum.GetValues<TemplateParameterType>()) { <option value="@tp">@tp</option> }
+                        </select>
+                        <input class="fx-input" style="max-width:150px;" placeholder="default" @bind="p.DefaultValue" />
+                        <label class="fx-checkline" style="padding:0;"><input type="checkbox" checked="@p.Required" @onchange="e => p.Required = (bool)e.Value!" /> req</label>
+                        <button class="fx-iconbtn" title="Remove" @onclick="() => _edParams.Remove(p)"><Icon Name="trash" Size="13" /></button>
+                    </div>
+                }
+
+                <div style="display:flex;align-items:center;gap:10px;margin-top:12px;">
+                    <button class="fx-btn accent" @onclick="SaveTemplate" disabled="@_busy"><span class="fx-ico"><Icon Name="check" Size="13" /></span> Save</button>
+                    <button class="fx-btn" @onclick="() => _editing = null">Cancel</button>
+                    @if (_editError is not null) { <span class="fx-pill fail">@_editError</span> }
+                </div>
+            </div>
+        }
+        else if (_detail is null)
+        {
+            <div class="fx-card"><div class="fx-hint" style="margin:0;">Select a template to fill in its parameters and apply it.</div></div>
+        }
+        else
+        {
+            @* ---- apply-with-parameters ---- *@
+            <div class="fx-card">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                    <span style="font-size:14px;font-weight:600;flex:1;">@_detail.Name</span>
+                    @if (_canManage)
+                    {
+                        <button class="fx-iconbtn" title="Edit" @onclick="() => EditTemplate(_detail)"><Icon Name="pencil" Size="14" /></button>
+                        <button class="fx-iconbtn" title="Delete" @onclick="DeleteTemplate"><Icon Name="trash" Size="14" /></button>
+                    }
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_detail.Description)) { <p class="fx-hint" style="margin:0 0 12px;">@_detail.Description</p> }
+
+                @if (_detail.Parameters.Count == 0)
+                {
+                    <div class="fx-hint">This template has no parameters.</div>
+                }
+                else
+                {
+                    @foreach (var p in _detail.Parameters)
+                    {
+                        <div class="fx-field">
+                            <label>@p.Name @(p.Required ? "*" : "") <span class="fx-schema-type">@p.Type.ToString().ToLowerInvariant()</span></label>
+                            @if (p.Type == TemplateParameterType.Bool)
+                            {
+                                <select class="fx-input" value="@GetVal(p.Name)" @onchange="e => SetVal(p.Name, e.Value?.ToString())">
+                                    <option value="true">true</option>
+                                    <option value="false">false</option>
+                                </select>
+                            }
+                            else
+                            {
+                                <input class="fx-input fx-mono" value="@GetVal(p.Name)" @onchange="e => SetVal(p.Name, e.Value?.ToString())" />
+                            }
+                            @if (!string.IsNullOrWhiteSpace(p.Description)) { <div class="fx-hint">@p.Description</div> }
+                        </div>
+                    }
+                }
+
+                <div class="fx-field">
+                    <label>Target file</label>
+                    <input class="fx-input fx-mono" placeholder="main.tf" @bind="_target" />
+                </div>
+
+                <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+                    <button class="fx-btn" @onclick="PreviewAsync" disabled="@_busy"><span class="fx-ico"><Icon Name="file-text" Size="13" /></span> Preview</button>
+                    <button class="fx-btn accent" @onclick="ApplyAsync" disabled="@_busy"><span class="fx-ico"><Icon Name="check" Size="13" /></span> Apply to project</button>
+                    @if (_applyMsg is not null) { <span class="fx-pill ok">@_applyMsg</span> }
+                    @if (_applyError is not null) { <span class="fx-pill fail">@_applyError</span> }
+                </div>
+
+                @if (_result is not null)
+                {
+                    @if (_result.MissingRequired.Count > 0)
+                    {
+                        <div class="fx-pill warn" style="margin-top:10px;">Missing required: @string.Join(", ", _result.MissingRequired)</div>
+                    }
+                    @if (_result.UnknownPlaceholders.Count > 0)
+                    {
+                        <div class="fx-hint" style="margin-top:8px;">Unknown placeholders left as-is: @string.Join(", ", _result.UnknownPlaceholders)</div>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(_result.Hcl))
+                    {
+                        <pre class="fx-codeblock" style="margin-top:10px;">@_result.Hcl</pre>
+                    }
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private bool _canManage;
+    private bool _busy;
+
+    private List<TemplateSummary> _templates = [];
+    private Guid? _selectedId;
+    private TemplateDetail? _detail;
+    private readonly Dictionary<string, string?> _values = [];
+    private string _target = "";
+    private ApplyTemplateResult? _result;
+    private string? _applyMsg;
+    private string? _applyError;
+
+    // authoring
+    private EditModel? _editing;
+    private string _edName = "", _edCategory = "", _edDescription = "", _edTarget = "", _edBody = "";
+    private readonly List<ParamRow> _edParams = [];
+    private string? _editError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _canManage = await Authz.HasPermissionAsync(Permission.ManageTemplates, ProjectId);
+        await ReloadListAsync();
+    }
+
+    private async Task ReloadListAsync()
+    {
+        try { _templates = (await Templates.ListAsync()).ToList(); }
+        catch { _templates = []; }
+    }
+
+    private async Task SelectAsync(Guid id)
+    {
+        _editing = null;
+        _selectedId = id;
+        _result = null; _applyMsg = null; _applyError = null;
+        _values.Clear();
+        _detail = await Templates.GetAsync(id);
+        if (_detail is not null)
+        {
+            _target = _detail.DefaultTargetFile ?? "main.tf";
+            foreach (var p in _detail.Parameters)
+                _values[p.Name] = p.DefaultValue ?? (p.Type == TemplateParameterType.Bool ? "false" : "");
+        }
+    }
+
+    private string? GetVal(string name) => _values.TryGetValue(name, out var v) ? v : "";
+    private void SetVal(string name, string? v) => _values[name] = v;
+
+    private async Task PreviewAsync()
+    {
+        if (_detail is null) return;
+        _busy = true; _applyMsg = null; _applyError = null;
+        try { _result = await Templates.PreviewAsync(_detail.Id, _values); }
+        catch (Exception ex) { _applyError = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task ApplyAsync()
+    {
+        if (_detail is null) return;
+        _busy = true; _applyMsg = null; _applyError = null;
+        try
+        {
+            var result = await Templates.ApplyAsync(new ApplyTemplateRequest(_detail.Id, ProjectId, _target, _values));
+            _result = result;
+            if (result.Succeeded) _applyMsg = $"Applied to {result.TargetRelativePath}";
+            else _applyError = result.Error ?? "Could not apply the template.";
+        }
+        catch (Exception ex) { _applyError = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    // ---- authoring ----
+
+    private void NewTemplate()
+    {
+        _editing = new EditModel(null);
+        _edName = ""; _edCategory = ""; _edDescription = ""; _edTarget = "main.tf"; _edBody = "";
+        _edParams.Clear();
+        _editError = null;
+    }
+
+    private void EditTemplate(TemplateDetail d)
+    {
+        _editing = new EditModel(d.Id);
+        _edName = d.Name; _edCategory = d.Category ?? ""; _edDescription = d.Description ?? "";
+        _edTarget = d.DefaultTargetFile ?? "main.tf"; _edBody = d.Body;
+        _edParams.Clear();
+        foreach (var p in d.Parameters)
+            _edParams.Add(new ParamRow { Name = p.Name, Type = p.Type, DefaultValue = p.DefaultValue, Required = p.Required });
+        _editError = null;
+    }
+
+    private void AddParam() => _edParams.Add(new ParamRow());
+
+    private async Task SaveTemplate()
+    {
+        _editError = null;
+        if (string.IsNullOrWhiteSpace(_edName)) { _editError = "Give the template a name."; return; }
+        _busy = true;
+        try
+        {
+            var parameters = _edParams
+                .Where(p => !string.IsNullOrWhiteSpace(p.Name))
+                .Select((p, ix) => new TemplateParameterModel(p.Name.Trim(), null, p.Type, p.DefaultValue, p.Required, ix))
+                .ToList();
+            var saved = await Templates.SaveAsync(new SaveTemplateRequest(
+                _editing!.Id, _edName, string.IsNullOrWhiteSpace(_edDescription) ? null : _edDescription,
+                string.IsNullOrWhiteSpace(_edCategory) ? null : _edCategory, _edBody,
+                string.IsNullOrWhiteSpace(_edTarget) ? null : _edTarget, parameters));
+            _editing = null;
+            await ReloadListAsync();
+            await SelectAsync(saved.Id);
+        }
+        catch (Exception ex) { _editError = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task DeleteTemplate()
+    {
+        if (_detail is null) return;
+        _busy = true;
+        try
+        {
+            await Templates.DeleteAsync(_detail.Id);
+            _detail = null; _selectedId = null;
+            await ReloadListAsync();
+        }
+        catch (Exception ex) { _applyError = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private sealed record EditModel(Guid? Id);
+
+    private sealed class ParamRow
+    {
+        public string Name { get; set; } = "";
+        public TemplateParameterType Type { get; set; } = TemplateParameterType.String;
+        public string? DefaultValue { get; set; }
+        public bool Required { get; set; }
+    }
+}

@@ -1,4 +1,5 @@
 using Fenrix.IaCStudio.Application.Abstractions;
+using Fenrix.IaCStudio.Application.Abstractions.Enterprise;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Application.Abstractions.Security;
 using Fenrix.IaCStudio.Application.Abstractions.Terraform;
@@ -7,6 +8,7 @@ using Fenrix.IaCStudio.Application.Settings;
 using Fenrix.IaCStudio.Contracts.Security;
 using Fenrix.IaCStudio.Contracts.Terraform;
 using Fenrix.IaCStudio.Domain.Common;
+using Fenrix.IaCStudio.Domain.Enterprise;
 using Fenrix.IaCStudio.Domain.Execution;
 using Fenrix.IaCStudio.Domain.Security;
 using Fenrix.IaCStudio.Infrastructure.Persistence;
@@ -31,6 +33,7 @@ public sealed class KeyPairService(
     ISettingsService settings,
     ICommandHistoryStore history,
     IWorkspacePaths paths,
+    IAuthorizationService authorization,
     ILogger<KeyPairService> logger) : IKeyPairService
 {
     private const string AuditTool = "fenrix";
@@ -42,6 +45,7 @@ public sealed class KeyPairService(
     private readonly ISettingsService _settings = settings;
     private readonly ICommandHistoryStore _history = history;
     private readonly IWorkspacePaths _paths = paths;
+    private readonly IAuthorizationService _authorization = authorization;
     private readonly ILogger<KeyPairService> _logger = logger;
 
     public async Task<IReadOnlyList<KeyPairSummary>> ListAsync(Guid projectId, CancellationToken ct = default)
@@ -280,6 +284,15 @@ public sealed class KeyPairService(
     {
         var key = await _db.Set<KeyPair>().FirstOrDefaultAsync(k => k.Id == keyId, ct);
         if (key is null) return KeyExportResult.Denied("Key not found.");
+
+        // Enterprise RBAC: the current user must hold ExportPrivateKey for this project (allow-all when mode off).
+        // This gate sits in front of the existing Settings toggle + typed-name confirmation. A denial self-audits.
+        var authz = await _authorization.AuthorizeAsync(Permission.ExportPrivateKey, key.ProjectId, target: key.Name, cancellationToken: ct);
+        if (!authz.Allowed)
+        {
+            await AuditAsync(key, "key-export-denied", "Denied", "not permitted", ct);
+            return KeyExportResult.Denied(authz.Reason ?? "You are not permitted to export private keys.");
+        }
 
         var allowed = await _settings.GetOrDefaultAsync(FenrixSettingKeys.AllowPrivateKeyExport, false, key.ProjectId, null, ct);
         if (!allowed)

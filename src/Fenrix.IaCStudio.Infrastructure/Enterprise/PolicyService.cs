@@ -16,10 +16,12 @@ namespace Fenrix.IaCStudio.Infrastructure.Enterprise;
 public sealed class PolicyService(
     AppDbContext db,
     IEnterpriseConfig config,
+    IAuthorizationService authorization,
     IAuditService audit) : IPolicyService
 {
     private readonly AppDbContext _db = db;
     private readonly IEnterpriseConfig _config = config;
+    private readonly IAuthorizationService _authorization = authorization;
     private readonly IAuditService _audit = audit;
 
     public async Task<OrgPolicy?> GetActiveAsync(CancellationToken cancellationToken = default)
@@ -39,6 +41,10 @@ public sealed class PolicyService(
     public async Task<OrgPolicySummary> SaveAsync(
         SaveOrgPolicyRequest request, CancellationToken cancellationToken = default)
     {
+        var authz = await _authorization.AuthorizeAsync(Permission.ManagePolicy, target: "organisation policy", cancellationToken: cancellationToken);
+        if (!authz.Allowed)
+            throw new UnauthorizedAccessException(authz.Reason ?? "You need the 'ManagePolicy' permission.");
+
         var policy = await _db.OrgPolicies.OrderByDescending(p => p.UpdatedAt).FirstOrDefaultAsync(cancellationToken);
         if (policy is null)
         {

@@ -1,9 +1,11 @@
 @page "/settings"
 @using Fenrix.IaCStudio.Application.Abstractions
+@using Fenrix.IaCStudio.Application.Abstractions.Enterprise
 @using Fenrix.IaCStudio.Application.Settings
 @inject ThemeService Theme
 @inject ISettingsService SettingsSvc
 @inject IWorkspacePaths Paths
+@inject IEnterpriseConfig Enterprise
 @inject IJSRuntime JS
 @implements IDisposable
 
@@ -84,6 +86,46 @@
         <input class="fx-input" type="number" min="10" max="22" style="width:80px;" value="@_fontSize" @onchange="OnFontSizeChanged" />
         <span style="color:var(--fx-faint);">px</span>
     </div>
+</div>
+
+<div class="fx-card" style="margin-bottom:16px;">
+    <h2 style="font-size:15px;margin:0 0 4px;">Enterprise</h2>
+    <p style="font-size:12.5px;color:var(--fx-dim);margin:0 0 12px;">
+        Organisation governance (roles, shared policy, central audit, role-gated approvals). Read-only —
+        configured by <span class="fx-mono">enterprise.json</span> in the data root. See docs/29-enterprise.md.
+    </p>
+
+    @{ var status = Enterprise.Status; }
+    <div style="font-size:13px;line-height:1.9;">
+        <div>
+            <span style="color:var(--fx-dim);">Governance:</span>
+            @if (status.Enabled)
+            {
+                <span class="fx-pill ok">Enabled</span>
+            }
+            else
+            {
+                <span class="fx-pill">Off — single-user local mode</span>
+            }
+        </div>
+        <div><span style="color:var(--fx-dim);">Metadata provider:</span> <span class="fx-mono">@status.MetadataProvider</span></div>
+        <div><span style="color:var(--fx-dim);">Organisation:</span> @(string.IsNullOrWhiteSpace(status.Organisation) ? "—" : status.Organisation)</div>
+        @if (status.Enabled)
+        {
+            <div>
+                <span style="color:var(--fx-dim);">Connection resolved:</span>
+                @(status.ConnectionResolved ? "yes" : "no — check the connection-string environment variable")
+            </div>
+        }
+    </div>
+
+    @if (!status.Enabled)
+    {
+        <p style="font-size:12px;color:var(--fx-faint);margin:12px 0 0;">
+            To enable, drop an <span class="fx-mono">enterprise.json</span> in the data root and set the
+            connection-string environment variable it names. The string is never written to disk.
+        </p>
+    }
 </div>
 
 <div class="fx-card">

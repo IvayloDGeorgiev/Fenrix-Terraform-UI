@@ -1,0 +1,114 @@
+@page "/enterprise/approvals"
+@using Fenrix.IaCStudio.Application.Abstractions.Enterprise
+@using Fenrix.IaCStudio.Contracts.Enterprise
+@using Fenrix.IaCStudio.Domain.Enterprise
+@inject IEnterpriseConfig Enterprise
+@inject IApprovalService ApprovalSvc
+
+@* Approvals inbox: pending deployment approval requests the current user is allowed to decide (approver ≠ requester,
+   holds ApproveDeployment in scope). Deciding here unblocks the exact saved plan in the deploy flow. See docs/29-enterprise.md. *@
+
+<h1 class="fx-page-title">Approvals</h1>
+<p class="fx-page-sub">Deployment approval requests waiting on you. Approving unblocks that exact reviewed plan — nothing else.</p>
+
+@if (!Enterprise.IsEnabled)
+{
+    <EmptyState IconName="inbox" Title="Enterprise mode is off"
+                Text="Role-gated approvals are part of enterprise governance. Enable it via enterprise.json (Settings → Enterprise)." />
+}
+else if (!_ready)
+{
+    <div class="fx-hint">Loading…</div>
+}
+else
+{
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <button class="fx-btn" @onclick="LoadAsync" disabled="@_busy"><span class="fx-ico"><Icon Name="refresh" Size="13" /></span> Refresh</button>
+        @if (_error is not null) { <span class="fx-pill fail">@_error</span> }
+    </div>
+
+    @if (_inbox.Count == 0)
+    {
+        <EmptyState IconName="check" Title="Nothing waiting" Text="You have no pending approval requests to decide." />
+    }
+    else
+    {
+        @foreach (var r in _inbox)
+        {
+            <div class="fx-approval pending">
+                <div class="fx-approval-head">
+                    <span class="fx-chip"><span class="fx-ico"><Icon Name="bookmark" Size="13" /></span> @r.VersionLabel</span>
+                    <span class="fx-ico"><Icon Name="chevron-right" Size="13" /></span>
+                    <span class="fx-chip">@r.EnvironmentName</span>
+                    <span class="fx-chip fx-mono" title="Commit">@Short(r.GitCommit)</span>
+                    @if (r.ExpiresAt is { } exp) { <span class="fx-pill warn"><span class="fx-ico"><Icon Name="clock" Size="12" /></span> expires @exp.LocalDateTime.ToString("g")</span> }
+                </div>
+                <div class="fx-approval-meta">
+                    Requested by <strong>@r.RequestedByName</strong> at @r.RequestedAt.LocalDateTime.ToString("g")
+                    @if (!string.IsNullOrWhiteSpace(r.RequestNote)) { <span> — “@r.RequestNote”</span> }
+                </div>
+                <div class="fx-approval-actions">
+                    <input class="fx-input" style="max-width:340px;" placeholder="Decision note (optional)" @bind="_notes[r.Id]" />
+                    <button class="fx-btn accent" @onclick="() => Decide(r, true)" disabled="@_busy">
+                        <span class="fx-ico"><Icon Name="check" Size="13" /></span> Approve
+                    </button>
+                    <button class="fx-btn" @onclick="() => Decide(r, false)" disabled="@_busy">
+                        <span class="fx-ico"><Icon Name="x" Size="13" /></span> Reject
+                    </button>
+                </div>
+                @if (_rowError.TryGetValue(r.Id, out var rerr) && rerr is not null)
+                {
+                    <div class="fx-pill fail" style="margin-top:8px;">@rerr</div>
+                }
+            </div>
+        }
+    }
+}
+
+@code {
+    private bool _ready;
+    private bool _busy;
+    private string? _error;
+    private List<ApprovalRequestSummary> _inbox = [];
+    private readonly Dictionary<Guid, string> _notes = [];
+    private readonly Dictionary<Guid, string?> _rowError = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Enterprise.IsEnabled) { _ready = true; return; }
+        await LoadAsync();
+        _ready = true;
+    }
+
+    private async Task LoadAsync()
+    {
+        _busy = true; _error = null; StateHasChanged();
+        try
+        {
+            _inbox = (await ApprovalSvc.ListInboxAsync()).ToList();
+            foreach (var r in _inbox) _notes.TryAdd(r.Id, ""); // seed so the @bind indexer never throws
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private async Task Decide(ApprovalRequestSummary r, bool approve)
+    {
+        _busy = true;
+        _rowError[r.Id] = null;
+        StateHasChanged();
+        try
+        {
+            var note = _notes.TryGetValue(r.Id, out var n) ? n : null;
+            var result = await ApprovalSvc.DecideAsync(new ApprovalDecisionRequest(r.Id, approve, note));
+            if (result.Succeeded)
+                await LoadAsync();
+            else
+                _rowError[r.Id] = result.Error ?? "Could not record the decision.";
+        }
+        catch (Exception ex) { _rowError[r.Id] = ex.Message; }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private static string Short(string sha) => string.IsNullOrEmpty(sha) ? "—" : sha.Length > 8 ? sha[..8] : sha;
+}

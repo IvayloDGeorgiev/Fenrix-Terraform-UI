@@ -1,0 +1,601 @@
+@page "/enterprise/admin"
+@using Fenrix.IaCStudio.Application.Abstractions.Enterprise
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Contracts.Enterprise
+@using Fenrix.IaCStudio.Contracts.Projects
+@using Fenrix.IaCStudio.Domain.Enterprise
+@inject IEnterpriseConfig Enterprise
+@inject IAuthorizationService Authz
+@inject IRoleService Roles
+@inject IPolicyService Policy
+@inject IProjectService Projects
+
+@* Enterprise administration: roles, users + assignments, and the organisation policy editor. All CRUD is
+   additionally guarded in the services; this page also hides tabs the current user can't manage. See docs/29-enterprise.md. *@
+
+<h1 class="fx-page-title">Administration</h1>
+<p class="fx-page-sub">Roles, user assignments, and the organisation policy. Governance only tightens — it never loosens the existing safety gates.</p>
+
+@if (!Enterprise.IsEnabled)
+{
+    <EmptyState IconName="shield" Title="Enterprise mode is off"
+                Text="This install runs in single-user local mode. Enable governance via enterprise.json in the data root (Settings → Enterprise)." />
+}
+else if (!_ready)
+{
+    <div class="fx-hint">Loading…</div>
+}
+else if (!_canManageRoles && !_canManagePolicy)
+{
+    <EmptyState IconName="alert" Title="Not permitted"
+                Text="You need the ManageRoles or ManagePolicy permission to view administration." />
+}
+else
+{
+    <div class="fx-tabs" style="margin-bottom:14px;">
+        @if (_canManageRoles)
+        {
+            <button class="fx-tab @TabCls(Tab.Roles)" @onclick="() => _tab = Tab.Roles">Roles</button>
+            <button class="fx-tab @TabCls(Tab.Users)" @onclick="() => _tab = Tab.Users">Users &amp; assignments</button>
+        }
+        @if (_canManagePolicy)
+        {
+            <button class="fx-tab @TabCls(Tab.Policy)" @onclick="() => _tab = Tab.Policy">Organisation policy</button>
+        }
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="fx-pill fail" style="margin-bottom:12px;">@_error</div>
+    }
+
+    @* ---- ROLES ---- *@
+    @if (_tab == Tab.Roles && _canManageRoles)
+    {
+        <div class="fx-card" style="margin-bottom:16px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                <span style="font-size:14px;font-weight:600;flex:1;">Roles</span>
+                <button class="fx-btn" @onclick="NewRole"><span class="fx-ico"><Icon Name="plus" Size="13" /></span> New role</button>
+            </div>
+            @if (_roles.Count == 0)
+            {
+                <div class="fx-hint">No roles yet.</div>
+            }
+            else
+            {
+                <table class="fx-table">
+                    <thead><tr><th>Name</th><th>Permissions</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var r in _roles)
+                        {
+                            <tr>
+                                <td>
+                                    <div style="font-weight:500;">@r.Name @(r.IsBuiltIn ? "" : "")</div>
+                                    @if (r.IsBuiltIn) { <span class="fx-pill" style="font-size:10px;">built-in</span> }
+                                    @if (!string.IsNullOrWhiteSpace(r.Description)) { <div class="fx-hint">@r.Description</div> }
+                                </td>
+                                <td class="fx-mono" style="font-size:11.5px;color:var(--fx-dim);max-width:340px;">@PermLabel(r.Permissions)</td>
+                                <td style="text-align:right;white-space:nowrap;">
+                                    <button class="fx-iconbtn" title="Edit" @onclick="() => EditRole(r)"><Icon Name="pencil" Size="14" /></button>
+                                    @if (!r.IsBuiltIn)
+                                    {
+                                        <button class="fx-iconbtn" title="Delete" @onclick="() => DeleteRole(r)"><Icon Name="trash" Size="14" /></button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    }
+
+    @* ---- USERS & ASSIGNMENTS ---- *@
+    @if (_tab == Tab.Users && _canManageRoles)
+    {
+        <div class="fx-card" style="margin-bottom:16px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                <span style="font-size:14px;font-weight:600;flex:1;">Assignments</span>
+                <button class="fx-btn accent" @onclick="NewAssignment"><span class="fx-ico"><Icon Name="plus" Size="13" /></span> Assign role</button>
+            </div>
+            @if (_assignments.Count == 0)
+            {
+                <div class="fx-hint">No role assignments yet. Assign a role to a user at a scope to start enforcing permissions.</div>
+            }
+            else
+            {
+                <table class="fx-table">
+                    <thead><tr><th>User</th><th>Role</th><th>Scope</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var a in _assignments)
+                        {
+                            <tr>
+                                <td><div style="font-weight:500;">@a.UserDisplayName</div><div class="fx-hint fx-mono">@a.UserKey</div></td>
+                                <td>@a.RoleName</td>
+                                <td>@ScopeLabel(a)</td>
+                                <td style="text-align:right;">
+                                    <button class="fx-iconbtn" title="Remove" @onclick="() => RemoveAssignment(a)"><Icon Name="trash" Size="14" /></button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+
+        <div class="fx-card">
+            <div style="font-size:14px;font-weight:600;margin-bottom:10px;">Known users</div>
+            @if (_users.Count == 0)
+            {
+                <div class="fx-hint">Users appear here after they sign in, or when you assign them a role by user key.</div>
+            }
+            else
+            {
+                <table class="fx-table">
+                    <thead><tr><th>Name</th><th>Key</th><th>Email</th><th>Last seen</th></tr></thead>
+                    <tbody>
+                        @foreach (var u in _users)
+                        {
+                            <tr>
+                                <td>@u.DisplayName</td>
+                                <td class="fx-mono" style="font-size:11.5px;">@u.UserKey</td>
+                                <td>@(string.IsNullOrWhiteSpace(u.Email) ? "—" : u.Email)</td>
+                                <td>@(u.LastSeenAt?.LocalDateTime.ToString("g") ?? "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    }
+
+    @* ---- POLICY ---- *@
+    @if (_tab == Tab.Policy && _canManagePolicy)
+    {
+        <div class="fx-card" style="max-width:640px;">
+            <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Organisation policy</div>
+            <p class="fx-hint" style="margin:0 0 14px;">One active policy for the whole organisation. Every switch adds an approval requirement or a hard block on top of the existing gates.</p>
+
+            <label class="fx-checkline">
+                <input type="checkbox" checked="@_p.RequireApprovalForProduction" @onchange="e => _p.RequireApprovalForProduction = (bool)e.Value!" />
+                <span>Require approval for production deployments <span class="fx-hint">Replaces the local self-ack with a role-gated approval.</span></span>
+            </label>
+
+            <div class="fx-field">
+                <label>Also require approval for these environments</label>
+                <input class="fx-input" placeholder="e.g. staging, uat (comma-separated)" @bind="_approvalEnvsText" />
+            </div>
+
+            <label class="fx-checkline">
+                <input type="checkbox" checked="@_p.BlockProductionDestroy" @onchange="e => _p.BlockProductionDestroy = (bool)e.Value!" />
+                <span>Block destroying production infrastructure <span class="fx-hint">Refuses any destroy plan targeting a production environment.</span></span>
+            </label>
+
+            <label class="fx-checkline">
+                <input type="checkbox" checked="@_p.RequirePrivateRepositories" @onchange="e => _p.RequirePrivateRepositories = (bool)e.Value!" />
+                <span>Require private repositories <span class="fx-hint">Blocks apply when the bound repository is confirmed public (plans/state may carry secrets).</span></span>
+            </label>
+
+            <div class="fx-field">
+                <label>Required branch for production</label>
+                <input class="fx-input fx-mono" placeholder="e.g. main (empty = unrestricted)" @bind="_p.RequiredBranchForProduction" />
+            </div>
+
+            <div class="fx-field">
+                <label>Allowed Terraform version constraint</label>
+                <input class="fx-input fx-mono" placeholder="e.g. ~&gt; 1.7 (empty = unconstrained)" @bind="_p.AllowedTerraformVersionConstraint" />
+                <div class="fx-hint">Uses the standard <span class="fx-mono">required_version</span> grammar, AND-ed with each project's own.</div>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:10px;margin-top:14px;">
+                <button class="fx-btn accent" @onclick="SavePolicy" disabled="@_busy">
+                    <span class="fx-ico"><Icon Name="check" Size="13" /></span> Save policy
+                </button>
+                @if (_policyMsg is not null) { <span class="fx-pill ok">@_policyMsg</span> }
+                @if (_lastUpdated is not null) { <span class="fx-hint">Last updated @_lastUpdated.Value.LocalDateTime.ToString("g")</span> }
+            </div>
+        </div>
+    }
+}
+
+@* ---- Role editor ---- *@
+@if (_editingRole is not null)
+{
+    <Modal Title="@(_editingRole!.Id == Guid.Empty ? "New role" : "Edit role")" IconName="shield" OnClose="() => _editingRole = null">
+        <ChildContent>
+            <div class="fx-field">
+                <label>Name</label>
+                <input class="fx-input" @bind="_editRoleName" disabled="@_editRoleBuiltIn" />
+                @if (_editRoleBuiltIn) { <div class="fx-hint">Built-in role names are fixed; you can still adjust its permissions.</div> }
+            </div>
+            <div class="fx-field">
+                <label>Description</label>
+                <input class="fx-input" @bind="_editRoleDesc" />
+            </div>
+            <div class="fx-field">
+                <label>Permissions</label>
+                <div class="fx-permgrid">
+                    @foreach (var perm in AllPermissions)
+                    {
+                        <label class="fx-checkline">
+                            <input type="checkbox" checked="@_editPerms.Contains(perm)" @onchange="e => TogglePerm(perm, (bool)e.Value!)" />
+                            <span>@PermName(perm) <span class="fx-hint">@PermHint(perm)</span></span>
+                        </label>
+                    }
+                </div>
+            </div>
+        </ChildContent>
+        <Footer>
+            @if (_roleError is not null) { <span class="fx-pill fail" style="margin-right:auto;">@_roleError</span> }
+            <button class="fx-btn" @onclick="() => _editingRole = null">Cancel</button>
+            <button class="fx-btn accent" @onclick="SaveRole" disabled="@_busy">Save</button>
+        </Footer>
+    </Modal>
+}
+
+@* ---- Assignment editor ---- *@
+@if (_assigning)
+{
+    <Modal Title="Assign role" IconName="shield" OnClose="() => _assigning = false">
+        <ChildContent>
+            <div class="fx-field">
+                <label>User key</label>
+                <input class="fx-input fx-mono" placeholder="domain\user or SID" @bind="_asnUserKey" />
+                <div class="fx-hint">The user's stable identity (Windows SID or account name). They gain the role next time permissions are evaluated.</div>
+            </div>
+            <div class="fx-field">
+                <label>Display name</label>
+                <input class="fx-input" @bind="_asnUserName" />
+            </div>
+            <div class="fx-field">
+                <label>Role</label>
+                <select class="fx-input" value="@(_asnRoleId?.ToString())"
+                        @onchange="e => _asnRoleId = Guid.TryParse(e.Value?.ToString(), out var g) ? g : null">
+                    <option value="">— choose a role —</option>
+                    @foreach (var r in _roles)
+                    {
+                        <option value="@r.Id">@r.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="fx-field">
+                <label>Scope</label>
+                <select class="fx-input" value="@_asnScope"
+                        @onchange="OnAsnScopeChanged">
+                    <option value="@AccessScopeLevel.Global">Global (whole organisation)</option>
+                    <option value="@AccessScopeLevel.Project">A single project</option>
+                    <option value="@AccessScopeLevel.Environment">A single environment</option>
+                </select>
+            </div>
+            @if (_asnScope != AccessScopeLevel.Global)
+            {
+                <div class="fx-field">
+                    <label>Project</label>
+                    <select class="fx-input" value="@(_asnProjectId?.ToString())" @onchange="OnAsnProjectChanged">
+                        <option value="">— choose a project —</option>
+                        @foreach (var p in _projects)
+                        {
+                            <option value="@p.Id">@p.Name</option>
+                        }
+                    </select>
+                </div>
+            }
+            @if (_asnScope == AccessScopeLevel.Environment && _asnProjectId is not null)
+            {
+                <div class="fx-field">
+                    <label>Environment</label>
+                    <select class="fx-input" value="@(_asnEnvironmentId?.ToString())"
+                            @onchange="e => _asnEnvironmentId = Guid.TryParse(e.Value?.ToString(), out var g) ? g : null">
+                        <option value="">— choose an environment —</option>
+                        @foreach (var e in _asnEnvs)
+                        {
+                            <option value="@e.Id">@e.Name@(e.IsProduction ? " (production)" : "")</option>
+                        }
+                    </select>
+                </div>
+            }
+        </ChildContent>
+        <Footer>
+            @if (_asnError is not null) { <span class="fx-pill fail" style="margin-right:auto;">@_asnError</span> }
+            <button class="fx-btn" @onclick="() => _assigning = false">Cancel</button>
+            <button class="fx-btn accent" @onclick="SaveAssignment" disabled="@_busy">Assign</button>
+        </Footer>
+    </Modal>
+}
+
+@code {
+    private enum Tab { Roles, Users, Policy }
+    private Tab _tab = Tab.Roles;
+
+    private bool _ready;
+    private bool _busy;
+    private bool _canManageRoles;
+    private bool _canManagePolicy;
+    private string? _error;
+
+    private List<RoleSummary> _roles = [];
+    private List<OrgUserSummary> _users = [];
+    private List<RoleAssignmentSummary> _assignments = [];
+    private List<ProjectSummary> _projects = [];
+
+    // Policy editor state (mutable form — OrgPolicySummary is an init-only record and can't be bound directly).
+    private PolicyForm _p = new();
+    private string _approvalEnvsText = "";
+    private string? _policyMsg;
+    private DateTimeOffset? _lastUpdated;
+
+    private sealed class PolicyForm
+    {
+        public bool RequireApprovalForProduction { get; set; } = true;
+        public bool BlockProductionDestroy { get; set; }
+        public bool RequirePrivateRepositories { get; set; }
+        public string? RequiredBranchForProduction { get; set; }
+        public string? AllowedTerraformVersionConstraint { get; set; }
+    }
+
+    // Role editor state.
+    private RoleSummary? _editingRole;
+    private string _editRoleName = "";
+    private string _editRoleDesc = "";
+    private bool _editRoleBuiltIn;
+    private readonly HashSet<Permission> _editPerms = [];
+    private string? _roleError;
+
+    // Assignment editor state.
+    private bool _assigning;
+    private string _asnUserKey = "";
+    private string _asnUserName = "";
+    private Guid? _asnRoleId;
+    private AccessScopeLevel _asnScope = AccessScopeLevel.Global;
+    private Guid? _asnProjectId;
+    private Guid? _asnEnvironmentId;
+    private List<EnvOption> _asnEnvs = [];
+    private string? _asnError;
+
+    private static readonly Permission[] AllPermissions =
+        Enum.GetValues<Permission>().Where(p => p != Permission.None && p != Permission.All).ToArray();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!Enterprise.IsEnabled) { _ready = true; return; }
+        _canManageRoles = await Authz.HasPermissionAsync(Permission.ManageRoles);
+        _canManagePolicy = await Authz.HasPermissionAsync(Permission.ManagePolicy);
+        if (!_canManageRoles && _canManagePolicy) _tab = Tab.Policy;
+        await ReloadAsync();
+        _ready = true;
+    }
+
+    private async Task ReloadAsync()
+    {
+        _error = null;
+        try
+        {
+            if (_canManageRoles)
+            {
+                _roles = (await Roles.ListRolesAsync()).ToList();
+                _users = (await Roles.ListUsersAsync()).ToList();
+                _assignments = (await Roles.ListAssignmentsAsync()).ToList();
+                _projects = (await Projects.ListAsync()).ToList();
+            }
+            if (_canManagePolicy)
+            {
+                var summary = await Policy.GetSummaryAsync();
+                if (summary is not null)
+                {
+                    _p = new PolicyForm
+                    {
+                        RequireApprovalForProduction = summary.RequireApprovalForProduction,
+                        BlockProductionDestroy = summary.BlockProductionDestroy,
+                        RequirePrivateRepositories = summary.RequirePrivateRepositories,
+                        RequiredBranchForProduction = summary.RequiredBranchForProduction,
+                        AllowedTerraformVersionConstraint = summary.AllowedTerraformVersionConstraint
+                    };
+                    _lastUpdated = summary.UpdatedAt;
+                    _approvalEnvsText = string.Join(", ", summary.RequireApprovalForEnvironments);
+                }
+            }
+        }
+        catch (Exception ex) { _error = ex.Message; }
+    }
+
+    // ---- roles ----
+
+    private void NewRole()
+    {
+        _editingRole = new RoleSummary(Guid.Empty, "", null, Permission.ViewProjects, false) with { Id = default };
+        _editRoleName = "";
+        _editRoleDesc = "";
+        _editRoleBuiltIn = false;
+        _editPerms.Clear();
+        _editPerms.Add(Permission.ViewProjects);
+        _roleError = null;
+    }
+
+    private void EditRole(RoleSummary r)
+    {
+        _editingRole = r;
+        _editRoleName = r.Name;
+        _editRoleDesc = r.Description ?? "";
+        _editRoleBuiltIn = r.IsBuiltIn;
+        _editPerms.Clear();
+        foreach (var perm in AllPermissions)
+            if (r.Permissions.HasFlag(perm)) _editPerms.Add(perm);
+        _roleError = null;
+    }
+
+    private void TogglePerm(Permission perm, bool on)
+    {
+        if (on) _editPerms.Add(perm); else _editPerms.Remove(perm);
+    }
+
+    private async Task SaveRole()
+    {
+        if (_editingRole is null) return;
+        _roleError = null;
+        if (!_editRoleBuiltIn && string.IsNullOrWhiteSpace(_editRoleName)) { _roleError = "Give the role a name."; return; }
+
+        var perms = _editPerms.Aggregate(Permission.None, (acc, p) => acc | p);
+        var id = _editingRole.Id == default ? (Guid?)null : _editingRole.Id;
+        _busy = true;
+        try
+        {
+            await Roles.SaveRoleAsync(new SaveRoleRequest(id, _editRoleName, _editRoleDesc, perms));
+            _editingRole = null;
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _roleError = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task DeleteRole(RoleSummary r)
+    {
+        _busy = true;
+        try { await Roles.DeleteRoleAsync(r.Id); await ReloadAsync(); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    // ---- assignments ----
+
+    private void NewAssignment()
+    {
+        _assigning = true;
+        _asnUserKey = "";
+        _asnUserName = "";
+        _asnRoleId = _roles.FirstOrDefault()?.Id;
+        _asnScope = AccessScopeLevel.Global;
+        _asnProjectId = null;
+        _asnEnvironmentId = null;
+        _asnEnvs = [];
+        _asnError = null;
+    }
+
+    private async Task SaveAssignment()
+    {
+        _asnError = null;
+        if (string.IsNullOrWhiteSpace(_asnUserKey)) { _asnError = "Enter the user key."; return; }
+        if (_asnRoleId is null) { _asnError = "Choose a role."; return; }
+        if (_asnScope == AccessScopeLevel.Project && _asnProjectId is null) { _asnError = "Choose a project."; return; }
+        if (_asnScope == AccessScopeLevel.Environment && _asnEnvironmentId is null) { _asnError = "Choose an environment."; return; }
+
+        var projectId = _asnScope == AccessScopeLevel.Global ? null : _asnProjectId;
+        var envId = _asnScope == AccessScopeLevel.Environment ? _asnEnvironmentId : null;
+        _busy = true;
+        try
+        {
+            await Roles.AssignRoleAsync(new AssignRoleRequest(
+                _asnUserKey.Trim(), string.IsNullOrWhiteSpace(_asnUserName) ? _asnUserKey.Trim() : _asnUserName.Trim(),
+                _asnRoleId.Value, _asnScope, projectId, envId));
+            _assigning = false;
+            await ReloadAsync();
+        }
+        catch (Exception ex) { _asnError = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private async Task RemoveAssignment(RoleAssignmentSummary a)
+    {
+        _busy = true;
+        try { await Roles.RemoveAssignmentAsync(a.Id); await ReloadAsync(); }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    private void OnAsnScopeChanged(ChangeEventArgs e)
+    {
+        _asnScope = Enum.TryParse<AccessScopeLevel>(e.Value?.ToString(), out var s) ? s : AccessScopeLevel.Global;
+        if (_asnScope == AccessScopeLevel.Global) { _asnProjectId = null; _asnEnvironmentId = null; _asnEnvs = []; }
+    }
+
+    // React to the project picked in the assignment dialog → load its environments.
+    private async Task OnAsnProjectChanged(ChangeEventArgs e)
+    {
+        _asnProjectId = Guid.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        _asnEnvironmentId = null;
+        _asnEnvs = [];
+        if (_asnProjectId is { } pid)
+        {
+            var project = await Projects.GetAsync(pid);
+            if (project is not null)
+                _asnEnvs = project.Environments
+                    .OrderBy(x => x.DisplayOrder)
+                    .Select(x => new EnvOption(x.Id, x.Name, x.IsProduction)).ToList();
+        }
+    }
+
+    // ---- policy ----
+
+    private async Task SavePolicy()
+    {
+        _policyMsg = null;
+        _error = null;
+        var envs = _approvalEnvsText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        _busy = true;
+        try
+        {
+            var saved = await Policy.SaveAsync(new SaveOrgPolicyRequest(
+                _p.RequireApprovalForProduction, envs, _p.BlockProductionDestroy, _p.RequirePrivateRepositories,
+                string.IsNullOrWhiteSpace(_p.RequiredBranchForProduction) ? null : _p.RequiredBranchForProduction,
+                string.IsNullOrWhiteSpace(_p.AllowedTerraformVersionConstraint) ? null : _p.AllowedTerraformVersionConstraint));
+            _p = new PolicyForm
+            {
+                RequireApprovalForProduction = saved.RequireApprovalForProduction,
+                BlockProductionDestroy = saved.BlockProductionDestroy,
+                RequirePrivateRepositories = saved.RequirePrivateRepositories,
+                RequiredBranchForProduction = saved.RequiredBranchForProduction,
+                AllowedTerraformVersionConstraint = saved.AllowedTerraformVersionConstraint
+            };
+            _lastUpdated = saved.UpdatedAt;
+            _approvalEnvsText = string.Join(", ", saved.RequireApprovalForEnvironments);
+            _policyMsg = "Saved";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = false; }
+    }
+
+    // ---- helpers ----
+
+    private string TabCls(Tab t) => _tab == t ? "active" : "";
+
+    private static string ScopeLabel(RoleAssignmentSummary a) => a.Scope switch
+    {
+        AccessScopeLevel.Global => "Global",
+        AccessScopeLevel.Project => $"Project · {a.ProjectName ?? "?"}",
+        AccessScopeLevel.Environment => $"Env · {a.ProjectName ?? "?"} / {a.EnvironmentName ?? "?"}",
+        _ => a.Scope.ToString()
+    };
+
+    private static string PermLabel(Permission p) =>
+        p == Permission.All ? "All (administrator)"
+        : string.Join(", ", AllPermissions.Where(x => p.HasFlag(x)).Select(PermName));
+
+    private static string PermName(Permission p) => p switch
+    {
+        Permission.ViewProjects => "View projects",
+        Permission.RunPlan => "Run plan",
+        Permission.RunApply => "Run apply",
+        Permission.RunApplyProduction => "Apply to production",
+        Permission.RunDestroy => "Run destroy",
+        Permission.ManageState => "Manage state",
+        Permission.ForceUnlock => "Force-unlock",
+        Permission.ManageConnections => "Manage connections",
+        Permission.ExportPrivateKey => "Export private key",
+        Permission.ApproveDeployment => "Approve deployments",
+        Permission.ManageTemplates => "Manage templates",
+        Permission.ManagePolicy => "Manage policy",
+        Permission.ManageRoles => "Manage roles",
+        Permission.ViewAudit => "View audit log",
+        _ => p.ToString()
+    };
+
+    private static string PermHint(Permission p) => p switch
+    {
+        Permission.RunApplyProduction => "Required in addition to Run apply for production environments.",
+        Permission.ForceUnlock => "Break a stuck environment lock.",
+        Permission.ExportPrivateKey => "Reveal/export a managed private key (also gated by a setting + typed confirm).",
+        Permission.ApproveDeployment => "Decide role-gated deployment approval requests.",
+        _ => ""
+    };
+
+    private readonly record struct EnvOption(Guid Id, string Name, bool IsProduction);
+}

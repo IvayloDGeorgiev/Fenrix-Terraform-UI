@@ -1,4 +1,5 @@
 using Fenrix.IaCStudio.Application.Abstractions.Cloud;
+using Fenrix.IaCStudio.Application.Abstractions.Enterprise;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
@@ -8,6 +9,7 @@ using Fenrix.IaCStudio.Application.Terraform;
 using Fenrix.IaCStudio.Contracts.Files;
 using Fenrix.IaCStudio.Contracts.Terraform;
 using Fenrix.IaCStudio.Domain.Common;
+using Fenrix.IaCStudio.Domain.Enterprise;
 using Fenrix.IaCStudio.Domain.Environments;
 using Fenrix.IaCStudio.Domain.Files;
 using Fenrix.IaCStudio.Domain.Projects;
@@ -32,6 +34,7 @@ public sealed class TerraformPlanService(
     IFileHistoryStore fileHistory,
     IGitService git,
     ICloudEnvironmentComposer cloud,
+    IAuthorizationService authorization,
     ILogger<TerraformPlanService> logger) : ITerraformPlanService
 {
     private const string DefaultExecutable = "terraform";
@@ -44,6 +47,7 @@ public sealed class TerraformPlanService(
     private readonly IFileHistoryStore _fileHistory = fileHistory;
     private readonly IGitService _git = git;
     private readonly ICloudEnvironmentComposer _cloud = cloud;
+    private readonly IAuthorizationService _authorization = authorization;
     private readonly ILogger<TerraformPlanService> _logger = logger;
 
     public async Task<PlanContext> PreparePlanAsync(
@@ -84,6 +88,12 @@ public sealed class TerraformPlanService(
         chips.Add(new CommandContextChip("Cloud", cloudEnv.HasConnection ? cloudEnv.IdentityChip! : "none — bind a connection"));
         var preview = CommandPreviewBuilder.BuildPreview(request, chips);
         var blockReason = DetermineBlockReason(project, environment, workingDir, installation, cloudEnv.HasConnection);
+
+        // Enterprise RBAC (allow-all when mode off): planning needs RunPlan; a destroy plan additionally needs
+        // RunDestroy. Checked here so the block surfaces in the preview and CreatePlanAsync (which honours
+        // context.BlockReason) refuses to run. A denial self-audits.
+        if (blockReason is null)
+            blockReason = await AuthorizePlanAsync(projectId, environmentId, mode, ct);
 
         return new PlanContext(
             projectId, environmentId, planId, mode, workingDir, varFile, outPlanFile, relativePlanFile,
@@ -205,6 +215,22 @@ public sealed class TerraformPlanService(
         _plans.GetRecentAsync(projectId, environmentId, limit, ct);
 
     // ---- helpers ----
+
+    /// <summary>RBAC gate for planning; returns a block reason when denied (null when permitted / mode off).</summary>
+    private async Task<string?> AuthorizePlanAsync(Guid projectId, Guid environmentId, PlanMode mode, CancellationToken ct)
+    {
+        var plan = await _authorization.AuthorizeAsync(Permission.RunPlan, projectId, environmentId, target: ModeOperation(mode), cancellationToken: ct);
+        if (!plan.Allowed)
+            return plan.Reason ?? "You are not permitted to run a plan for this environment.";
+
+        if (mode == PlanMode.Destroy)
+        {
+            var destroy = await _authorization.AuthorizeAsync(Permission.RunDestroy, projectId, environmentId, target: "destroy", cancellationToken: ct);
+            if (!destroy.Allowed)
+                return destroy.Reason ?? "You are not permitted to create a destroy plan for this environment.";
+        }
+        return null;
+    }
 
     private static PlanMode ResolveMode(PlanOptions o) =>
         o.Destroy ? PlanMode.Destroy : o.RefreshOnly ? PlanMode.RefreshOnly : PlanMode.Normal;

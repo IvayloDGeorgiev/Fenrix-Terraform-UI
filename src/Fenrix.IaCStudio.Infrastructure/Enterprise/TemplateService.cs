@@ -17,12 +17,21 @@ public sealed class TemplateService(
     AppDbContext db,
     IConfigAuthoringService authoring,
     IUserContext userContext,
+    IAuthorizationService authorization,
     IAuditService audit) : ITemplateService
 {
     private readonly AppDbContext _db = db;
     private readonly IConfigAuthoringService _authoring = authoring;
     private readonly IUserContext _userContext = userContext;
+    private readonly IAuthorizationService _authorization = authorization;
     private readonly IAuditService _audit = audit;
+
+    private async Task RequireManageTemplatesAsync(string target, CancellationToken ct)
+    {
+        var result = await _authorization.AuthorizeAsync(Permission.ManageTemplates, target: target, cancellationToken: ct);
+        if (!result.Allowed)
+            throw new UnauthorizedAccessException(result.Reason ?? "You need the 'ManageTemplates' permission.");
+    }
 
     public async Task<IReadOnlyList<TemplateSummary>> ListAsync(CancellationToken cancellationToken = default)
     {
@@ -44,6 +53,7 @@ public sealed class TemplateService(
 
     public async Task<TemplateDetail> SaveAsync(SaveTemplateRequest request, CancellationToken cancellationToken = default)
     {
+        await RequireManageTemplatesAsync(request.Name, cancellationToken);
         ConfigTemplate template;
         if (request.Id is { } id)
         {
@@ -82,6 +92,7 @@ public sealed class TemplateService(
 
     public async Task DeleteAsync(Guid templateId, CancellationToken cancellationToken = default)
     {
+        await RequireManageTemplatesAsync(templateId.ToString(), cancellationToken);
         var template = await _db.ConfigTemplates.Include(t => t.Parameters)
             .FirstOrDefaultAsync(t => t.Id == templateId, cancellationToken);
         if (template is null) return;

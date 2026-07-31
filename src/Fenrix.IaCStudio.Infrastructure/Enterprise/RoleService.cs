@@ -14,11 +14,20 @@ namespace Fenrix.IaCStudio.Infrastructure.Enterprise;
 public sealed class RoleService(
     AppDbContext db,
     IUserContext userContext,
+    IAuthorizationService authorization,
     IAuditService audit) : IRoleService
 {
     private readonly AppDbContext _db = db;
     private readonly IUserContext _userContext = userContext;
+    private readonly IAuthorizationService _authorization = authorization;
     private readonly IAuditService _audit = audit;
+
+    private async Task RequireManageRolesAsync(string target, CancellationToken ct)
+    {
+        var result = await _authorization.AuthorizeAsync(Permission.ManageRoles, target: target, cancellationToken: ct);
+        if (!result.Allowed)
+            throw new UnauthorizedAccessException(result.Reason ?? "You need the 'ManageRoles' permission.");
+    }
 
     public async Task<IReadOnlyList<RoleSummary>> ListRolesAsync(CancellationToken cancellationToken = default)
     {
@@ -28,6 +37,7 @@ public sealed class RoleService(
 
     public async Task<RoleSummary> SaveRoleAsync(SaveRoleRequest request, CancellationToken cancellationToken = default)
     {
+        await RequireManageRolesAsync(request.Name, cancellationToken);
         OrgRole role;
         if (request.Id is { } id)
         {
@@ -62,6 +72,7 @@ public sealed class RoleService(
 
     public async Task DeleteRoleAsync(Guid roleId, CancellationToken cancellationToken = default)
     {
+        await RequireManageRolesAsync(roleId.ToString(), cancellationToken);
         var role = await _db.OrgRoles.FirstOrDefaultAsync(r => r.Id == roleId, cancellationToken);
         if (role is null) return;
         if (role.IsBuiltIn) throw new InvalidOperationException("Built-in roles cannot be deleted.");
@@ -137,6 +148,7 @@ public sealed class RoleService(
     public async Task<RoleAssignmentSummary> AssignRoleAsync(
         AssignRoleRequest request, CancellationToken cancellationToken = default)
     {
+        await RequireManageRolesAsync(request.UserDisplayName, cancellationToken);
         if (!await _db.OrgRoles.AnyAsync(r => r.Id == request.RoleId, cancellationToken))
             throw new InvalidOperationException("Role not found.");
 
@@ -182,6 +194,7 @@ public sealed class RoleService(
 
     public async Task RemoveAssignmentAsync(Guid assignmentId, CancellationToken cancellationToken = default)
     {
+        await RequireManageRolesAsync(assignmentId.ToString(), cancellationToken);
         var assignment = await _db.RoleAssignments.FirstOrDefaultAsync(a => a.Id == assignmentId, cancellationToken);
         if (assignment is null) return;
 
