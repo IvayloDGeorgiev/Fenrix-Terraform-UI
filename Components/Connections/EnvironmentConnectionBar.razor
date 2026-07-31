@@ -13,16 +13,15 @@
     @if (CloudConnectionId is null)
     {
         <span class="fx-badge warn" title="Terraform can't authenticate without a connection">
-            <Icon Name="alert" Size="12" /> No cloud connection — plan/apply blocked
+            <Icon Name="alert" Size="12" /> <span>No cloud connection — plan/apply blocked</span>
         </span>
     }
     else
     {
-        <span style="font-size:13px;">@(_name ?? "connection")</span>
+        <span class="fx-envconn-name">@(_name ?? "connection")</span>
         <span class="fx-connstatus @ConnectionLabels.StatusClass(_status)">@ConnectionLabels.Status(_status)</span>
     }
-    <div style="flex:1;"></div>
-    <div style="min-width:220px;">
+    <div class="fx-envconn-picker">
         <CloudConnectionPicker SelectedId="CloudConnectionId" ClientId="ClientId" SelectedIdChanged="BindAsync" />
     </div>
 </div>

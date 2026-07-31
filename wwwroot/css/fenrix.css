@@ -785,11 +785,22 @@ a:hover { color: var(--fx-accent-strong); }
 .fx-badge.warn { color: var(--fx-warn); border-color: var(--fx-warn); display: inline-flex; align-items: center; gap: 5px; }
 
 .fx-envconn {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap;
   padding: 8px 10px; border: 1px solid var(--fx-border); border-radius: 8px;
   background: var(--fx-surface-2, rgba(255,255,255,0.02));
 }
 .fx-envconn.unbound { border-color: var(--fx-warn); }
+/* The base .fx-badge is a fixed 20x20 square (for the +/~/- plan chips); as a text warning it must become an
+   auto-sized pill so the label is readable and wraps as a whole. The picker then drops to its own line in
+   narrow columns instead of overlapping it. */
+.fx-envconn .fx-badge.warn {
+  width: auto; height: auto; flex: 0 1 auto; min-width: 0;
+  justify-content: flex-start; align-items: flex-start; gap: 6px;
+  padding: 4px 9px; border-radius: 6px; font-size: 12px; font-weight: 600; line-height: 1.35;
+}
+.fx-envconn .fx-badge.warn > span { white-space: normal; }
+.fx-envconn-name { font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-envconn-picker { flex: 1 1 200px; min-width: 180px; margin-left: auto; }
 
 .fx-cloudpicker { display: flex; flex-direction: column; gap: 6px; }
 .fx-cloudpicker-search { font-size: 12px; }
