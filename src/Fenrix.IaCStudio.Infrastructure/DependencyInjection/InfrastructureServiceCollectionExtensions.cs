@@ -107,6 +107,9 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<IProjectScaffolder, ProjectScaffolder>();
         services.AddSingleton<IProjectManifestStore, ProjectManifestStore>();
         services.AddSingleton<IProjectImportScanner, ProjectImportScanner>();
+        // Project templates (Phase 12): built-in catalog + user templates under <dataRoot>\Templates. Prefills a
+        // new project's environments with a complete, cost-aware starter. No DB. See docs/32-project-templates.md.
+        services.AddSingleton<IProjectTemplateService, ProjectTemplateService>();
         services.AddScoped<IProjectService, ProjectService>();
 
         // Files, history & recovery (Phase 2). The journal must be shared so the synchronizer

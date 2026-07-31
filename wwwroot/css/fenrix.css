@@ -1304,6 +1304,25 @@ a:hover { color: var(--fx-accent-strong); }
 .fx-term:focus { box-shadow: inset 0 0 0 1px var(--fx-accent); }
 .fx-term-screen { white-space: pre-wrap; word-break: break-word; margin: 0; }
 
+/* ── Project templates (Phase 12) ───────────────────────────────────────── */
+.fx-tag.free { color: var(--fx-success); border-color: var(--fx-success); }
+.fx-tmpl-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.fx-tmpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; max-height: 340px; overflow-y: auto; padding: 2px; }
+.fx-tmpl-card {
+  display: flex; flex-direction: column; gap: 6px; text-align: left; cursor: pointer;
+  border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm); background: var(--fx-surface);
+  padding: 11px 12px; color: inherit; font: inherit;
+}
+.fx-tmpl-card:hover { border-color: var(--fx-border-strong); }
+.fx-tmpl-card.sel { border-color: var(--fx-accent); background: var(--fx-accent-tint); }
+.fx-tmpl-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.fx-tmpl-name { font-size: 13px; font-weight: 600; min-width: 0; }
+.fx-tmpl-desc { font-size: 11.5px; color: var(--fx-dim); line-height: 1.45; }
+.fx-tmpl-cost { font-size: 11px; color: var(--fx-faint); margin-top: auto; }
+.fx-tmpl-file { border-bottom: 1px solid var(--fx-border); padding: 6px 0; }
+.fx-tmpl-file > summary { cursor: pointer; font-size: 12.5px; color: var(--fx-dim); }
+.fx-tmpl-file > summary:hover { color: var(--fx-text); }
+
 /* ── Help / documentation hub (Phase 12) ────────────────────────────────── */
 .fx-help-layout { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: start; }
 @media (max-width: 860px) { .fx-help-layout { grid-template-columns: 1fr; } }

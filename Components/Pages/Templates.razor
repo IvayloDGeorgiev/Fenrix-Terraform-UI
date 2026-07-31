@@ -1,10 +1,264 @@
 @page "/templates"
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Contracts.Projects
+@using Fenrix.IaCStudio.Domain.Projects
+@inject IProjectTemplateService Catalog
+@inject IProjectService Projects
 
-<h1 class="fx-page-title">Templates</h1>
-<p class="fx-page-sub">Reusable infrastructure templates and module scaffolds. Coming in Phase 10.</p>
+@* Project-template gallery + management (Phase 12). Browse built-in + user templates, inspect their files,
+   turn an existing project into a reusable template, and delete your own. Templates are selected when creating
+   a new project to prefill everything that project type needs. See docs/32-project-templates.md. *@
 
-<div class="fx-card" style="text-align:center;padding:40px;">
-    <div style="color:var(--fx-accent);margin-bottom:10px;"><Icon Name="template" Size="28" /></div>
-    <h2 style="font-size:16px;margin:0 0 6px;">No templates yet</h2>
-    <p style="color:var(--fx-dim);font-size:13px;margin:0;">Saved resource and module templates will live here.</p>
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+    <h1 class="fx-page-title" style="margin:0;flex:1;">Templates</h1>
+    <button class="fx-btn accent" @onclick="OpenCreate"><span class="fx-ico"><Icon Name="plus" Size="14" /></span> New from a project</button>
 </div>
+<p class="fx-page-sub">Complete, cost-aware Terraform starters. Choose one when creating a project to prefill every environment.</p>
+
+<div class="fx-tmpl-filter" style="margin-bottom:14px;">
+    <button type="button" class="fx-fchip @(_providerFilter is null ? "active" : "")" @onclick="() => _providerFilter = null">All (@_all.Count)</button>
+    @foreach (var p in _providers)
+    {
+        <button type="button" class="fx-fchip @(_providerFilter == p ? "active" : "")" @onclick="() => Select(p)">@ProviderLabel(p)</button>
+    }
+</div>
+
+<div class="fx-split">
+    <div class="fx-tmpl-grid" style="max-height:none;">
+        @foreach (var t in Filtered)
+        {
+            <button type="button" class="fx-tmpl-card @(_selectedId == t.Id ? "sel" : "")" @onclick="() => ShowDetail(t.Id)">
+                <div class="fx-tmpl-head">
+                    <span class="fx-tag">@ProviderLabel(t.Provider)</span>
+                    <span class="fx-tmpl-name">@t.Name</span>
+                    <span class="fx-tag @CostClass(t.CostTier)">@CostLabel(t.CostTier)</span>
+                    @if (!t.IsBuiltIn)
+                    {
+                        <span class="fx-tag muted">yours</span>
+                    }
+                </div>
+                <div class="fx-tmpl-desc">@t.Description</div>
+                <div class="fx-tmpl-cost">@t.CostSummary</div>
+            </button>
+        }
+    </div>
+
+    <div>
+        @if (_detail is null)
+        {
+            <div class="fx-card"><EmptyState IconName="template" Title="Pick a template" Text="Select a template to view its files. Create one from an existing project with the button above." /></div>
+        }
+        else
+        {
+            <div class="fx-card">
+                <div class="fx-panel-head">
+                    <span class="fx-tag">@ProviderLabel(_detail.Info.Provider)</span>
+                    <span style="flex:1;font-weight:600;font-size:15px;">@_detail.Info.Name</span>
+                    <span class="fx-tag @CostClass(_detail.Info.CostTier)">@CostLabel(_detail.Info.CostTier)</span>
+                    @if (!_detail.Info.IsBuiltIn)
+                    {
+                        <button class="fx-iconbtn danger" title="Delete this template" @onclick="DeleteAsync"><Icon Name="trash" Size="15" /></button>
+                    }
+                </div>
+                <p class="fx-hint" style="margin:0 0 6px;">@_detail.Info.Description</p>
+                <div class="fx-hint" style="margin-bottom:4px;">@_detail.Info.CostSummary</div>
+                @if (!string.IsNullOrWhiteSpace(_detail.Info.TeardownHint))
+                {
+                    <div class="fx-hint" style="color:var(--fx-success);margin-bottom:8px;"><Icon Name="check" Size="12" /> @_detail.Info.TeardownHint</div>
+                }
+                @if (_detail.Info.Tags.Count > 0)
+                {
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px;">
+                        @foreach (var tag in _detail.Info.Tags)
+                        {
+                            <span class="fx-tag muted">@tag</span>
+                        }
+                    </div>
+                }
+
+                <div class="fx-group-head">Files (@_detail.Files.Count)</div>
+                @foreach (var f in _detail.Files)
+                {
+                    <details class="fx-tmpl-file">
+                        <summary><span class="fx-mono">@f.RelativePath</span></summary>
+                        <pre class="fx-codeblock" style="margin-top:8px;max-height:320px;">@f.Content</pre>
+                    </details>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@if (_createOpen)
+{
+    <Modal Title="Create template from a project" IconName="template" Wide="true" OnClose="() => _createOpen = false">
+        <ChildContent>
+            <p class="fx-hint">Captures the <span class="fx-mono">.tf</span>/<span class="fx-mono">.tfvars</span> files from one environment of a project and saves them as a reusable template.</p>
+            <div class="fx-field">
+                <label>Project</label>
+                <select class="fx-select" value="@_srcProjectId" @onchange="OnProjectChanged">
+                    <option value="">— select a project —</option>
+                    @foreach (var p in _projects)
+                    {
+                        <option value="@p.Id">@p.Name</option>
+                    }
+                </select>
+            </div>
+            @if (_srcProject is not null)
+            {
+                <div class="fx-field">
+                    <label>Environment (source files)</label>
+                    <select class="fx-select" @bind="_srcWorkingDir">
+                        @foreach (var e in _srcProject.Environments)
+                        {
+                            <option value="@e.WorkingDirectory">@e.Name (@e.WorkingDirectory)</option>
+                        }
+                    </select>
+                </div>
+            }
+            <div class="fx-grid-2">
+                <div class="fx-field"><label>Name</label><input class="fx-input" @bind="_newName" placeholder="My web app" /></div>
+                <div class="fx-field"><label>Cost summary</label><input class="fx-input" @bind="_newCost" placeholder="~$8/mo" /></div>
+            </div>
+            <div class="fx-field"><label>Description</label><input class="fx-input" @bind="_newDesc" placeholder="What this deploys" /></div>
+            <div class="fx-grid-2">
+                <div class="fx-field">
+                    <label>Provider</label>
+                    <select class="fx-select" @bind="_newProvider">
+                        @foreach (var p in Enum.GetValues<TemplateProvider>()) { <option value="@p">@ProviderLabel(p)</option> }
+                    </select>
+                </div>
+                <div class="fx-field">
+                    <label>Category</label>
+                    <select class="fx-select" @bind="_newCategory">
+                        @foreach (var c in Enum.GetValues<TemplateCategory>()) { <option value="@c">@c</option> }
+                    </select>
+                </div>
+                <div class="fx-field">
+                    <label>Cost tier</label>
+                    <select class="fx-select" @bind="_newTier">
+                        @foreach (var c in Enum.GetValues<TemplateCostTier>()) { <option value="@c">@CostLabel(c)</option> }
+                    </select>
+                </div>
+                <div class="fx-field"><label>Tags (comma-separated)</label><input class="fx-input" @bind="_newTags" placeholder="web, docker" /></div>
+            </div>
+            @if (_createError is not null) { <div class="fx-error">@_createError</div> }
+        </ChildContent>
+        <Footer>
+            <button class="fx-btn ghost" @onclick="() => _createOpen = false" disabled="@_creating">Cancel</button>
+            <button class="fx-btn accent" @onclick="CreateAsync" disabled="@_creating">@(_creating ? "Saving…" : "Save template")</button>
+        </Footer>
+    </Modal>
+}
+
+@code {
+    private IReadOnlyList<ProjectTemplateInfo> _all = [];
+    private TemplateProvider[] _providers = [];
+    private TemplateProvider? _providerFilter;
+    private string? _selectedId;
+    private ProjectTemplate? _detail;
+
+    private bool _createOpen, _creating;
+    private string? _createError;
+    private List<ProjectSummary> _projects = [];
+    private Guid? _srcProjectId;
+    private InfrastructureProject? _srcProject;
+    private string _srcWorkingDir = "";
+    private string _newName = "", _newDesc = "", _newCost = "";
+    private string _newTags = "";
+    private TemplateProvider _newProvider = TemplateProvider.Aws;
+    private TemplateCategory _newCategory = TemplateCategory.WebApp;
+    private TemplateCostTier _newTier = TemplateCostTier.Low;
+
+    protected override void OnInitialized() => Reload();
+
+    private void Reload()
+    {
+        _all = Catalog.List();
+        _providers = _all.Select(t => t.Provider).Distinct().OrderBy(p => p).ToArray();
+    }
+
+    private IEnumerable<ProjectTemplateInfo> Filtered =>
+        _providerFilter is null ? _all : _all.Where(t => t.Provider == _providerFilter);
+
+    private void Select(TemplateProvider p) => _providerFilter = p;
+
+    private void ShowDetail(string id)
+    {
+        _selectedId = id;
+        _detail = Catalog.Get(id);
+    }
+
+    private async Task OpenCreate()
+    {
+        _createError = null;
+        _projects = (await Projects.ListAsync(true)).ToList();
+        _createOpen = true;
+    }
+
+    private async Task OnProjectChanged(ChangeEventArgs e)
+    {
+        _srcProject = null;
+        if (Guid.TryParse(e.Value?.ToString(), out var id))
+        {
+            _srcProjectId = id;
+            _srcProject = await Projects.GetAsync(id);
+            _srcWorkingDir = _srcProject?.Environments.FirstOrDefault()?.WorkingDirectory ?? "";
+            if (string.IsNullOrWhiteSpace(_newName)) _newName = _srcProject?.Name ?? "";
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        _createError = null;
+        if (_srcProject is null) { _createError = "Select a project."; return; }
+        if (string.IsNullOrWhiteSpace(_newName)) { _createError = "Give the template a name."; return; }
+
+        _creating = true;
+        try
+        {
+            var tags = _newTags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var meta = new SaveTemplateRequest(
+                _newName.Trim(), _newDesc.Trim(), _newProvider, _newCategory, _newTier, _newCost.Trim(), tags, []);
+            var info = await Catalog.CreateFromProjectAsync(_srcProject.RootPath, _srcWorkingDir, meta);
+            _createOpen = false;
+            Reload();
+            ShowDetail(info.Id);
+        }
+        catch (Exception ex) { _createError = ex.Message; }
+        finally { _creating = false; }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_detail is null || _detail.Info.IsBuiltIn) return;
+        await Catalog.DeleteUserTemplateAsync(_detail.Info.Id);
+        _detail = null;
+        _selectedId = null;
+        Reload();
+    }
+
+    private static string ProviderLabel(TemplateProvider p) => p switch
+    {
+        TemplateProvider.Aws => "AWS",
+        TemplateProvider.Azure => "Azure",
+        TemplateProvider.Gcp => "GCP",
+        TemplateProvider.Docker => "Docker",
+        TemplateProvider.MultiCloud => "Multi",
+        _ => "Other"
+    };
+
+    private static string CostLabel(TemplateCostTier t) => t switch
+    {
+        TemplateCostTier.Free => "Free / demo",
+        TemplateCostTier.Low => "Low cost",
+        _ => "Medium"
+    };
+
+    private static string CostClass(TemplateCostTier t) => t switch
+    {
+        TemplateCostTier.Free => "free",
+        TemplateCostTier.Low => "",
+        _ => "warn"
+    };
+}

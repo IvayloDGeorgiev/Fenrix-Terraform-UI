@@ -24,6 +24,7 @@ public sealed class ProjectService(
     IProjectManifestStore manifestStore,
     IFileHistoryStore history,
     IGitRepositoryInitializer gitInitializer,
+    IProjectTemplateService templates,
     IWorkspacePaths paths,
     ILogger<ProjectService> logger) : IProjectService
 {
@@ -32,6 +33,7 @@ public sealed class ProjectService(
     private readonly IProjectManifestStore _manifestStore = manifestStore;
     private readonly IFileHistoryStore _history = history;
     private readonly IGitRepositoryInitializer _gitInitializer = gitInitializer;
+    private readonly IProjectTemplateService _templates = templates;
     private readonly IWorkspacePaths _paths = paths;
     private readonly ILogger<ProjectService> _logger = logger;
 
@@ -51,6 +53,21 @@ public sealed class ProjectService(
         request.Environments = environments;
 
         await _scaffolder.ScaffoldAsync(projectRoot, request, ct);
+
+        // If a project template was chosen, prefill every environment's working directory with its files
+        // (overwriting the blank placeholders). Non-fatal — a template problem must not fail project creation.
+        if (!string.IsNullOrWhiteSpace(request.TemplateId))
+        {
+            try
+            {
+                var slugs = environments.Select(e => ProjectScaffolder.Slug(e.Name));
+                await _templates.ApplyAsync(request.TemplateId!, projectRoot, slugs, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Applying template {Template} failed; project created with the blank scaffold.", request.TemplateId);
+            }
+        }
 
         // Initialise a Git repository for the new project (docs/08-git-engine.md). Non-fatal: if Git is
         // unavailable the project is still created and can be initialised later from Source control.

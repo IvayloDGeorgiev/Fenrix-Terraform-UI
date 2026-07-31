@@ -23,6 +23,13 @@ public sealed class CreateProjectRequest
     /// <summary>Environments to scaffold. Defaults to Dev / UAT / Live when empty.</summary>
     public List<NewEnvironmentSpec> Environments { get; set; } = [];
 
+    /// <summary>
+    /// Optional project-template id to start from (built-in or user). When set, the template's files prefill
+    /// each environment's working directory after scaffolding. Null / empty ⇒ a blank starter. See
+    /// docs/32-project-templates.md.
+    /// </summary>
+    public string? TemplateId { get; set; }
+
     /// <summary>The default set used when the caller supplies no environments.</summary>
     public static List<NewEnvironmentSpec> DefaultEnvironments() =>
     [

@@ -2,6 +2,7 @@
 @using Fenrix.IaCStudio.Application.Settings
 @using Fenrix.IaCStudio.Contracts.Projects
 @inject IProjectService Projects
+@inject IProjectTemplateService Templates
 @inject IFolderPicker FolderPicker
 
 <Modal Title="New project" IconName="folder-plus" Wide="true" OnClose="Cancel">
@@ -29,9 +30,35 @@
     </div>
 
     <div class="fx-field">
-        <label>Required Terraform version <span style="color:var(--fx-faint);">(optional)</span></label>
-        <input class="fx-input" @bind="_tfVersion" placeholder="e.g. 1.15.0" />
+        <label>Start from</label>
+        <div class="fx-hint" style="margin-bottom:8px;">Pick a template to prefill every environment with a complete, cost-aware starter — or start blank.</div>
+        <div class="fx-tmpl-filter">
+            <button type="button" class="fx-fchip @(_providerFilter is null ? "active" : "")" @onclick="() => _providerFilter = null">All</button>
+            @foreach (var p in _providers)
+            {
+                <button type="button" class="fx-fchip @(_providerFilter == p ? "active" : "")" @onclick="() => _providerFilter = p">@ProviderLabel(p)</button>
+            }
+        </div>
+        <div class="fx-tmpl-grid">
+            <button type="button" class="fx-tmpl-card @(_templateId is null ? "sel" : "")" @onclick="() => _templateId = null">
+                <div class="fx-tmpl-head"><Icon Name="file" Size="14" /> <span class="fx-tmpl-name">Blank project</span></div>
+                <div class="fx-tmpl-desc">Empty starter — just the recommended structure and placeholder files.</div>
+            </button>
+            @foreach (var t in FilteredTemplates)
+            {
+                <button type="button" class="fx-tmpl-card @(_templateId == t.Id ? "sel" : "")" @onclick="() => _templateId = t.Id" title="@t.Description">
+                    <div class="fx-tmpl-head">
+                        <span class="fx-tag">@ProviderLabel(t.Provider)</span>
+                        <span class="fx-tmpl-name">@t.Name</span>
+                        <span class="fx-tag @CostClass(t.CostTier)">@CostLabel(t.CostTier)</span>
+                    </div>
+                    <div class="fx-tmpl-desc">@t.Description</div>
+                    <div class="fx-tmpl-cost">@t.CostSummary</div>
+                </button>
+            }
+        </div>
     </div>
+
 
     <div class="fx-field">
         <label>Environments</label>
@@ -91,7 +118,6 @@
     private string _name = "";
     private string? _parentDirectory;
     private string? _description;
-    private string? _tfVersion;
     private bool _initGit = true;
     private bool _writeManifest = true;
     private bool _busy;
@@ -99,6 +125,44 @@
 
     private readonly List<NewEnvironmentSpec> _environments = CreateProjectRequest.DefaultEnvironments();
     private Guid? _applyAllId;
+
+    private IReadOnlyList<ProjectTemplateInfo> _templates = [];
+    private string? _templateId;
+    private TemplateProvider? _providerFilter;
+    private TemplateProvider[] _providers = [];
+
+    protected override void OnInitialized()
+    {
+        _templates = Templates.List();
+        _providers = _templates.Select(t => t.Provider).Distinct().OrderBy(p => p).ToArray();
+    }
+
+    private IEnumerable<ProjectTemplateInfo> FilteredTemplates =>
+        _providerFilter is null ? _templates : _templates.Where(t => t.Provider == _providerFilter);
+
+    private static string ProviderLabel(TemplateProvider p) => p switch
+    {
+        TemplateProvider.Aws => "AWS",
+        TemplateProvider.Azure => "Azure",
+        TemplateProvider.Gcp => "GCP",
+        TemplateProvider.Docker => "Docker",
+        TemplateProvider.MultiCloud => "Multi",
+        _ => "Other"
+    };
+
+    private static string CostLabel(TemplateCostTier t) => t switch
+    {
+        TemplateCostTier.Free => "Free / demo",
+        TemplateCostTier.Low => "Low cost",
+        _ => "Medium"
+    };
+
+    private static string CostClass(TemplateCostTier t) => t switch
+    {
+        TemplateCostTier.Free => "free",
+        TemplateCostTier.Low => "",
+        _ => "warn"
+    };
 
     private void AddEnv() => _environments.Add(new NewEnvironmentSpec { Name = "New" });
     private void RemoveEnv(NewEnvironmentSpec env) => _environments.Remove(env);
@@ -140,10 +204,10 @@
                 Name = _name.Trim(),
                 ParentDirectory = string.IsNullOrWhiteSpace(_parentDirectory) ? null : _parentDirectory!.Trim(),
                 Description = string.IsNullOrWhiteSpace(_description) ? null : _description,
-                RequiredTerraformVersion = string.IsNullOrWhiteSpace(_tfVersion) ? null : _tfVersion!.Trim(),
                 InitializeGit = _initGit,
                 WriteManifest = _writeManifest,
-                Environments = _environments
+                Environments = _environments,
+                TemplateId = _templateId
             };
 
             var project = await Projects.CreateAsync(request);
