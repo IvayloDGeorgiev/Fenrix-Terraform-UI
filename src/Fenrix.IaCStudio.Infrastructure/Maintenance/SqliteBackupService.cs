@@ -63,12 +63,14 @@ public sealed class SqliteBackupService : IBackupService
             // source connection; the backup connection creates the destination file.
             await Task.Run(() =>
             {
-                using var source = new SqliteConnection($"Data Source={DbPath};Mode=ReadOnly");
-                using var dest = new SqliteConnection($"Data Source={destination}");
+                // Pooling=False so neither connection leaves a lingering handle on the database file — the very
+                // next startup step (EF migrate) opens it for writing.
+                using var source = new SqliteConnection($"Data Source={DbPath};Mode=ReadOnly;Pooling=False");
+                using var dest = new SqliteConnection($"Data Source={destination};Pooling=False");
                 source.Open();
                 dest.Open();
                 source.BackupDatabase(dest);
-            }, cancellationToken);
+            }, cancellationToken).ConfigureAwait(false);
 
             var info = Describe(destination);
             _logger.LogInformation("Database backup written ({Reason}) to {Path} ({Size} bytes).",
@@ -113,11 +115,11 @@ public sealed class SqliteBackupService : IBackupService
         {
             // 1) Safety copy of the current database so a restore is itself reversible.
             if (File.Exists(DbPath))
-                await CreateBackupAsync(BackupReason.PreRestore, cancellationToken);
+                await CreateBackupAsync(BackupReason.PreRestore, cancellationToken).ConfigureAwait(false);
 
             // 2) Stage the swap. Applying it now could race live connections; ApplyPendingRestoreAsync performs
             //    the copy at next launch before the context opens.
-            await File.WriteAllTextAsync(PendingRestorePath, backup.FilePath, cancellationToken);
+            await File.WriteAllTextAsync(PendingRestorePath, backup.FilePath, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Restore staged from {Path}; will apply on next launch.", backup.FilePath);
             return new BackupResult(true, backup, false, "Restore staged — restart to apply.");
         }
@@ -135,7 +137,7 @@ public sealed class SqliteBackupService : IBackupService
 
         try
         {
-            var source = (await File.ReadAllTextAsync(PendingRestorePath, cancellationToken)).Trim();
+            var source = (await File.ReadAllTextAsync(PendingRestorePath, cancellationToken).ConfigureAwait(false)).Trim();
             if (string.IsNullOrWhiteSpace(source) || !File.Exists(source))
             {
                 // Self-heal: a dangling pointer should never wedge startup.
@@ -171,7 +173,7 @@ public sealed class SqliteBackupService : IBackupService
             var marker = string.Join('\n',
                 $"pid={Environment.ProcessId}",
                 $"startedAt={DateTimeOffset.Now:O}");
-            await File.WriteAllTextAsync(SessionMarkerPath, marker, cancellationToken);
+            await File.WriteAllTextAsync(SessionMarkerPath, marker, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -191,7 +193,7 @@ public sealed class SqliteBackupService : IBackupService
         DateTimeOffset? startedAt = null;
         try
         {
-            foreach (var line in await File.ReadAllLinesAsync(SessionMarkerPath, cancellationToken))
+            foreach (var line in await File.ReadAllLinesAsync(SessionMarkerPath, cancellationToken).ConfigureAwait(false))
             {
                 if (line.StartsWith("startedAt=", StringComparison.Ordinal)
                     && DateTimeOffset.TryParse(line["startedAt=".Length..], CultureInfo.InvariantCulture,

@@ -42,33 +42,22 @@ public sealed class AppInitializer(
         _logger.LogInformation(
             "Fenrix data root ready at {Root} (fallback: {Fallback})", root, _paths.UsingFallback);
 
-        // Crash recovery + backup (Phase 12), all before the DbContext is opened so the file is never held:
-        //  1) apply any restore the user staged last session,
-        //  2) note whether the previous session ended cleanly (the marker survives a crash),
-        //  3) take a routine snapshot of the database as-is (this also captures the pre-migration state on an
-        //     upgrade, so a bad migration is recoverable). All best-effort — never block startup.
-        var applied = await _backup.ApplyPendingRestoreAsync(cancellationToken);
-        if (applied is not null)
-            _logger.LogInformation("Restored database from staged backup {Id} ({CreatedAt}).", applied.Id, applied.CreatedAt);
-
-        var crash = await _backup.InspectCrashStateAsync(cancellationToken);
-        if (crash.UncleanShutdown)
-            _logger.LogWarning(
-                "Recovered from an unclean shutdown (previous session started {StartedAt}). Latest backup: {Backup}.",
-                crash.PreviousSessionStartedAt, crash.LatestBackup?.Id ?? "none");
-
-        await _backup.CreateBackupAsync(BackupReason.Startup, cancellationToken);
+        // Crash recovery + backup (Phase 12), all before the DbContext is opened so the file is never held.
+        // Wrapped so a backup problem can NEVER block or fail app startup (this runs on the synchronous startup
+        // path that gates window creation): each step is best-effort, ConfigureAwait(false) so it can't deadlock
+        // the blocking caller, and the snapshot is time-bounded.
+        await RunStartupMaintenanceAsync(cancellationToken).ConfigureAwait(false);
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        await EnsureSchemaAsync(db, cancellationToken);
+        await EnsureSchemaAsync(db, cancellationToken).ConfigureAwait(false);
 
         // Enterprise seeding (Phase 11) — a no-op unless enterprise mode is enabled. Seeds built-in roles and a
         // bootstrap Administrator so a fresh shared store always has an admin. See docs/29-enterprise.md.
         try
         {
-            await scope.ServiceProvider.GetRequiredService<EnterpriseSeeder>().SeedAsync(cancellationToken);
+            await scope.ServiceProvider.GetRequiredService<EnterpriseSeeder>().SeedAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -77,7 +66,37 @@ public sealed class AppInitializer(
 
         // Mark the session active. It is removed on a clean shutdown (see the app-window Destroying hook that
         // calls IBackupService.EndSession); a marker still present next launch signals a crash.
-        await _backup.BeginSessionAsync(cancellationToken);
+        try { await _backup.BeginSessionAsync(cancellationToken).ConfigureAwait(false); } catch { /* non-fatal */ }
+    }
+
+    /// <summary>
+    /// Runs the pre-schema backup + crash-recovery steps defensively. Nothing here may block or crash startup:
+    /// the whole thing is caught, and the snapshot is time-bounded so a slow/locked disk can't hang the window.
+    /// </summary>
+    private async Task RunStartupMaintenanceAsync(CancellationToken ct)
+    {
+        try
+        {
+            var applied = await _backup.ApplyPendingRestoreAsync(ct).ConfigureAwait(false);
+            if (applied is not null)
+                _logger.LogInformation("Restored database from staged backup {Id} ({CreatedAt}).", applied.Id, applied.CreatedAt);
+
+            var crash = await _backup.InspectCrashStateAsync(ct).ConfigureAwait(false);
+            if (crash.UncleanShutdown)
+                _logger.LogWarning(
+                    "Recovered from an unclean shutdown (previous session started {StartedAt}). Latest backup: {Backup}.",
+                    crash.PreviousSessionStartedAt, crash.LatestBackup?.Id ?? "none");
+
+            // Bound the snapshot so a slow/locked disk can never hang window creation.
+            await _backup.CreateBackupAsync(BackupReason.Startup, ct)
+                .WaitAsync(TimeSpan.FromSeconds(15), ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // A backup/recovery hiccup must never stop the app from starting.
+            _logger.LogWarning(ex, "Startup maintenance (backup/crash-recovery) failed; continuing.");
+        }
     }
 
     /// <summary>Brings the database schema up to date without ever destroying data (see the class remarks).</summary>

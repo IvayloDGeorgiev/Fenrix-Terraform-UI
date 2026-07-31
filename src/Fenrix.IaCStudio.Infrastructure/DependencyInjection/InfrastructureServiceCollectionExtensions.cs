@@ -224,6 +224,11 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<ITerraformHelpService, TerraformHelpService>();
         services.AddSingleton<ITerminalService, ConPtyTerminalService>();
 
+        // One-click Terraform install (Phase 12). Downloads the official HashiCorp build once into the shared
+        // Tools dir and sets terraform.executable at Global scope so every project uses it. Uses the registered
+        // IHttpClientFactory; verifies the published SHA-256. See docs/05-terraform-engine.md.
+        services.AddScoped<ITerraformInstaller, TerraformInstaller>();
+
         return services;
     }
 }

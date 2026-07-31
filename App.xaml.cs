@@ -5,12 +5,9 @@ namespace Fenrix_Terraform_UI
 {
     public partial class App : Application
     {
-        private readonly IServiceProvider _services;
-
-        public App(IServiceProvider services)
+        public App()
         {
             InitializeComponent();
-            _services = services;
         }
 
         protected override Window CreateWindow(IActivationState? activationState)
@@ -18,10 +15,10 @@ namespace Fenrix_Terraform_UI
             var window = new Window(new MainPage()) { Title = "Fenrix Terraform UI" };
 
             // Signal a clean shutdown so the next launch doesn't treat this session as a crash (Phase 12).
-            // Best-effort; if the process is killed the marker survives and crash recovery kicks in.
+            // Resolved lazily (not via constructor injection) so nothing here can affect window creation.
             window.Destroying += (_, _) =>
             {
-                try { _services.GetService<IBackupService>()?.EndSession(); }
+                try { IPlatformApplication.Current?.Services.GetService<IBackupService>()?.EndSession(); }
                 catch { /* never block teardown */ }
             };
 

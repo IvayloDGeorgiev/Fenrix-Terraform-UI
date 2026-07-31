@@ -10,6 +10,7 @@
 @inject IProjectService Projects
 @inject ITerraformExecutor Executor
 @inject ITerraformDiscovery Discovery
+@inject ITerraformInstaller Installer
 @inject ICommandHistoryStore History
 @inject IJSRuntime JS
 @inject NavigationManager Nav
@@ -30,6 +31,13 @@ else
             <button class="fx-btn sm" @onclick="RefreshBinaryAsync" title="Re-detect the Terraform binary">
                 <span class="fx-ico"><Icon Name="refresh" Size="13" /></span> Detect
             </button>
+            @if (_installation is null && Installer.IsSupported)
+            {
+                <button class="fx-btn accent sm" @onclick="InstallTerraformAsync" disabled="@_installing"
+                        title="Download the official Terraform for Windows once, for all projects">
+                    <span class="fx-ico"><Icon Name="download" Size="13" /></span> @(_installing ? "Installing…" : "Install Terraform")
+                </button>
+            }
         </Actions>
     </ProjectHeader>
 
@@ -103,6 +111,19 @@ else
                     <div class="fx-hint" style="margin-top:12px;color:var(--fx-warn);display:flex;gap:8px;align-items:flex-start;">
                         <span class="fx-ico" style="margin-top:1px;"><Icon Name="alert" Size="14" /></span>
                         <span>@_blockReason</span>
+                    </div>
+                }
+
+                @if (_installation is null && Installer.IsSupported)
+                {
+                    <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <button class="fx-btn accent sm" @onclick="InstallTerraformAsync" disabled="@_installing">
+                            <span class="fx-ico"><Icon Name="download" Size="13" /></span> @(_installing ? "Installing…" : "Install Terraform for all projects")
+                        </button>
+                        @if (_installStatus is not null)
+                        {
+                            <span class="fx-hint" style="margin:0;">@_installStatus</span>
+                        }
                     </div>
                 }
 
@@ -343,6 +364,32 @@ else
     {
         _installation = await Discovery.ResolveAsync(ProjectId);
         RebuildPreview();
+    }
+
+    private bool _installing;
+    private string? _installStatus;
+
+    // Installs one shared Terraform (in the app's Tools folder) and points every project at it.
+    private async Task InstallTerraformAsync()
+    {
+        _installing = true;
+        _installStatus = "Starting…";
+        StateHasChanged();
+
+        var progress = new Progress<string>(s => { _installStatus = s; InvokeAsync(StateHasChanged); });
+        var result = await Installer.InstallLatestAsync(progress);
+
+        _installing = false;
+        if (result.Success)
+        {
+            _installStatus = $"Installed Terraform {result.Version} — available in all projects.";
+            await RefreshBinaryAsync();
+        }
+        else
+        {
+            _installStatus = $"Install failed: {result.Error}";
+        }
+        StateHasChanged();
     }
 
     private async Task RunAsync()
