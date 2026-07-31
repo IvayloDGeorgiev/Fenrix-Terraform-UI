@@ -358,14 +358,42 @@ the sandbox VM was down this session**, so the reference port is hand-traced; bu
 
 ## Phase 12 — Release preparation
 
-- [ ] MSIX packaging · code signing · update mechanism ([18](18-packaging-deployment.md))
-- [ ] UI polish + animation performance + accessibility (reduced-motion, contrast) pass ([24](24-visual-design-language.md))
-- [ ] Crash recovery · DB backup · accessibility · performance · security review
-- [ ] User docs · example projects · stable channel
+See [31-release-prep.md](31-release-prep.md) for the master checklist. Status (2026-07-31):
+
+- [x] **UI readability + polish sweep** ([24](24-visual-design-language.md)) — systematic pass appended as a
+      *Phase 12 polish* section in `fenrix.css` (overrides only): visible `:focus-visible` keyboard focus on all
+      controls, an 11px text floor (three sub-11px micro-labels fixed), text-warning badges promoted to
+      auto-sized pills app-wide (the `.fx-badge` 20×20-square bug), `--fx-faint` contrast raised to ~AA on both
+      themes, narrow side-column `flex-wrap` + truncation `title`s. Reduced-motion already global. **(VS: verify
+      visually in Dark + Light.)**
+- [x] **Crash recovery · DB backup** — `IBackupService`/`SqliteBackupService` (online-backup snapshots to
+      `Backups/`, bounded retention, SQL-Server skip), wired into `AppInitializer` (apply staged restore → crash
+      detect → pre-migration snapshot → session marker) + clean-shutdown `EndSession` in `App.xaml.cs`. New
+      services only; no edits to verified services; no new migration.
+- [x] **MSIX packaging · update mechanism** — `Package.appxmanifest` file associations (`.tf/.tfvars/.hcl`,
+      `.tfplan`, `.fenrixproject`) + `fenrix-iac://` protocol (MSIX-only, additive); `win-msix.pubxml` publish
+      profile. **(VS: set real Identity/Publisher, build the package.)**
+- [x] **Code signing** — documented in [31](31-release-prep.md) (EV/OV cert, `signtool`, Publisher↔cert match).
+      **(VS: sign with a real cert.)**
+- [x] **Security review · performance** — spot-checked: argv-only (zero `UseShellExecute = true`), secrets as
+      references only, `-json` never logged, preview == execution. Perf checklist in [31](31-release-prep.md).
+- [x] **User docs · example projects** — [user-guide.md](user-guide.md) + credential-free `examples/hello-fenrix`.
+- [x] **Full Terraform coverage (closes AC 17)** — new **Commands builder** (`-help`-driven, every installed
+      command, run through the safe spine; mutating ones redirect to their dedicated screens via
+      `TerraformCommandClassifier`) + **embedded ConPTY Terminal** (interactive catch-all, hand-rolled VT
+      renderer). New `TerraformCommandKind.Custom`; pure `TerraformHelpParser`; **no new migration**. Terminal
+      **(VS: validate native ConPTY on a build)**.
+- [x] **Help page** rewritten into a full documentation hub (deep dive per feature + Terraform & Git cheatsheets).
+- [ ] **Phase 11 close-out (VS)** — build/smoke-test the 5 surfaces + governed-deploy approval (enterprise.json
+      ON/OFF, mode-off byte-for-byte) and run `tests/enterprise-fixtures/verify_enterprise.py` (hand-traced green,
+      37/37). Checklist in [31 §0](31-release-prep.md).
+- [ ] **Signed MSIX + stable channel (VS)** — the remaining gate for AC 1; cut `v1.0.0` after.
 
 ## Acceptance criteria (see [ROADMAP.md](ROADMAP.md#acceptance-criteria))
 
-- [ ] 1–20 all passing → initial production-ready release.
+- **19 of 20 met** (criteria 2–20). **AC 17** now closed by the Phase 12 Commands builder + embedded Terminal.
+  **AC 1** (install on Windows) is the only remaining gate — build + sign the MSIX **(VS)**. Full table in
+  [31 §8](31-release-prep.md).
 
 ## Decision log
 
@@ -385,3 +413,7 @@ the sandbox VM was down this session**, so the reference port is hand-traced; bu
 | 2026-07-28 | Deployments recorded by a single `IDeploymentRecorder` inside the apply service, so every successful apply (Plan & apply page *or* governed Pipelines flow) lands on the board; resolves/creates the `ProjectVersion` from the plan's commit. Governed deploy = plan → gates → apply the exact saved plan (no bypass of ADR-0003); a deploy first checks the version's commit out so what deploys is what was cut. Approval gate is a local self-ack (multi-user role approvals stay Phase 11). State serial/lineage read from the local `terraform.tfstate` (only the two non-sensitive top-level fields). One migration: `AddDeploymentPipelines` (pipeline-config tables only) | [20](20-pipelines-deployments.md) |
 | 2026-07-29 | Phase 11 enterprise: **dual-provider metadata** (SQLite default / SQL Server opt-in) chosen at DI time from an `enterprise.json` **bootstrap** (connection string via a named env var, never on disk); **Windows identity** behind a pluggable `IUserContext` (Entra/OIDC later); **additive RBAC that only tightens** (allow-all when mode off) with a pure `PermissionEvaluator`; **central audit** to the metadata DB; **shared policy/templates**; **role-gated approvals** replacing the Phase 9.5 self-ack; **Fenrix Agent = design-only** via an `IExecutionHost` seam (local impl only). One big batch (Ivo). | [29](29-enterprise.md), [30](30-fenrix-agent.md), [ADR-0006](adr/0006-enterprise-metadata-and-identity.md), [ADR-0007](adr/0007-execution-host-seam.md) |
 | 2026-07-29 | Phase 10.5 code editor is a **hand-rolled, dependency-free** vanilla-JS HCL editor (`fenrix-editor.js`), not CodeMirror 6 — CM6's ES modules can't be bundled offline here without an npm/rollup toolchain, and hand-rolling matches the dependency-free house style (`fenrix-graph.js`, the HCL toolkit). "Beautify" = `terraform fmt -` over the buffer via **stdin** (new `FormatStdin` kind + a `StandardInput` field threaded through the request/runner; `captureLog:false`, never in args/history/log). Validate reuses the Phase 3 pipeline for inline gutter markers/squiggles. Outline/snippets/reference-helpers are pure Application logic; references are schema-aware via the Phase 10 cache. Saves keep the atomic-write + file-history path. **No new migration.** | [05](05-terraform-engine.md), [13](13-ui-design.md) |
+| 2026-07-31 | Phase 12 UI polish applied as an **append-only** *Phase 12 polish* section in `fenrix.css` (overrides only, reviewable/revertible): global `:focus-visible`, 11px text floor, `.fx-badge.warn` promoted to an auto-sized pill app-wide (the 20×20-square text-wrap bug), `--fx-faint` AA contrast on both themes, narrow-column `flex-wrap` — Ivo's call (big batch; append a section). | [24](24-visual-design-language.md), [31](31-release-prep.md) |
+| 2026-07-31 | Phase 12 **DB backup + crash recovery** as new services only (no edits to verified services, no new migration): `IBackupService`/`SqliteBackupService` uses SQLite's online-backup API (WAL-safe), keeps a bounded history under `Backups/`, **skips** when the metadata store is external SQL Server, and stages restores to apply at next launch before the context opens. `AppInitializer` takes a pre-migration snapshot + detects unclean shutdown via a session marker; `App.xaml.cs` clears it on clean shutdown. | [12](12-database-design.md), [18](18-packaging-deployment.md), [31](31-release-prep.md) |
+| 2026-07-31 | Phase 12 **packaging** is additive: `Package.appxmanifest` gains file associations + `fenrix-iac://` (MSIX-only, dev loop untouched) and a `win-msix.pubxml` profile; real Identity/Publisher + signing + the MSIX build are done in VS. | [18](18-packaging-deployment.md), [31](31-release-prep.md) |
+| 2026-07-31 | Phase 12 **full Terraform coverage (closes AC 17)** — Ivo's call to build both: a **Commands builder** (`terraform -help`-driven; new `TerraformCommandKind.Custom` carries an arg list through the one catalog→runner spine, preview == execution, redacted history; `TerraformCommandClassifier` redirects mutating commands — apply/destroy/import/state mv|rm|push/force-unlock/workspace new|delete|select/taint/untaint/login/logout — to their dedicated safe screens so ADR-0003 + locking hold) and an **embedded ConPTY Terminal** (`ITerminalService`/`ConPtyTerminalService` Win32 pseudo-console + hand-rolled dependency-free VT renderer `fenrix-terminal.js`; Windows-only; needs a VS build to validate the native plumbing). Pure `TerraformHelpParser`. Help page rewritten into a documentation hub with Terraform + Git cheatsheets. **No new migration.** | [05](05-terraform-engine.md), [23](23-command-transparency.md), [31](31-release-prep.md) |

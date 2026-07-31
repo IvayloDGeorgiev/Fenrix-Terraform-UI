@@ -1,6 +1,8 @@
 using System.Data;
 using System.Data.Common;
 using Fenrix.IaCStudio.Application.Abstractions;
+using Fenrix.IaCStudio.Application.Abstractions.Maintenance;
+using Fenrix.IaCStudio.Contracts.Maintenance;
 using Fenrix.IaCStudio.Infrastructure.Enterprise;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -26,10 +28,12 @@ namespace Fenrix.IaCStudio.Infrastructure.Persistence;
 public sealed class AppInitializer(
     IWorkspacePaths paths,
     IServiceScopeFactory scopeFactory,
+    IBackupService backup,
     ILogger<AppInitializer> logger) : IAppInitializer
 {
     private readonly IWorkspacePaths _paths = paths;
     private readonly IServiceScopeFactory _scopeFactory = scopeFactory;
+    private readonly IBackupService _backup = backup;
     private readonly ILogger<AppInitializer> _logger = logger;
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -37,6 +41,23 @@ public sealed class AppInitializer(
         var root = _paths.EnsureCreated();
         _logger.LogInformation(
             "Fenrix data root ready at {Root} (fallback: {Fallback})", root, _paths.UsingFallback);
+
+        // Crash recovery + backup (Phase 12), all before the DbContext is opened so the file is never held:
+        //  1) apply any restore the user staged last session,
+        //  2) note whether the previous session ended cleanly (the marker survives a crash),
+        //  3) take a routine snapshot of the database as-is (this also captures the pre-migration state on an
+        //     upgrade, so a bad migration is recoverable). All best-effort — never block startup.
+        var applied = await _backup.ApplyPendingRestoreAsync(cancellationToken);
+        if (applied is not null)
+            _logger.LogInformation("Restored database from staged backup {Id} ({CreatedAt}).", applied.Id, applied.CreatedAt);
+
+        var crash = await _backup.InspectCrashStateAsync(cancellationToken);
+        if (crash.UncleanShutdown)
+            _logger.LogWarning(
+                "Recovered from an unclean shutdown (previous session started {StartedAt}). Latest backup: {Backup}.",
+                crash.PreviousSessionStartedAt, crash.LatestBackup?.Id ?? "none");
+
+        await _backup.CreateBackupAsync(BackupReason.Startup, cancellationToken);
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -53,6 +74,10 @@ public sealed class AppInitializer(
         {
             _logger.LogWarning(ex, "Enterprise seeding failed; the app will start but roles may be unset.");
         }
+
+        // Mark the session active. It is removed on a clean shutdown (see the app-window Destroying hook that
+        // calls IBackupService.EndSession); a marker still present next launch signals a crash.
+        await _backup.BeginSessionAsync(cancellationToken);
     }
 
     /// <summary>Brings the database schema up to date without ever destroying data (see the class remarks).</summary>

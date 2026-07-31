@@ -8,6 +8,7 @@ using Fenrix.IaCStudio.Application.Abstractions.Enterprise;
 using Fenrix.IaCStudio.Application.Abstractions.Execution;
 using Fenrix.IaCStudio.Application.Abstractions.Files;
 using Fenrix.IaCStudio.Application.Abstractions.Git;
+using Fenrix.IaCStudio.Application.Abstractions.Maintenance;
 using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Application.Abstractions.Providers;
 using Fenrix.IaCStudio.Application.Abstractions.Security;
@@ -19,6 +20,7 @@ using Fenrix.IaCStudio.Infrastructure.Enterprise;
 using Fenrix.IaCStudio.Infrastructure.Execution;
 using Fenrix.IaCStudio.Infrastructure.Files;
 using Fenrix.IaCStudio.Infrastructure.Git;
+using Fenrix.IaCStudio.Infrastructure.Maintenance;
 using Fenrix.IaCStudio.Infrastructure.Persistence;
 using Fenrix.IaCStudio.Infrastructure.Processes;
 using Fenrix.IaCStudio.Infrastructure.Projects;
@@ -69,6 +71,13 @@ public static class InfrastructureServiceCollectionExtensions
         });
 
         services.AddScoped<ISettingsStore, EfSettingsStore>();
+
+        // Database backup, restore & crash recovery (Phase 12). Snapshots the local SQLite metadata database
+        // (online backup API, WAL-safe), keeps a bounded history under Backups/, stages restores to apply on the
+        // next launch, and tracks a session marker for crash detection. A no-op skip when the metadata store is
+        // an external SQL Server. Stateless over the data root ⇒ singleton. See docs/12, docs/18.
+        services.AddSingleton<IBackupService, SqliteBackupService>();
+
         services.AddSingleton<IAppInitializer, AppInitializer>();
 
         // Identity + execution seam (Phase 11). The user context resolves the current OS user (SID + name),
@@ -207,6 +216,13 @@ public static class InfrastructureServiceCollectionExtensions
         // outline, snippets, and reference helpers are pure Application logic invoked directly from the UI.
         // No new DB migration. See docs/05-terraform-engine.md, docs/13-ui-design.md.
         services.AddScoped<IEditorFormatService, EditorFormatService>();
+
+        // Dynamic command builder + embedded terminal (Phase 12). The help service lists installed commands and
+        // per-command flags via the executor spine (read-only, parsed in memory); the terminal service drives an
+        // interactive Win32 ConPTY session. Both let the user reach *every* Terraform command while the builder
+        // still routes mutating commands to their dedicated safe screens. See docs/05, docs/23, docs/31.
+        services.AddScoped<ITerraformHelpService, TerraformHelpService>();
+        services.AddSingleton<ITerminalService, ConPtyTerminalService>();
 
         return services;
     }

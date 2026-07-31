@@ -1,0 +1,260 @@
+@page "/projects/{ProjectId:guid}/terminal"
+@using System.Text
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Environments
+@using Fenrix.IaCStudio.Domain.Projects
+@inject IProjectService Projects
+@inject ITerminalService Terminals
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+@* Phase 12 · embedded terminal. Launches a shell under a Win32 pseudo-console (ConPTY) in the environment's
+   working directory — the catch-all so every command, including interactive ones, is reachable. Needs a VS
+   build to validate the native ConPTY plumbing. See docs/05, docs/31. *@
+
+@if (_project is null)
+{
+    <div class="fx-card" style="text-align:center;color:var(--fx-dim);">@(_loading ? "Loading…" : "Project not found.")</div>
+}
+else
+{
+    <ProjectHeader ProjectId="ProjectId" Name="@_project.Name" Active="ProjectHeader.ProjectPage.Terminal" Trail="@_workingDir">
+        <Actions>
+            @if (_started)
+            {
+                <span class="fx-pill @(_running ? "run" : "muted")">
+                    <span class="fx-ico"><Icon Name="terminal" Size="12" /></span> @(_running ? "Running" : $"Exited ({_exitCode})")
+                </span>
+                <button class="fx-btn sm" @onclick="RestartAsync" title="Restart the shell"><span class="fx-ico"><Icon Name="refresh" Size="13" /></span> Restart</button>
+                <button class="fx-btn sm danger" @onclick="StopSession" disabled="@(!_running)" title="Stop the shell"><span class="fx-ico"><Icon Name="stop" Size="13" /></span> Stop</button>
+            }
+        </Actions>
+    </ProjectHeader>
+
+    @if (!Terminals.IsSupported)
+    {
+        <div class="fx-card">
+            <EmptyState IconName="alert" Title="Terminal not available"
+                        Text="The embedded terminal requires Windows 10 (1809) or later. Use the Terraform and Commands screens instead." />
+        </div>
+    }
+    else
+    {
+        <div class="fx-card" style="margin-bottom:16px;">
+            <div class="fx-filterbar" style="margin-bottom:0;">
+                <div class="fx-field" style="margin-bottom:0;">
+                    <label>Environment</label>
+                    <select class="fx-select" value="@_envId" @onchange="OnEnvChanged" disabled="@_started">
+                        @foreach (var env in _environments)
+                        {
+                            <option value="@env.Id">@env.Name@(env.IsProduction ? " (production)" : "")</option>
+                        }
+                    </select>
+                </div>
+                <div class="fx-field" style="margin-bottom:0;">
+                    <label>Shell</label>
+                    <select class="fx-select" @bind="_shell" disabled="@_started">
+                        <option value="powershell.exe">Windows PowerShell</option>
+                        <option value="pwsh.exe">PowerShell 7 (pwsh)</option>
+                        <option value="cmd.exe">Command Prompt</option>
+                    </select>
+                </div>
+                @if (!_started)
+                {
+                    <button class="fx-btn accent" @onclick="StartAsync" disabled="@(_envId == Guid.Empty)">
+                        <span class="fx-ico"><Icon Name="play" Size="13" /></span> Start terminal
+                    </button>
+                }
+            </div>
+            @if (_error is not null)
+            {
+                <div class="fx-hint" style="margin-top:10px;color:var(--fx-danger);">@_error</div>
+            }
+            <div class="fx-hint" style="margin-top:10px;">
+                A full interactive shell in <span class="fx-mono">@_workingDir</span>. It uses your ambient cloud
+                credentials (az / aws / gcloud), exactly like the rest of Fenrix. Type <span class="fx-mono">terraform …</span>
+                for any command not covered by a typed screen.
+            </div>
+        </div>
+
+        <div class="fx-card" style="padding:0;overflow:hidden;">
+            <div id="@_elemId" class="fx-term-host"></div>
+        </div>
+        @if (!_started)
+        {
+            <p class="fx-hint" style="margin-top:8px;">Start the terminal to begin. Guarded actions (apply/destroy) still run here directly — prefer the Plan &amp; apply screen for reviewed, reversible changes.</p>
+        }
+    }
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private InfrastructureProject? _project;
+    private List<ProjectEnvironment> _environments = [];
+    private Guid _envId;
+    private string _shell = "powershell.exe";
+    private string _workingDir = "";
+    private bool _loading = true;
+    private Guid _loadedId;
+
+    private readonly string _elemId = "fx-term-" + Guid.NewGuid().ToString("N");
+    private ITerminalSession? _session;
+    private DotNetObjectReference<Terminal>? _ref;
+    private bool _started;
+    private bool _running;
+    private int _exitCode;
+    private string? _error;
+
+    private bool _needsInit;
+    private bool _jsReady;
+    private readonly StringBuilder _pending = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == ProjectId) return;
+        _loadedId = ProjectId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _project = await Projects.GetAsync(ProjectId);
+        _loading = false;
+        if (_project is null) return;
+
+        _environments = _project.Environments.OrderBy(e => e.DisplayOrder).ThenBy(e => e.Name).ToList();
+        _envId = _environments.FirstOrDefault()?.Id ?? Guid.Empty;
+        _workingDir = ResolveWorkingDir();
+    }
+
+    private void OnEnvChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id)) _envId = id;
+        _workingDir = ResolveWorkingDir();
+    }
+
+    private ProjectEnvironment? SelectedEnvironment => _environments.FirstOrDefault(e => e.Id == _envId);
+
+    private string ResolveWorkingDir()
+    {
+        if (_project is null) return "";
+        var wd = SelectedEnvironment?.WorkingDirectory;
+        if (string.IsNullOrWhiteSpace(wd)) return _project.RootPath;
+        return Path.IsPathRooted(wd) ? wd : Path.Combine(_project.RootPath, wd);
+    }
+
+    private async Task StartAsync()
+    {
+        _error = null;
+        if (!Terminals.IsSupported) { _error = "The embedded terminal requires Windows."; return; }
+        _workingDir = ResolveWorkingDir();
+        if (string.IsNullOrWhiteSpace(_workingDir) || !Directory.Exists(_workingDir))
+        {
+            _error = $"Working directory not found: {_workingDir}";
+            return;
+        }
+
+        try
+        {
+            var info = new TerminalStartInfo(_shell, _workingDir, 120, 30);
+            _session = Terminals.Start(info);
+            _session.Output += OnOutput;
+            _session.Exited += OnExited;
+            _started = true;
+            _running = true;
+            _jsReady = false;
+            _needsInit = true;
+            _pending.Clear();
+            await Task.CompletedTask;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _started = false;
+            _running = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_needsInit && _started && _session is not null)
+        {
+            _needsInit = false;
+            _ref ??= DotNetObjectReference.Create(this);
+            try
+            {
+                var size = await JS.InvokeAsync<Dimensions>("fenrixTerminal.init", _elemId, _ref);
+                _session.Resize(size.cols, size.rows);
+            }
+            catch (Exception ex)
+            {
+                _error = ex.Message;
+            }
+
+            // Flush anything the shell emitted before the JS terminal was ready, then go live.
+            string backlog;
+            lock (_pending) { backlog = _pending.ToString(); _pending.Clear(); _jsReady = true; }
+            if (backlog.Length > 0)
+                await JS.InvokeVoidAsync("fenrixTerminal.write", _elemId, backlog);
+        }
+    }
+
+    private void OnOutput(string chunk)
+    {
+        lock (_pending)
+        {
+            if (!_jsReady) { _pending.Append(chunk); return; }
+        }
+        _ = InvokeAsync(async () =>
+        {
+            try { await JS.InvokeVoidAsync("fenrixTerminal.write", _elemId, chunk); }
+            catch { /* view navigated away */ }
+        });
+    }
+
+    private void OnExited(int code)
+    {
+        _running = false;
+        _exitCode = code;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public void OnInput(string data) => _session?.Write(data);
+
+    [JSInvokable]
+    public void OnResize(int cols, int rows) => _session?.Resize(cols, rows);
+
+    private void StopSession()
+    {
+        try { _session?.Dispose(); } catch { }
+        _running = false;
+    }
+
+    private async Task RestartAsync()
+    {
+        await TeardownAsync();
+        _started = false;
+        _running = false;
+        await StartAsync();
+    }
+
+    private async Task TeardownAsync()
+    {
+        try { if (_session is not null) { _session.Output -= OnOutput; _session.Exited -= OnExited; _session.Dispose(); } } catch { }
+        _session = null;
+        try { await JS.InvokeVoidAsync("fenrixTerminal.dispose", _elemId); } catch { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await TeardownAsync();
+        _ref?.Dispose();
+    }
+
+    private sealed record Dimensions(int cols, int rows);
+}

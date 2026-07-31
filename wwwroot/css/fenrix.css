@@ -1223,3 +1223,106 @@ a:hover { color: var(--fx-accent-strong); }
 .fx-approval-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
 .fx-approval-meta { font-size: 12px; color: var(--fx-dim); }
 .fx-approval-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+
+/* ============================ Phase 12 — Release polish (readability + a11y) ============================ */
+/* Appended overrides only — see docs/24-visual-design-language.md. Nothing above this line is edited, so the
+   diff stays reviewable and trivially revertible. This block is a systematic pass, not a per-screen patch:
+   keyboard-focus visibility, a text-size floor (no <11px body text), text-warning badges that must never be
+   squeezed into the 20x20 plan-chip square, --fx-faint contrast on both themes, and narrow side-column wrap. */
+
+/* 1 ─ Visible keyboard focus on every interactive control.
+   Before this, only inputs/selects/textareas had a focus ring; buttons, tabs, rail nav, chips, rows, cells and
+   links showed nothing when tabbed to. :focus-visible keeps mouse clicks ring-free while making keyboard
+   traversal legible. :where() keeps specificity at 0 so component rules still win where they need to. */
+:where(button, [role="button"], a[href], summary, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--fx-accent);
+  outline-offset: 2px;
+  border-radius: var(--fx-radius-sm);
+}
+/* Inputs keep their existing tinted ring on pointer focus; add a (normally invisible) outline so Windows
+   High-Contrast / forced-colors users — where the box-shadow ring is dropped — still see focus. */
+.fx-input:focus-visible, .fx-select:focus-visible, .fx-textarea:focus-visible {
+  outline: 2px solid transparent;
+}
+
+/* 2 ─ Body-text size floor: nothing below 11px (a few micro-labels were 9.5–10.5px). */
+.fx-attr .tag, .fx-output .tag { font-size: 11px; }   /* sensitive-value tag — was 9.5px */
+.fx-apply-row .prov { font-size: 11px; }               /* apply-row provider chip — was 10.5px */
+.fx-cell-when { font-size: 11px; }                     /* version-matrix cell timestamp — was 10px */
+
+/* 3 ─ Text-warning badges are auto-sized pills EVERYWHERE, not only inside .fx-envconn.
+   The base .fx-badge is a fixed 20x20 square for the single-glyph +/~/- plan chips; a .warn badge always
+   carries a text label, so it must never inherit that square (the label was being force-wrapped one character
+   per line inside the 20px box). This promotes the .fx-envconn fix to the whole app so it can't recur. */
+.fx-badge.warn {
+  width: auto; height: auto; flex: 0 1 auto; min-width: 0;
+  justify-content: flex-start; align-items: center; gap: 6px;
+  padding: 4px 9px; border-radius: 6px; font-size: 12px; font-weight: 600; line-height: 1.35;
+}
+.fx-badge.warn > span { white-space: normal; }
+
+/* 4 ─ --fx-faint contrast. Faint carries hints, meta lines and timestamps but fell below WCAG AA on both
+   themes (worst on Light: ~2.8:1 on #f5f7fc). Nudge it toward legibility while keeping the dim > faint
+   hierarchy intact. Redeclared inside the theme roots so it overrides the originals by source order. */
+:root, :root[data-theme="dark"] { --fx-faint: #7d8398; }   /* was #6b7186 — ~3.7:1 → ~4.8:1 on #0a0b12 */
+:root[data-theme="light"] { --fx-faint: #656d80; }         /* was #8a92a6 — ~2.8:1 → ~4.5:1 on #f5f7fc */
+
+/* 5 ─ Narrow side-column safety. Header rows that mix a title with chips/pickers/badges must wrap rather than
+   overflow when the Terraform / Plan & apply / Inspect / Build left columns get narrow. (The two-pane grids
+   themselves already collapse at their breakpoints; this covers the inner flex rows.) */
+.fx-panel-head, .fx-deploy-head, .fx-stage-version, .fx-output .head, .fx-schema-rowhead { flex-wrap: wrap; }
+.fx-panel-head { row-gap: 4px; }
+/* Long single-line values inside those columns truncate with an ellipsis rather than pushing the layout wide;
+   the full value stays available via the element's title attribute. */
+.fx-output .head .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Dynamic command builder (Phase 12) ─────────────────────────────────── */
+.fx-cmdbuilder { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .fx-cmdbuilder { grid-template-columns: 1fr; } }
+.fx-cmd-list-card { position: sticky; top: 0; }
+.fx-cmd-list { display: flex; flex-direction: column; gap: 2px; max-height: 62vh; overflow-y: auto; }
+.fx-cmd-row {
+  display: grid; grid-template-columns: auto auto; grid-template-areas: "name tag" "syn syn";
+  gap: 2px 8px; width: 100%; text-align: left; padding: 7px 9px; cursor: pointer;
+  border: 1px solid transparent; border-radius: var(--fx-radius-sm); background: none; color: var(--fx-text);
+}
+.fx-cmd-row:hover { background: var(--fx-surface); }
+.fx-cmd-row.active { background: var(--fx-accent-tint); border-color: var(--fx-accent); }
+.fx-cmd-row .name { grid-area: name; font-size: 12.5px; color: var(--fx-accent-text); font-weight: 600; }
+.fx-cmd-row .fx-tag { grid-area: tag; justify-self: end; }
+.fx-cmd-row .syn { grid-area: syn; font-size: 11px; color: var(--fx-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.fx-cmd-flag { padding: 5px 0; border-bottom: 1px solid var(--fx-border); }
+.fx-cmd-flag .fx-input { margin-top: 6px; margin-left: 24px; width: calc(100% - 24px); }
+
+/* ── Embedded terminal (Phase 12) ───────────────────────────────────────── */
+.fx-term-host { height: 520px; }
+.fx-term {
+  height: 100%; overflow: auto; padding: 10px 12px; background: #05060c; cursor: text;
+  font-family: var(--fx-font-mono); font-size: 12.5px; line-height: 1.5; color: #cfd3e6; outline: none;
+}
+.fx-term:focus { box-shadow: inset 0 0 0 1px var(--fx-accent); }
+.fx-term-screen { white-space: pre-wrap; word-break: break-word; margin: 0; }
+
+/* ── Help / documentation hub (Phase 12) ────────────────────────────────── */
+.fx-help-layout { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: start; }
+@media (max-width: 860px) { .fx-help-layout { grid-template-columns: 1fr; } }
+.fx-help-nav { position: sticky; top: 0; display: flex; flex-direction: column; gap: 1px; max-height: calc(100vh - 120px); overflow-y: auto; }
+.fx-help-navgroup { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--fx-faint); margin: 12px 8px 4px; }
+.fx-help-navgroup:first-child { margin-top: 0; }
+.fx-help-navlink {
+  text-align: left; background: none; border: none; cursor: pointer;
+  padding: 6px 10px; border-radius: 7px; color: var(--fx-dim); font: inherit; font-size: 13px;
+}
+.fx-help-navlink:hover { background: var(--fx-panel); color: var(--fx-text); }
+.fx-help-navlink.active { background: var(--fx-accent-tint); color: var(--fx-text); box-shadow: inset 2px 0 0 var(--fx-accent); }
+
+.fx-help-content { max-width: 820px; }
+.fx-help-content p { color: var(--fx-text); font-size: 13.5px; line-height: 1.65; margin: 0 0 12px; }
+.fx-help-content p.fx-hint { color: var(--fx-faint); }
+.fx-help-h { font-size: 19px; font-weight: 600; margin: 0 0 12px; }
+.fx-help-sub { font-size: 14.5px; font-weight: 600; margin: 20px 0 8px; color: var(--fx-accent-text); }
+.fx-help-ol { color: var(--fx-text); font-size: 13.5px; line-height: 1.7; padding-left: 20px; margin: 0 0 12px; }
+.fx-help-ol li { margin-bottom: 6px; }
+.fx-help-tablewrap { border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm); overflow: auto; margin-bottom: 12px; }
+.fx-help-tablewrap .fx-table td { line-height: 1.5; }

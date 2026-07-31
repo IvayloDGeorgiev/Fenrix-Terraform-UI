@@ -54,6 +54,9 @@ public static class TerraformCommandCatalog
         // ---- Phase 10.5: Terraform-aware code editor ----
         TerraformCommandKind.FormatStdin => BuildFormatStdin(),
 
+        // ---- Phase 12: dynamic command builder ----
+        TerraformCommandKind.Custom => BuildCustom(spec),
+
         _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Kind, "Unsupported command kind.")
     };
 
@@ -254,6 +257,25 @@ public static class TerraformCommandCatalog
     /// </summary>
     private static CommandDefinition BuildFormatStdin() =>
         new("fmt", ["fmt", "-"], TerraformRiskLevel.ReadOnly);
+
+    /// <summary>
+    /// <c>terraform &lt;args…&gt;</c> for the dynamic command builder — the argument list comes verbatim from
+    /// <see cref="TerraformRunSpec.CustomArguments"/> (subcommand first) so the preview and execution share it.
+    /// Risk is classified from the subcommand; the builder UI has already refused any mutating/guarded command
+    /// (see <see cref="TerraformCommandClassifier"/>), so nothing destructive reaches here — but we still guard
+    /// against an empty or blocked list defensively.
+    /// </summary>
+    private static CommandDefinition BuildCustom(TerraformRunSpec spec)
+    {
+        var args = spec.CustomArguments;
+        if (args is null || args.Count == 0 || string.IsNullOrWhiteSpace(args[0]))
+            throw new InvalidOperationException("A custom command requires at least a subcommand.");
+        if (TerraformCommandClassifier.IsBlocked(args))
+            throw new InvalidOperationException(
+                "This command changes state and must be run through its dedicated safe screen, not the command builder.");
+
+        return new CommandDefinition(args[0], args, TerraformCommandClassifier.RiskFor(args));
+    }
 
     private static CommandDefinition BuildPlanGenerateConfig(TerraformRunSpec spec)
     {

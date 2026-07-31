@@ -1,0 +1,474 @@
+@page "/projects/{ProjectId:guid}/commands"
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Application.Terraform
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Common
+@using Fenrix.IaCStudio.Domain.Environments
+@using Fenrix.IaCStudio.Domain.Projects
+@using Fenrix.IaCStudio.Domain.Terraform
+@inject IProjectService Projects
+@inject ITerraformExecutor Executor
+@inject ITerraformDiscovery Discovery
+@inject ITerraformHelpService Help
+@inject ICommandHistoryStore History
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@implements IDisposable
+
+@* Phase 12 · dynamic command builder. Lists every installed Terraform command from `terraform -help`, builds a
+   form from each command's own `-help`, and runs it through the single safe spine (preview == execution,
+   redacted history). Mutating commands are shown but redirect to their dedicated safe screens (ADR-0003). *@
+
+@if (_project is null)
+{
+    <div class="fx-card" style="text-align:center;color:var(--fx-dim);">@(_loading ? "Loading…" : "Project not found.")</div>
+}
+else
+{
+    <ProjectHeader ProjectId="ProjectId" Name="@_project.Name" Active="ProjectHeader.ProjectPage.Commands" Trail="@_selected?.Name">
+        <Actions>
+            <span class="fx-chip" title="Resolved Terraform binary">
+                <span class="fx-ico"><Icon Name="hexagon" Size="13" /></span>
+                @(_catalog?.TerraformVersion ?? _installation?.Version?.ToString() ?? "not found")
+            </span>
+            <button class="fx-btn sm" @onclick="ReloadCommandsAsync" disabled="@_running" title="Re-read the installed command list">
+                <span class="fx-ico"><Icon Name="refresh" Size="13" /></span> Reload
+            </button>
+        </Actions>
+    </ProjectHeader>
+
+    <div class="fx-card" style="margin-bottom:16px;">
+        <div class="fx-field" style="margin-bottom:0;">
+            <label>Environment</label>
+            <select class="fx-select" value="@_envId" @onchange="OnEnvChanged" disabled="@_running">
+                @foreach (var env in _environments)
+                {
+                    <option value="@env.Id">@env.Name@(env.IsProduction ? " (production)" : "")</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    <div class="fx-cmdbuilder">
+        <div class="fx-card fx-cmd-list-card">
+            <div class="fx-panel-head">
+                <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="list" Size="16" /></span>
+                <span style="flex:1;font-weight:500;">Commands</span>
+                @if (_catalog is not null)
+                {
+                    <span class="fx-pill muted">@_catalog.Commands.Count</span>
+                }
+            </div>
+
+            @if (_catalog is { Available: false })
+            {
+                <div class="fx-hint" style="color:var(--fx-warn);display:flex;gap:8px;align-items:flex-start;">
+                    <span class="fx-ico" style="margin-top:1px;"><Icon Name="alert" Size="14" /></span>
+                    <span>@_catalog.BlockReason</span>
+                </div>
+            }
+            else if (_catalog is null)
+            {
+                <div class="fx-hint">Reading <span class="fx-mono">terraform -help</span>…</div>
+            }
+            else
+            {
+                <input class="fx-input" placeholder="Filter commands…" @bind="_filter" @bind:event="oninput" style="margin-bottom:8px;" />
+                <div class="fx-cmd-list">
+                    @foreach (var c in FilteredCommands)
+                    {
+                        <button class="fx-cmd-row @(_selected?.Name == c.Name ? "active" : "")" @onclick="() => SelectAsync(c)">
+                            <span class="fx-mono name">@c.Name</span>
+                            @if (c.IsBlocked)
+                            {
+                                <span class="fx-tag warn" title="@c.RedirectReason"><Icon Name="shield" Size="10" /> guarded</span>
+                            }
+                            <span class="syn">@c.Synopsis</span>
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px;min-width:0;">
+            @if (_selected is null)
+            {
+                <div class="fx-card"><EmptyState IconName="terminal" Title="Pick a command"
+                    Text="Choose a Terraform command on the left to build and run it. Guarded (state-changing) commands link to their dedicated safe screen instead." /></div>
+            }
+            else
+            {
+                <div class="fx-card">
+                    <div class="fx-panel-head">
+                        <span class="fx-mono" style="font-size:15px;font-weight:600;color:var(--fx-accent-text);">terraform @_selected.Name</span>
+                        <span style="flex:1;"></span>
+                        @if (_selected.IsBlocked)
+                        {
+                            <span class="fx-tag warn"><Icon Name="shield" Size="10" /> guarded</span>
+                        }
+                    </div>
+
+                    @if (_help is not null && !string.IsNullOrWhiteSpace(_help.Synopsis))
+                    {
+                        <p class="fx-hint" style="margin:0 0 8px;">@_help.Synopsis</p>
+                    }
+
+                    @if (_selected.IsBlocked)
+                    {
+                        <div class="fx-diag warn" style="margin-top:4px;">
+                            <div class="summary">@_selected.RedirectReason</div>
+                            <div style="margin-top:8px;">
+                                <button class="fx-btn sm accent" @onclick="() => GoTo(_selected!.RedirectRoute)">
+                                    <span class="fx-ico"><Icon Name="arrow-right" Size="13" /></span> Open the safe screen
+                                </button>
+                            </div>
+                        </div>
+                        <p class="fx-hint" style="margin-top:10px;">You can still read this command's full help below.</p>
+                    }
+                    else if (_loadingHelp)
+                    {
+                        <div class="fx-hint">Reading <span class="fx-mono">terraform @_selected.Name -help</span>…</div>
+                    }
+                    else if (_help is not null)
+                    {
+                        @if (_help.Flags.Count == 0)
+                        {
+                            <p class="fx-hint" style="margin:0 0 8px;">No options — this command takes none, or its flags couldn't be parsed. Add any arguments below.</p>
+                        }
+                        else
+                        {
+                            <div class="fx-schema-section-label">Options</div>
+                            @foreach (var f in _help.Flags)
+                            {
+                                <div class="fx-cmd-flag">
+                                    <label class="fx-check" style="align-items:flex-start;">
+                                        <input type="checkbox" checked="@_enabled.Contains(f.Name)" @onchange="e => ToggleFlag(f, e)" disabled="@_running" />
+                                        <span style="min-width:0;">
+                                            <span class="fx-mono" style="color:var(--fx-cyan);">-@f.Name@(f.TakesValue ? "=" : "")</span>
+                                            @if (!string.IsNullOrWhiteSpace(f.Description))
+                                            {
+                                                <span class="hint" style="display:block;">@f.Description</span>
+                                            }
+                                        </span>
+                                    </label>
+                                    @if (f.TakesValue && _enabled.Contains(f.Name))
+                                    {
+                                        <input class="fx-input fx-mono" placeholder="@(f.ValueHint ?? "value")"
+                                               value="@GetFlagValue(f.Name)" @oninput="e => SetFlagValue(f.Name, e)" disabled="@_running" />
+                                    }
+                                </div>
+                            }
+                        }
+
+                        <div class="fx-field" style="margin-top:12px;">
+                            <label>Extra arguments <span class="hint" style="color:var(--fx-faint);">(optional, space-separated)</span></label>
+                            <input class="fx-input fx-mono" placeholder="e.g. -target=aws_s3_bucket.b" @bind="_extraArgs" @bind:event="oninput" @bind:after="RebuildPreview" disabled="@_running" />
+                        </div>
+                    }
+                </div>
+
+                @if (!_selected.IsBlocked)
+                {
+                    <div class="fx-card">
+                        <CommandPreviewPanel Preview="_preview" />
+                        @if (_blockReason is not null)
+                        {
+                            <div class="fx-hint" style="margin-top:12px;color:var(--fx-warn);display:flex;gap:8px;align-items:flex-start;">
+                                <span class="fx-ico" style="margin-top:1px;"><Icon Name="alert" Size="14" /></span>
+                                <span>@_blockReason</span>
+                            </div>
+                        }
+                        <div style="display:flex;gap:8px;margin-top:14px;">
+                            @if (_running)
+                            {
+                                <button class="fx-btn danger" @onclick="Cancel"><span class="fx-ico"><Icon Name="stop" Size="14" /></span> Cancel</button>
+                                <span class="fx-pill run"><span class="fx-ico"><Icon Name="refresh" Size="12" /></span> Running…</span>
+                            }
+                            else
+                            {
+                                <button class="fx-btn accent" @onclick="RunAsync" disabled="@(_blockReason is not null)">
+                                    <span class="fx-ico"><Icon Name="play" Size="13" /></span> Run
+                                </button>
+                            }
+                            @if (_error is not null)
+                            {
+                                <span class="fx-pill fail" title="@_error"><span class="fx-ico"><Icon Name="alert" Size="12" /></span> @_error</span>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="fx-card">
+                        <div class="fx-panel-head">
+                            <span class="fx-ico" style="color:var(--fx-accent);"><Icon Name="terminal" Size="16" /></span>
+                            <span style="flex:1;font-weight:500;">Output</span>
+                            @if (_lastResult is not null)
+                            {
+                                var (cls, text) = ResultPill(_lastResult);
+                                <span class="fx-pill @cls">@text</span>
+                            }
+                        </div>
+                        <OutputConsole Lines="_output" />
+                    </div>
+                }
+
+                @if (_help is not null && !string.IsNullOrWhiteSpace(_help.RawHelp))
+                {
+                    <details class="fx-card">
+                        <summary style="cursor:pointer;font-weight:500;">Full help (<span class="fx-mono">terraform @_selected.Name -help</span>)</summary>
+                        <pre class="fx-codeblock" style="margin-top:10px;">@_help.RawHelp</pre>
+                    </details>
+                }
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private InfrastructureProject? _project;
+    private List<ProjectEnvironment> _environments = [];
+    private Guid _envId;
+    private TerraformInstallation? _installation;
+    private bool _loading = true;
+    private Guid _loadedId;
+
+    private CommandCatalogResult? _catalog;
+    private string _filter = "";
+
+    private TerraformCommandInfo? _selected;
+    private TerraformCommandHelp? _help;
+    private bool _loadingHelp;
+
+    private readonly HashSet<string> _enabled = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
+    private string _extraArgs = "";
+
+    private CommandPreview? _preview;
+    private string? _blockReason;
+    private readonly List<ProcessOutputEvent> _output = [];
+    private bool _running;
+    private string? _error;
+    private CancellationTokenSource? _cts;
+    private TerraformRunResult? _lastResult;
+
+    private ProjectEnvironment? SelectedEnvironment => _environments.FirstOrDefault(e => e.Id == _envId);
+
+    private IEnumerable<TerraformCommandInfo> FilteredCommands =>
+        _catalog is null
+            ? []
+            : string.IsNullOrWhiteSpace(_filter)
+                ? _catalog.Commands
+                : _catalog.Commands.Where(c =>
+                    c.Name.Contains(_filter, StringComparison.OrdinalIgnoreCase) ||
+                    c.Synopsis.Contains(_filter, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == ProjectId) return;
+        _loadedId = ProjectId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _project = await Projects.GetAsync(ProjectId);
+        _loading = false;
+        if (_project is null) return;
+
+        _environments = _project.Environments.OrderBy(e => e.DisplayOrder).ThenBy(e => e.Name).ToList();
+        _envId = _environments.FirstOrDefault()?.Id ?? Guid.Empty;
+        _installation = await Discovery.ResolveAsync(ProjectId);
+        await ReloadCommandsAsync();
+    }
+
+    private async Task ReloadCommandsAsync()
+    {
+        _catalog = null;
+        StateHasChanged();
+        _catalog = await Help.GetCommandsAsync(ProjectId, _envId);
+        StateHasChanged();
+    }
+
+    private async Task OnEnvChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id))
+            _envId = id;
+        RebuildPreview();
+        await ReloadCommandsAsync();
+    }
+
+    private async Task SelectAsync(TerraformCommandInfo c)
+    {
+        _selected = c;
+        _help = null;
+        _enabled.Clear();
+        _values.Clear();
+        _extraArgs = "";
+        _output.Clear();
+        _lastResult = null;
+        _error = null;
+        _loadingHelp = true;
+        StateHasChanged();
+
+        _help = await Help.GetCommandHelpAsync(ProjectId, _envId, c.Name);
+        _loadingHelp = false;
+        RebuildPreview();
+        StateHasChanged();
+    }
+
+    private void ToggleFlag(TerraformFlagInfo f, ChangeEventArgs e)
+    {
+        var on = e.Value is true;
+        if (on) _enabled.Add(f.Name);
+        else { _enabled.Remove(f.Name); _values.Remove(f.Name); }
+        RebuildPreview();
+    }
+
+    private string GetFlagValue(string name) => _values.TryGetValue(name, out var v) ? v : "";
+
+    private void SetFlagValue(string name, ChangeEventArgs e)
+    {
+        _values[name] = e.Value?.ToString() ?? "";
+        RebuildPreview();
+    }
+
+    private IReadOnlyList<string> BuildArguments()
+    {
+        if (_selected is null) return [];
+        var args = new List<string> { _selected.Name };
+
+        if (_help is not null)
+        {
+            foreach (var f in _help.Flags.Where(f => _enabled.Contains(f.Name)))
+            {
+                if (f.TakesValue)
+                {
+                    var v = GetFlagValue(f.Name);
+                    args.Add(string.IsNullOrEmpty(v) ? $"-{f.Name}" : $"-{f.Name}={v}");
+                }
+                else
+                {
+                    args.Add($"-{f.Name}");
+                }
+            }
+        }
+
+        foreach (var token in _extraArgs.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            args.Add(token);
+
+        return args;
+    }
+
+    private TerraformRunSpec BuildSpec() =>
+        new(ProjectId, _envId, TerraformCommandKind.Custom) { CustomArguments = BuildArguments() };
+
+    private void RebuildPreview()
+    {
+        _error = null;
+        _preview = null;
+        _blockReason = null;
+        if (_selected is null || _selected.IsBlocked) return;
+
+        try
+        {
+            var workingDir = ResolveWorkingDir();
+            var exePath = _installation?.ExecutablePath ?? "terraform";
+            var request = CommandPreviewBuilder.BuildRequest(BuildSpec(), exePath, workingDir);
+            _preview = CommandPreviewBuilder.BuildPreview(request, BuildChips(request.RiskLevel));
+            _blockReason = LocalBlockReason(workingDir);
+        }
+        catch (Exception ex)
+        {
+            _blockReason = ex.Message;
+        }
+    }
+
+    private string ResolveWorkingDir()
+    {
+        if (_project is null) return "";
+        var wd = SelectedEnvironment?.WorkingDirectory;
+        if (string.IsNullOrWhiteSpace(wd)) return _project.RootPath;
+        return Path.IsPathRooted(wd) ? wd : Path.Combine(_project.RootPath, wd);
+    }
+
+    private IEnumerable<CommandContextChip> BuildChips(TerraformRiskLevel risk)
+    {
+        var chips = new List<CommandContextChip> { new("Terraform", _installation?.Version?.ToString() ?? "not found") };
+        chips.Add(new CommandContextChip("Risk", RiskLabel(risk)));
+        return chips;
+    }
+
+    private string? LocalBlockReason(string workingDir)
+    {
+        if (SelectedEnvironment is null) return "Select an environment to run against.";
+        if (string.IsNullOrWhiteSpace(workingDir) || !Directory.Exists(workingDir))
+            return $"Working directory not found: {workingDir}";
+        if (_installation is null) return "No Terraform binary found. Set the executable in Settings or install Terraform on your PATH.";
+        return null;
+    }
+
+    private async Task RunAsync()
+    {
+        if (_blockReason is not null || _selected is null || _selected.IsBlocked) return;
+
+        _running = true;
+        _error = null;
+        _output.Clear();
+        _lastResult = null;
+        _cts = new CancellationTokenSource();
+
+        try
+        {
+            var plan = await Executor.PlanAsync(BuildSpec(), _cts.Token);
+            if (!plan.CanRun)
+            {
+                _blockReason = plan.BlockReason;
+                _error = plan.BlockReason;
+                return;
+            }
+            var progress = new Progress<ProcessOutputEvent>(OnLine);
+            _lastResult = await Executor.ExecuteAsync(plan, progress, _cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { _error = ex.Message; }
+        finally
+        {
+            _running = false;
+            _cts?.Dispose();
+            _cts = null;
+            StateHasChanged();
+        }
+    }
+
+    private void OnLine(ProcessOutputEvent e)
+    {
+        _output.Add(e);
+        StateHasChanged();
+    }
+
+    private void Cancel() => _cts?.Cancel();
+
+    private void GoTo(string? route) => Nav.NavigateTo($"/projects/{ProjectId}/{route}");
+
+    private static (string Cls, string Text) ResultPill(TerraformRunResult r) => r.Process.Cancelled
+        ? ("warn", "Cancelled")
+        : r.Process.Succeeded ? ("ok", "Succeeded") : ("fail", $"Exit {r.Process.ExitCode}");
+
+    private static string RiskLabel(TerraformRiskLevel risk) => risk switch
+    {
+        TerraformRiskLevel.ReadOnly => "read-only",
+        TerraformRiskLevel.Safe => "safe",
+        TerraformRiskLevel.StateChanging => "state-changing",
+        TerraformRiskLevel.Destructive => "destructive",
+        _ => risk.ToString()
+    };
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

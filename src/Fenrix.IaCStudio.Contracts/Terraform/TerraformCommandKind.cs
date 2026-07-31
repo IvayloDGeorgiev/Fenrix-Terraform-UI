@@ -113,5 +113,19 @@ public enum TerraformCommandKind
     /// file-history path). Read-only with respect to the filesystem and infrastructure. The buffer is passed
     /// as <see cref="TerraformRunSpec.StandardInput"/> and is never written to a run log. See docs/05-terraform-engine.md.
     /// </summary>
-    FormatStdin = 25
+    FormatStdin = 25,
+
+    // ---- Phase 12: dynamic command builder (docs/05-terraform-engine.md, docs/23-command-transparency.md) ----
+
+    /// <summary>
+    /// A dynamically-built command whose argument list comes from <see cref="TerraformRunSpec.CustomArguments"/>
+    /// (subcommand first). Backs the "-help"-driven command builder so <em>every</em> installed Terraform
+    /// command is reachable. It still flows through the one <see cref="TerraformRunSpec"/> → catalog → runner
+    /// spine (ArgumentList only, preview == execution, redacted history). The builder UI refuses to construct a
+    /// Custom run for a mutating command (apply/destroy/import/state mv|rm|push/force-unlock/workspace
+    /// new|delete|select/taint/untaint/login/logout), redirecting to that command's dedicated safe screen so the
+    /// saved-plan-only-apply rule (ADR-0003) and per-environment locking are never bypassed. Risk is classified
+    /// from the subcommand by <c>TerraformCommandClassifier</c>.
+    /// </summary>
+    Custom = 26
 }

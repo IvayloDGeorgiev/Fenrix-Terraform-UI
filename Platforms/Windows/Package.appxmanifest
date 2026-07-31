@@ -36,6 +36,43 @@
         <uap:DefaultTile Square71x71Logo="$placeholder$.png" Wide310x150Logo="$placeholder$.png" Square310x310Logo="$placeholder$.png" />
         <uap:SplashScreen Image="$placeholder$.png" />
       </uap:VisualElements>
+
+      <!-- Phase 12 · file associations + protocol activation (MSIX only; ignored by the unpackaged dev build).
+           These make Fenrix the handler for Terraform config/plan files and the .fenrixproject manifest, and
+           register the fenrix-iac:// deep-link scheme. See docs/18-packaging-deployment.md. -->
+      <Extensions>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="terraform">
+            <uap:DisplayName>Terraform configuration</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.tf</uap:FileType>
+              <uap:FileType>.tfvars</uap:FileType>
+              <uap:FileType>.hcl</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="terraformplan">
+            <uap:DisplayName>Terraform saved plan</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.tfplan</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="fenrixproject">
+            <uap:DisplayName>Fenrix project</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.fenrixproject</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+        <uap:Extension Category="windows.protocol">
+          <uap:Protocol Name="fenrix-iac">
+            <uap:DisplayName>Fenrix IaC Studio</uap:DisplayName>
+          </uap:Protocol>
+        </uap:Extension>
+      </Extensions>
     </Application>
   </Applications>
 

@@ -16,6 +16,12 @@
             <button class="fx-ribbon-btn @(Active == ProjectPage.Terraform ? "active" : "")" @onclick='() => Go("/terraform")' title="Terraform commands">
                 <Icon Name="terminal" Size="14" /> <span>Terraform</span>
             </button>
+            <button class="fx-ribbon-btn @(Active == ProjectPage.Commands ? "active" : "")" @onclick='() => Go("/commands")' title="All Terraform commands (dynamic builder)">
+                <Icon Name="list" Size="14" /> <span>Commands</span>
+            </button>
+            <button class="fx-ribbon-btn @(Active == ProjectPage.Terminal ? "active" : "")" @onclick='() => Go("/terminal")' title="Embedded terminal">
+                <Icon Name="terminal" Size="14" /> <span>Terminal</span>
+            </button>
             <button class="fx-ribbon-btn @(Active == ProjectPage.Plan ? "active" : "")" @onclick='() => Go("/plan")' title="Plan &amp; apply">
                 <Icon Name="shield" Size="14" /> <span>Plan &amp; apply</span>
             </button>
@@ -51,7 +57,7 @@
 </div>
 
 @code {
-    public enum ProjectPage { Files, Build, Terraform, Plan, Pipelines, Inspect, Keys, SourceControl }
+    public enum ProjectPage { Files, Build, Terraform, Commands, Terminal, Plan, Pipelines, Inspect, Keys, SourceControl }
 
     [Parameter] public Guid ProjectId { get; set; }
     [Parameter] public string Name { get; set; } = "";
@@ -70,6 +76,8 @@
         ProjectPage.Files => "Files",
         ProjectPage.Build => "Build",
         ProjectPage.Terraform => "Terraform",
+        ProjectPage.Commands => "Commands",
+        ProjectPage.Terminal => "Terminal",
         ProjectPage.Plan => "Plan & apply",
         ProjectPage.Pipelines => "Pipelines",
         ProjectPage.Inspect => "Inspect",

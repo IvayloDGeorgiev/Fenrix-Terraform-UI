@@ -63,6 +63,13 @@ public sealed record TerraformRunSpec(Guid ProjectId, Guid EnvironmentId, Terraf
     /// (<c>fmt -</c> formats this HCL buffer from stdin). Never appears in args, history, or a run log.
     /// </summary>
     public string? StandardInput { get; init; }
+
+    /// <summary>
+    /// The full, ordered argument list (subcommand first) for <see cref="TerraformCommandKind.Custom"/> — the
+    /// dynamic command builder. Passed verbatim to <c>ArgumentList</c>; the preview and execution are generated
+    /// from it, so they can't diverge. Empty for every other kind.
+    /// </summary>
+    public IReadOnlyList<string> CustomArguments { get; init; } = [];
 }
 
 /// <summary>

@@ -4,7 +4,7 @@
 <button class="fx-proj-card @(Selected ? "sel" : "")" @onclick="OnClick" title="@Project.RootPath">
     <span class="top">
         <span class="ico"><Icon Name="folder" Size="17" /></span>
-        <span class="name">@Project.Name</span>
+        <span class="name" title="@Project.Name">@Project.Name</span>
         @if (Project.IsLinked)
         {
             <span class="fx-tag"><Icon Name="link" Size="10" /> linked</span>

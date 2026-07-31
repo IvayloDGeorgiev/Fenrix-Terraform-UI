@@ -1,54 +1,291 @@
 @page "/help"
 
-<h1 class="fx-page-title">Help</h1>
-<p class="fx-page-sub">Understand how everything in Fenrix works — screen by screen, and concept by concept.</p>
+@* Full in-app documentation: a section nav + deep-dive content for every feature, plus Terraform and Git
+   command cheatsheets. Ships with the app and works offline. See docs/ for the authoritative design docs. *@
 
-<div class="fx-grid cols-3">
-    <div class="fx-card">
-        <div style="color:var(--fx-accent);margin-bottom:8px;"><Icon Name="play" Size="20" /></div>
-        <h2 style="font-size:15px;margin:0 0 6px;">Getting started</h2>
-        <p style="color:var(--fx-dim);font-size:13px;margin:0;">
-            Create your first project, import an existing one, and run your first plan and apply.
-        </p>
-    </div>
-    <div class="fx-card">
-        <div style="color:var(--fx-accent);margin-bottom:8px;"><Icon Name="book" Size="20" /></div>
-        <h2 style="font-size:15px;margin:0 0 6px;">Feature guides</h2>
-        <p style="color:var(--fx-dim);font-size:13px;margin:0;">
-            One guide per area: Projects, Terraform, Plans &amp; safety, Git, Connections, Pipelines.
-        </p>
-    </div>
-    <div class="fx-card">
-        <div style="color:var(--fx-accent);margin-bottom:8px;"><Icon Name="dashboard" Size="20" /></div>
-        <h2 style="font-size:15px;margin:0 0 6px;">Concepts</h2>
-        <p style="color:var(--fx-dim);font-size:13px;margin:0;">
-            Config vs state, the execution lifecycle, saved-plan safety, and the connections model.
-        </p>
-    </div>
-    <div class="fx-card">
-        <div style="color:var(--fx-accent);margin-bottom:8px;"><Icon Name="command" Size="20" /></div>
-        <h2 style="font-size:15px;margin:0 0 6px;">Command reference</h2>
-        <p style="color:var(--fx-dim);font-size:13px;margin:0;">
-            Every Terraform and Git command Fenrix runs, with the exact CLI it maps to.
-        </p>
-    </div>
-    <div class="fx-card">
-        <div style="color:var(--fx-accent);margin-bottom:8px;"><Icon Name="help" Size="20" /></div>
-        <h2 style="font-size:15px;margin:0 0 6px;">Troubleshooting</h2>
-        <p style="color:var(--fx-dim);font-size:13px;margin:0;">
-            Common errors and recovery steps, plus how to export diagnostics.
-        </p>
-    </div>
-    <div class="fx-card">
-        <div style="color:var(--fx-accent);margin-bottom:8px;"><Icon Name="settings" Size="20" /></div>
-        <h2 style="font-size:15px;margin:0 0 6px;">Shortcuts</h2>
-        <p style="color:var(--fx-dim);font-size:13px;margin:0;">
-            Full keyboard shortcut list. Press Ctrl+K anywhere for the command palette.
-        </p>
+<h1 class="fx-page-title">Help &amp; documentation</h1>
+<p class="fx-page-sub">A deep dive into every part of Fenrix — how each screen works and how to use it. Everything here works offline.</p>
+
+<div class="fx-help-layout">
+    <nav class="fx-help-nav" aria-label="Documentation sections">
+        @foreach (var group in _nav)
+        {
+            <div class="fx-help-navgroup">@group.Key</div>
+            @foreach (var s in group.Value)
+            {
+                <button class="fx-help-navlink @(_section == s.Id ? "active" : "")" @onclick="() => _section = s.Id">@s.Title</button>
+            }
+        }
+    </nav>
+
+    <div class="fx-help-content">
+        @switch (_section)
+        {
+            case "start":
+                <h2 class="fx-help-h">Getting started</h2>
+                <p>Fenrix is a Windows studio for working with Terraform safely. It drives the official <span class="fx-mono">terraform</span> and <span class="fx-mono">git</span> CLIs for you, always shows the exact command before it runs, and treats your files as the source of truth — Fenrix never restructures or hides your Terraform.</p>
+                <h3 class="fx-help-sub">Prerequisites</h3>
+                <p>Fenrix runs tools you already have; it doesn't bundle them. Put <strong>Terraform</strong> and <strong>Git</strong> on your <span class="fx-mono">PATH</span> (or set their paths in Settings). Verify with <span class="fx-mono">terraform version</span> and <span class="fx-mono">git --version</span>.</p>
+                <h3 class="fx-help-sub">Your first project in five steps</h3>
+                <ol class="fx-help-ol">
+                    <li>Go to <strong>Projects</strong> and create a new project (scaffolds Dev/UAT/Live and inits a Git repo) or import an existing folder in place.</li>
+                    <li>Open the project, run <strong>Init</strong> on the Terraform screen.</li>
+                    <li>On <strong>Plan &amp; apply</strong>, generate a saved plan and review the graph of changes.</li>
+                    <li>Apply the exact plan you reviewed.</li>
+                    <li>Commit your work from <strong>Source control</strong>.</li>
+                </ol>
+                <p class="fx-hint">Tip: the <span class="fx-mono">examples/hello-fenrix</span> project needs no cloud account — import it to try the whole flow end to end.</p>
+                break;
+
+            case "projects":
+                <h2 class="fx-help-h">Projects &amp; environments</h2>
+                <p>A <strong>project</strong> is a folder of Terraform configuration plus Fenrix metadata (its manifest, environments, and history index). Create a new one — scaffolded with a clean layout and Dev, UAT and Live environments — or <strong>import</strong> an existing repository, which Fenrix reads in place without moving or rewriting anything.</p>
+                <h3 class="fx-help-sub">Environments</h3>
+                <p>An <strong>environment</strong> is a named working context: its own working directory, Terraform workspace, cloud connection binding, and operation lock. Add as many as you need. Production environments are flagged and require a typed confirmation before any state-changing action.</p>
+                <h3 class="fx-help-sub">Files stay yours</h3>
+                <p>Changes you make in Windows Explorer or another editor are detected by a file watcher and reconciled automatically. Every tracked save is versioned into a local recovery cache so you can restore an earlier copy — but the files on disk are always authoritative.</p>
+                break;
+
+            case "files":
+                <h2 class="fx-help-h">Files &amp; the code editor</h2>
+                <p>Open a project to see its file tree and the built-in HCL editor (a hand-rolled, dependency-free editor — no cloud, fully offline).</p>
+                <h3 class="fx-help-sub">Editor features</h3>
+                <p>Syntax highlighting for HCL (blocks, strings, <span class="fx-mono">${…}</span> interpolation, heredocs, comments, functions), bracket matching and auto-close, 2-space auto-indent, an outline / go-to-symbol, a snippet palette, and schema-aware reference helpers (<span class="fx-mono">var.</span>, <span class="fx-mono">local.</span>, <span class="fx-mono">module.</span>, <span class="fx-mono">data.</span>, and resource attributes drawn from the cached provider schema).</p>
+                <h3 class="fx-help-sub">Beautify &amp; Validate</h3>
+                <p><strong>Beautify</strong> runs <span class="fx-mono">terraform fmt</span> over the current buffer through stdin (nothing is written until you save). <strong>Validate</strong> surfaces <span class="fx-mono">terraform validate</span> diagnostics inline as gutter markers and squiggles. Saves go through an atomic-write + file-history path, with an unsaved-changes guard.</p>
+                break;
+
+            case "terraform":
+                <h2 class="fx-help-h">Terraform screen (typed commands)</h2>
+                <p>The <strong>Terraform</strong> screen exposes the everyday commands as typed forms: <span class="fx-mono">init</span>, <span class="fx-mono">fmt</span>, <span class="fx-mono">validate</span>, and <span class="fx-mono">version</span>. Pick options with checkboxes; the <strong>command preview</strong> shows the exact invocation (sensitive values redacted) before you run it, and output streams live.</p>
+                <h3 class="fx-help-sub">Preview equals execution</h3>
+                <p>Every command Fenrix runs is built from a single argument list that feeds both the preview and the process — so what you see is exactly what runs. Arguments are always passed as a proper argv (never a shell string), and a redacted history row is recorded for each run.</p>
+                <p>For commands not on this screen, use the <strong>Commands</strong> builder (every installed command) or the <strong>Terminal</strong> (interactive shell).</p>
+                break;
+
+            case "commands":
+                <h2 class="fx-help-h">Commands — the dynamic builder</h2>
+                <p>The <strong>Commands</strong> screen lists <em>every</em> Terraform command your installed binary supports, read straight from <span class="fx-mono">terraform -help</span>. Pick a command and Fenrix reads its own <span class="fx-mono">-help</span> to build a form of its flags — tick the flags you want, fill in values, add any extra arguments, and run it through the same safe spine (preview equals execution, redacted history).</p>
+                <h3 class="fx-help-sub">Guarded commands</h3>
+                <p>Commands that change real infrastructure or state — <span class="fx-mono">apply</span>, <span class="fx-mono">destroy</span>, <span class="fx-mono">import</span>, <span class="fx-mono">state mv/rm/push</span>, <span class="fx-mono">force-unlock</span>, <span class="fx-mono">workspace new/delete/select</span>, <span class="fx-mono">taint/untaint</span> — are shown but marked <span class="fx-tag warn">guarded</span>. The builder won't run them directly; it links you to their dedicated, safety-gated screen so the saved-plan-only-apply rule and per-environment locking are never bypassed. You can still read any command's full help here.</p>
+                break;
+
+            case "terminal":
+                <h2 class="fx-help-h">Embedded terminal</h2>
+                <p>The <strong>Terminal</strong> screen launches a full interactive shell (PowerShell or Command Prompt) under a Windows pseudo-console, in the selected environment's working directory. It's the catch-all for anything the typed screens and the builder deliberately don't run — interactive logins, ad-hoc pipelines, or any command you prefer to type.</p>
+                <h3 class="fx-help-sub">Credentials &amp; safety</h3>
+                <p>The terminal inherits Fenrix's environment, so it uses the same native cloud credential stores (az / aws / gcloud) as the rest of the app. Because it's a real shell, it bypasses the typed previews by design — for reviewed, reversible changes prefer <strong>Plan &amp; apply</strong>. The terminal requires Windows 10 (1809) or later.</p>
+                break;
+
+            case "plan":
+                <h2 class="fx-help-h">Plan &amp; apply safety</h2>
+                <p>This is where changes reach real infrastructure, and it is deliberately careful.</p>
+                <ol class="fx-help-ol">
+                    <li><strong>Generate a saved plan</strong> (<span class="fx-mono">plan -out</span>). Fenrix parses it and shows a graphical review: additions, changes, deletions and replacements, with before/after values and sensitive values redacted.</li>
+                    <li><strong>Apply the exact plan you reviewed</strong> — nothing else. If the config or the provider lock changed after the plan was made, the plan is marked stale and blocked.</li>
+                    <li><strong>Production</strong> environments require a typed confirmation. <strong>Destroy</strong> and <strong>drift</strong> (refresh-only) have their own guarded flows.</li>
+                </ol>
+                <p>One state-changing operation runs per environment at a time, enforced by an on-disk lock. A deployment is recorded automatically after every successful apply, so the Pipelines board is always accurate.</p>
+                break;
+
+            case "inspect":
+                <h2 class="fx-help-h">Inspect — state &amp; tools</h2>
+                <p>The <strong>Inspect</strong> screen is a read-only window onto your infrastructure plus the guarded state operations.</p>
+                <p><strong>State browser</strong> lists tracked resources and shows their attributes (sensitive values redacted). <strong>Outputs</strong> shows root output values. The <strong>dependency graph</strong> renders <span class="fx-mono">terraform graph</span> as an interactive diagram. <strong>Drift</strong> surfaces a refresh-only plan. <strong>State operations</strong> (<span class="fx-mono">mv</span>, <span class="fx-mono">rm</span>, <span class="fx-mono">pull</span>, <span class="fx-mono">push</span>, <span class="fx-mono">force-unlock</span>) and <strong>workspaces</strong> are gated behind a typed confirmation and the per-environment lock. The <strong>import assistant</strong> supports both CLI import and Terraform 1.5+ <span class="fx-mono">import{}</span> config generation.</p>
+                break;
+
+            case "build":
+                <h2 class="fx-help-h">Build — visual resource builder</h2>
+                <p>The <strong>Build</strong> screen authors configuration from provider schemas. Fenrix caches <span class="fx-mono">terraform providers schema -json</span> offline, then gives you schema-driven forms: pick a provider and resource (or data source), fill required attributes first, expand optional ones, and see a live HCL preview before writing to a real <span class="fx-mono">.tf</span> file.</p>
+                <p>It covers the whole config-side file set — resources, data sources, variables, outputs, locals, providers, versions/terraform settings, backends, tfvars and modules — and can round-trip-edit existing simple blocks in place, preserving comments and complex expressions byte-for-byte. All writes go through the atomic-write + file-history path. The <strong>Templates</strong> tab (enterprise) instantiates shared templates through the same path.</p>
+                break;
+
+            case "keys":
+                <h2 class="fx-help-h">Keys — SSH / EC2 key pairs</h2>
+                <p>The <strong>Keys</strong> screen manages per-project key pairs. <strong>Import</strong> an existing PEM/OpenSSH/PuTTY key (the public key and SHA-256 fingerprint are derived without decrypting the private half) or <strong>generate</strong> one via Terraform's <span class="fx-mono">tls_private_key</span>.</p>
+                <p>Private keys are encrypted at rest with Windows DPAPI, stored outside any project folder and never committed to Git — the database holds only metadata and a secret reference. Export is off by default (a Settings toggle), additionally requires typing the key's name, and writes a redacted audit row every time.</p>
+                break;
+
+            case "git":
+                <h2 class="fx-help-h">Source control (Git)</h2>
+                <p>The <strong>Source control</strong> screen is a full Git client driving the official <span class="fx-mono">git</span> CLI, with a command preview and redacted history on every action.</p>
+                <p><strong>Changes:</strong> stage/unstage/discard, commit (with amend and sign-off), and a read-only unified diff with optional line-level staging. <strong>History:</strong> log, blame, cherry-pick, revert, reset, and interactive rebase (driven non-interactively). <strong>Branches / Tags / Stashes / Worktrees / Submodules</strong> each have their own tab. Fetch, pull and push run non-interactively against your existing Git Credential Manager credentials. A 3-way conflict editor helps resolve merges.</p>
+                <p>Connect a repository host on the <strong>Provider</strong> tab (see Connections) to add repository browsing, pull/merge requests, pipeline status, and branch policies.</p>
+                break;
+
+            case "connections":
+                <h2 class="fx-help-h">Connections (repositories &amp; cloud)</h2>
+                <p>The <strong>Connections</strong> hub holds your Git host and cloud connections. Create a connection once, then bind it where it's used.</p>
+                <h3 class="fx-help-sub">Cloud connections</h3>
+                <p>Add an Azure, AWS or Google connection, then <strong>bind it to an environment</strong>. Fenrix composes credentials at run time and relies on the native tool stores (az cache, AWS profiles/SSO, gcloud ADC); the only secret it ever holds is an Azure service-principal secret, kept in Windows Credential Manager and resolved just-in-time. Each environment can target a different account, and a state-changing run is blocked until the environment is bound.</p>
+                <h3 class="fx-help-sub">Repository connections</h3>
+                <p>Connect GitHub, GitLab, Azure DevOps or Bitbucket (tokens live in Windows Credential Manager — only a reference is stored). Binding a project to a connection unlocks the provider features on the Source control screen.</p>
+                break;
+
+            case "pipelines":
+                <h2 class="fx-help-h">Pipelines &amp; deployments</h2>
+                <p>The <strong>Pipelines</strong> screen shows a deployment <strong>board</strong> (stages, current version, "N behind", external CI status) and a version × environment <strong>matrix</strong>.</p>
+                <p>Cut a <strong>version</strong> from a Git commit (optionally tagged and pushed). <strong>Governed deploy</strong> is plan → gates → apply the exact saved plan — it first checks out the version's commit so what deploys is what was cut. <strong>Promote</strong>, <strong>rollback</strong> and governed <strong>fan-out</strong> (one version to many environments) are built in. Optional pipeline definitions add stage gates (approval, required branch, clean tree, production confirmation, promote-in-order). None of this bypasses the saved-plan-only apply rule.</p>
+                break;
+
+            case "enterprise":
+                <h2 class="fx-help-h">Enterprise mode</h2>
+                <p>Fenrix is single-user by default. Dropping an <span class="fx-mono">enterprise.json</span> into the data root turns on governance — and nothing changes for anyone who never enables it.</p>
+                <p>When enabled you get: shared metadata (SQLite or SQL Server), role-based access control (grant-based and additive — it only ever tightens), a central audit trail, shared policy and templates, and role-gated approvals that replace the single-user self-ack. Identity is your Windows user (pluggable for Entra/OIDC later). Admin screens live under a dedicated nav group: <span class="fx-mono">/enterprise/admin</span>, <span class="fx-mono">/enterprise/audit</span>, and <span class="fx-mono">/enterprise/approvals</span>; status is in Settings → Enterprise.</p>
+                break;
+
+            case "backup":
+                <h2 class="fx-help-h">Backup &amp; crash recovery</h2>
+                <p>Fenrix snapshots its metadata database on every launch (kept under <span class="fx-mono">Backups/</span> with a bounded history), including just before it applies any database migration on an upgrade — so a bad upgrade is recoverable. If the app is closed unexpectedly, the next launch notices and surfaces the latest backup.</p>
+                <p>Backups hold no secrets: the database stores only references (Credential Manager / DPAPI), never credential values. Your Terraform files are always the source of truth; the database is an index and a recovery cache. On an external SQL Server metadata store, file backup is skipped — that's your DBA's job.</p>
+                break;
+
+            case "tf-cheatsheet":
+                <h2 class="fx-help-h">Terraform command cheatsheet</h2>
+                <p>Every core Terraform command, what it does, and how Fenrix exposes it. Run any of these from the <strong>Commands</strong> builder or the <strong>Terminal</strong>; the common and guarded ones also have dedicated screens.</p>
+                <div class="fx-help-tablewrap">
+                    <table class="fx-table">
+                        <thead><tr><th>Command</th><th>What it does</th><th>In Fenrix</th></tr></thead>
+                        <tbody>
+                            @foreach (var c in _tfCheatsheet)
+                            {
+                                <tr>
+                                    <td class="fx-mono" style="white-space:nowrap;color:var(--fx-accent-text);">@c.Cmd</td>
+                                    <td>@c.What</td>
+                                    <td>@((MarkupString)c.Where)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                break;
+
+            case "git-cheatsheet":
+                <h2 class="fx-help-h">Git command cheatsheet</h2>
+                <p>The Git operations Fenrix drives, and what each does. All run via the official <span class="fx-mono">git</span> CLI with a command preview and redacted history.</p>
+                <div class="fx-help-tablewrap">
+                    <table class="fx-table">
+                        <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+                        <tbody>
+                            @foreach (var c in _gitCheatsheet)
+                            {
+                                <tr>
+                                    <td class="fx-mono" style="white-space:nowrap;color:var(--fx-accent-text);">@c.Cmd</td>
+                                    <td>@c.What</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                break;
+
+            case "concepts":
+                <h2 class="fx-help-h">Concepts &amp; the safety model</h2>
+                <h3 class="fx-help-sub">Files are the source of truth</h3>
+                <p>Fenrix never hides or restructures your Terraform. The database is an index and a recovery cache; your <span class="fx-mono">.tf</span> files, state, and plans live in the project folder.</p>
+                <h3 class="fx-help-sub">Apply only the exact reviewed plan</h3>
+                <p>You review a saved plan file, and only that file is applied. If the config or provider lock changes afterward, the plan is invalidated. This is the core guarantee that what you approved is what runs.</p>
+                <h3 class="fx-help-sub">Preview equals execution</h3>
+                <p>The command shown in every preview is built from the same argument list that executes — they can't diverge. Commands are always argv, never a shell string.</p>
+                <h3 class="fx-help-sub">Secrets stay local</h3>
+                <p>The database stores only references. Actual secrets live in Windows Credential Manager or DPAPI-encrypted files. Sensitive values are redacted in previews, history, and logs; JSON command output is never written to a log. Keep project repos private anyway — plan and state files carry plaintext secrets by design.</p>
+                <h3 class="fx-help-sub">Per-environment locking</h3>
+                <p>Only one state-changing operation runs per environment at a time, guarded by an on-disk lock that is crash-safe and force-releasable.</p>
+                break;
+
+            case "shortcuts":
+                <h2 class="fx-help-h">Keyboard &amp; accessibility</h2>
+                <p>Fenrix is fully keyboard-navigable: every button, tab, row and control shows a visible focus ring when tabbed to. In the code editor:</p>
+                <div class="fx-help-tablewrap">
+                    <table class="fx-table">
+                        <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+                        <tbody>
+                            <tr><td class="fx-mono">Ctrl + S</td><td>Save the current file</td></tr>
+                            <tr><td class="fx-mono">Ctrl + /</td><td>Toggle line comment</td></tr>
+                            <tr><td class="fx-mono">Tab / Shift + Tab</td><td>Indent / outdent</td></tr>
+                            <tr><td class="fx-mono">Ctrl + F</td><td>Find &amp; replace</td></tr>
+                            <tr><td class="fx-mono">Enter</td><td>Auto-indent to the current level</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="fx-hint">Reduced-motion is honoured automatically. Switch Dark / Light theme in Settings.</p>
+                break;
+
+            case "trouble":
+                <h2 class="fx-help-h">Troubleshooting</h2>
+                <h3 class="fx-help-sub">"No Terraform binary found"</h3>
+                <p>Install Terraform and add it to your <span class="fx-mono">PATH</span>, or set <span class="fx-mono">terraform.executable</span> in Settings. Use <strong>Detect</strong> on the Terraform screen to re-resolve.</p>
+                <h3 class="fx-help-sub">"This plan is stale"</h3>
+                <p>The configuration or provider lock changed after the plan was created. Generate a fresh plan and review it again — this is the safety net working as intended.</p>
+                <h3 class="fx-help-sub">A state-changing action is blocked</h3>
+                <p>The environment probably isn't bound to a cloud connection (Connections), or another operation holds the environment lock. Bind the connection, or release a stale lock from Inspect.</p>
+                <h3 class="fx-help-sub">The app didn't close cleanly</h3>
+                <p>On the next launch Fenrix reports the unclean shutdown and offers the latest database backup. Your files are untouched regardless.</p>
+                <h3 class="fx-help-sub">The terminal won't start</h3>
+                <p>The embedded terminal needs Windows 10 (1809) or later. Use the Terraform and Commands screens as an alternative.</p>
+                break;
+        }
     </div>
 </div>
 
-<p style="color:var(--fx-faint);font-size:12px;margin-top:20px;">
-    Help content ships with the app and works offline. Contextual "?" panels and command
-    explanations appear throughout the product as features are built.
-</p>
+@code {
+    private string _section = "start";
+
+    private readonly Dictionary<string, (string Id, string Title)[]> _nav = new()
+    {
+        ["Start here"] = [("start", "Getting started"), ("concepts", "Concepts & safety")],
+        ["Working"] = [("projects", "Projects & environments"), ("files", "Files & editor"),
+                       ("terraform", "Terraform screen"), ("commands", "Commands builder"), ("terminal", "Embedded terminal")],
+        ["Change safely"] = [("plan", "Plan & apply"), ("inspect", "Inspect & state"), ("build", "Visual builder"), ("keys", "Keys")],
+        ["Collaborate"] = [("git", "Source control"), ("connections", "Connections"), ("pipelines", "Pipelines"), ("enterprise", "Enterprise")],
+        ["Reference"] = [("tf-cheatsheet", "Terraform cheatsheet"), ("git-cheatsheet", "Git cheatsheet"),
+                         ("backup", "Backup & recovery"), ("shortcuts", "Shortcuts"), ("trouble", "Troubleshooting")],
+    };
+
+    private readonly (string Cmd, string What, string Where)[] _tfCheatsheet =
+    [
+        ("terraform version", "Print the Terraform + provider versions.", "Terraform screen"),
+        ("terraform init", "Initialise the working dir: download providers/modules, configure the backend, write the lock file.", "Terraform screen"),
+        ("terraform validate", "Check configuration for syntactic and internal consistency (no remote calls).", "Terraform screen"),
+        ("terraform fmt", "Rewrite files to the canonical style. Fenrix also runs it over the editor buffer as Beautify.", "Terraform + editor"),
+        ("terraform plan", "Compute and show the changes needed to reach the desired state. With -out, save the plan.", "Plan &amp; apply"),
+        ("terraform apply", "Apply changes. Fenrix applies only the exact saved plan you reviewed.", "<span class='fx-tag warn'>guarded</span> Plan &amp; apply"),
+        ("terraform destroy", "Destroy all managed infrastructure. Guarded, typed-confirm flow.", "<span class='fx-tag warn'>guarded</span> Plan &amp; apply"),
+        ("terraform show", "Render a saved plan or the current state as human-readable or JSON.", "Plan review / Inspect"),
+        ("terraform output", "Print root output values (sensitive redacted).", "Inspect → Outputs"),
+        ("terraform refresh", "Update state against real infrastructure (legacy; use plan -refresh-only).", "Inspect → Drift"),
+        ("terraform graph", "Emit the dependency graph in DOT. Fenrix renders it visually.", "Inspect → Graph"),
+        ("terraform state list", "List resource addresses tracked in state.", "Inspect → State"),
+        ("terraform state show", "Show the attributes of one resource in state.", "Inspect → State"),
+        ("terraform state mv", "Move/rename a resource within state.", "<span class='fx-tag warn'>guarded</span> Inspect"),
+        ("terraform state rm", "Forget a resource from state (the real object is left alone).", "<span class='fx-tag warn'>guarded</span> Inspect"),
+        ("terraform state pull / push", "Read remote state to stdout / overwrite remote state from a file.", "<span class='fx-tag warn'>guarded</span> Inspect"),
+        ("terraform import", "Bring an existing real object under Terraform management.", "<span class='fx-tag warn'>guarded</span> Inspect → Import"),
+        ("terraform taint / untaint", "Mark a resource for replacement / clear that mark (model via plan instead).", "<span class='fx-tag warn'>guarded</span>"),
+        ("terraform workspace", "List/select/new/delete workspaces (named state instances).", "Inspect → Workspaces"),
+        ("terraform force-unlock", "Release a stuck state lock by id.", "<span class='fx-tag warn'>guarded</span> Inspect"),
+        ("terraform providers", "Show provider requirements; providers schema exports machine-readable schemas.", "Build (schema cache)"),
+        ("terraform providers lock", "Record provider checksums for multiple platforms in the lock file.", "Commands builder"),
+        ("terraform get", "Download or update modules referenced by the configuration.", "Commands builder"),
+        ("terraform console", "An interactive expression console for the current state/config.", "Terminal"),
+        ("terraform login / logout", "Obtain / remove credentials for a Terraform-native remote (interactive).", "Terminal"),
+        ("terraform test", "Run Terraform's built-in test framework (.tftest.hcl).", "Commands builder"),
+    ];
+
+    private readonly (string Cmd, string What)[] _gitCheatsheet =
+    [
+        ("git status", "Show staged, unstaged and untracked changes."),
+        ("git add / restore", "Stage / unstage changes (line-level staging supported)."),
+        ("git commit", "Record staged changes (amend and sign-off available)."),
+        ("git fetch / pull / push", "Sync with the remote (non-interactive, via Credential Manager)."),
+        ("git branch / checkout / switch", "Create, list and switch branches."),
+        ("git merge", "Merge a branch, with conflict detection and a 3-way editor."),
+        ("git rebase -i", "Reorder/squash/reword commits (driven non-interactively)."),
+        ("git log / blame", "History and per-line authorship."),
+        ("git diff", "Read-only unified diff of changes."),
+        ("git stash", "Shelve and restore work in progress."),
+        ("git cherry-pick / revert / reset", "Apply, undo, or move commits."),
+        ("git tag", "Lightweight and annotated tags, push one or all."),
+        ("git worktree / submodule", "Manage linked worktrees and submodules."),
+    ];
+}
