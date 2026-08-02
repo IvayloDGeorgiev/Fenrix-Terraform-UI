@@ -1,0 +1,496 @@
+@page "/projects/{ProjectId:guid}/checks"
+@using Fenrix.IaCStudio.Application.Abstractions.Checks
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Checks
+@using Fenrix.IaCStudio.Contracts.Checks
+@using Fenrix.IaCStudio.Domain.Environments
+@using Fenrix.IaCStudio.Domain.Projects
+@inject IProjectService Projects
+@inject ICheckToolDiscovery Discovery
+@inject IStaticAnalysisService Analysis
+@inject ICostEstimationService Cost
+@inject ICheckToolInstaller Installer
+
+@* Phase 13 · Checks. Standalone, read-only screen: static analysis (TFLint + Trivy/tfsec) and cost (Infracost)
+   over an environment's working directory. Tools run through the shared ArgumentList runner; never folded into
+   the verified plan/apply spine. See docs/34-checks.md. *@
+
+@if (_project is null)
+{
+    <div class="fx-card" style="text-align:center;color:var(--fx-dim);">@(_loading ? "Loading…" : "Project not found.")</div>
+}
+else
+{
+    <ProjectHeader ProjectId="ProjectId" Name="@_project.Name" Active="ProjectHeader.ProjectPage.Checks" Trail="@_selectedEnvName">
+        <Actions>
+            @if (_tab == Tab.Static)
+            {
+                <button class="fx-btn accent" @onclick="RunAnalysisAsync" disabled="@(_busy || _selectedEnv is null)">
+                    <span class="fx-ico"><Icon Name="shield-check" Size="13" /></span> @(_busy ? "Running…" : "Run analysis")
+                </button>
+            }
+            else
+            {
+                <button class="fx-btn" @onclick="RunDiffAsync" disabled="@(_busy || _selectedEnv is null)" title="Compare against the saved baseline">
+                    <span class="fx-ico"><Icon Name="swap" Size="13" /></span> Diff
+                </button>
+                <button class="fx-btn accent" @onclick="RunEstimateAsync" disabled="@(_busy || _selectedEnv is null)">
+                    <span class="fx-ico"><Icon Name="refresh" Size="13" /></span> @(_busy ? "Running…" : "Estimate cost")
+                </button>
+            }
+        </Actions>
+    </ProjectHeader>
+
+    <div class="fx-card" style="margin-bottom:16px;">
+        <div class="fx-field" style="margin-bottom:0;">
+            <label>Environment</label>
+            <select class="fx-select" value="@_envId" @onchange="OnEnvChanged" disabled="@_busy">
+                @foreach (var env in _environments)
+                {
+                    <option value="@env.Id">@env.Name@(env.IsProduction ? " (production)" : "")</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    @* Tool-status ribbon: installed (version) or one-click install. *@
+    <div class="fx-card fx-checktools" style="margin-bottom:16px;">
+        <div class="fx-checktools-head">Analysis tools</div>
+        <div class="fx-checktool-grid">
+            @foreach (var status in _tools)
+            {
+                <div class="fx-checktool @(status.Installed ? "ok" : "missing")">
+                    <div class="fx-checktool-name">
+                        <Icon Name="@(status.Installed ? "check" : "alert")" Size="13" /> @ToolName(status.Tool)
+                    </div>
+                    @if (status.Installed)
+                    {
+                        <div class="fx-checktool-ver fx-mono" title="@status.ExecutablePath">@(status.Version ?? "installed")</div>
+                    }
+                    else if (status.CanAutoInstall)
+                    {
+                        <button class="fx-btn small" @onclick="() => InstallAsync(status.Tool)" disabled="@_busy">
+                            <span class="fx-ico"><Icon Name="download" Size="12" /></span> Install
+                        </button>
+                    }
+                    else
+                    {
+                        <div class="fx-checktool-ver">not installed</div>
+                    }
+                </div>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(_status))
+        {
+            <div class="fx-hint" style="margin-top:10px;"><Icon Name="clock" Size="12" /> @_status</div>
+        }
+    </div>
+
+    <div class="fx-tabs" style="margin-bottom:16px;">
+        <button class="fx-tab @(_tab == Tab.Static ? "active" : "")" @onclick="() => _tab = Tab.Static">
+            <Icon Name="shield-check" Size="14" /> Static analysis
+        </button>
+        <button class="fx-tab @(_tab == Tab.Cost ? "active" : "")" @onclick="() => _tab = Tab.Cost">
+            <Icon Name="dollar" Size="14" /> Cost
+        </button>
+    </div>
+
+    @if (_tab == Tab.Static)
+    {
+        <div class="fx-card">
+            @if (_report is null)
+            {
+                <EmptyState IconName="shield-check" Title="No analysis yet"
+                            Text="Run TFLint and a security scan (Trivy or tfsec) over this environment's working directory. Install any missing tool above." />
+            }
+            else
+            {
+                @* Per-tool run summary + errors *@
+                <div class="fx-check-runs">
+                    @foreach (var run in _report.Runs)
+                    {
+                        @if (!run.Available)
+                        {
+                            <span class="fx-pill muted" title="Tool not installed">@ToolName(run.Tool): not installed</span>
+                        }
+                        else if (run.Error is not null)
+                        {
+                            <span class="fx-pill warn" title="@run.Error">@ToolName(run.Tool): error</span>
+                        }
+                        else if (run.Ran)
+                        {
+                            <span class="fx-pill ok">@ToolName(run.Tool): @run.Findings.Count</span>
+                        }
+                    }
+                </div>
+
+                @* Severity filter chips *@
+                <div class="fx-sevfilter">
+                    <button class="fx-sevchip @(_minSeverity is null ? "active" : "")" @onclick="() => _minSeverity = null">All (@_report.Findings.Count)</button>
+                    @foreach (var sev in new[] { CheckSeverity.Critical, CheckSeverity.High, CheckSeverity.Medium, CheckSeverity.Low, CheckSeverity.Info })
+                    {
+                        <button class="fx-sevchip @SeverityClass(sev) @(_minSeverity == sev ? "active" : "")"
+                                @onclick="() => _minSeverity = sev" disabled="@(_report.CountAtLeast(sev) == 0)">
+                            @($"{CheckSeverityMap.Label(sev)}+ ({_report.CountAtLeast(sev)})")
+                        </button>
+                    }
+                </div>
+
+                @if (!FilteredFindings().Any())
+                {
+                    <div class="fx-hint" style="margin-top:12px;"><Icon Name="check" Size="12" /> No findings at this severity. Clean at the selected level.</div>
+                }
+                else
+                {
+                    <div class="fx-findings">
+                        @foreach (var f in FilteredFindings())
+                        {
+                            <div class="fx-finding">
+                                <span class="fx-sev @SeverityClass(f.Severity)">@CheckSeverityMap.Label(f.Severity)</span>
+                                <div class="fx-finding-body">
+                                    <div class="fx-finding-top">
+                                        <span class="fx-tag muted">@ToolName(f.Tool)</span>
+                                        <span class="fx-finding-rule fx-mono">@f.RuleId</span>
+                                        @if (!string.IsNullOrWhiteSpace(f.Resource))
+                                        {
+                                            <span class="fx-tag">@f.Resource</span>
+                                        }
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(f.Title))
+                                    {
+                                        <div class="fx-finding-title">@f.Title</div>
+                                    }
+                                    <div class="fx-finding-msg">@f.Message</div>
+                                    <div class="fx-finding-loc fx-mono">
+                                        @if (!string.IsNullOrWhiteSpace(f.FilePath))
+                                        {
+                                            <span>@f.FilePath@(f.Line is int ln ? $":{ln}" : "")</span>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(f.Link))
+                                        {
+                                            <a href="@f.Link" target="_blank" rel="noopener" class="fx-finding-link">docs <Icon Name="link" Size="10" /></a>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    }
+    else
+    {
+        <div class="fx-card">
+            @if (!_hasApiKey)
+            {
+                <div class="fx-apikey">
+                    <div class="fx-finding-title">Infracost needs a free API key</div>
+                    <div class="fx-hint" style="margin-bottom:10px;">
+                        Get a key at <a href="https://www.infracost.io/docs/#2-get-api-key" target="_blank" rel="noopener">infracost.io</a>
+                        (or run <span class="fx-mono">infracost auth login</span>). It is stored in the Windows Credential Manager — never in plaintext on disk — and only injected as an environment variable when Infracost runs.
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <input class="fx-input fx-mono" type="password" placeholder="ico-xxxxxxxx" @bind="_apiKeyInput" disabled="@_busy" style="max-width:320px;" />
+                        <button class="fx-btn accent" @onclick="SaveApiKeyAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_apiKeyInput))">Save key</button>
+                    </div>
+                </div>
+            }
+            else if (_cost is null)
+            {
+                <EmptyState IconName="dollar" Title="No estimate yet"
+                            Text="Estimate the projected monthly cost of this environment with Infracost, or diff against a saved baseline to see what a change would cost." />
+                <div style="display:flex;gap:8px;margin-top:12px;">
+                    <button class="fx-btn small" @onclick="SaveBaselineAsync" disabled="@_busy" title="Save the current breakdown as the baseline for future diffs">Save baseline</button>
+                    <button class="fx-btn small ghost" @onclick="ClearApiKeyAsync" disabled="@_busy">Remove API key</button>
+                </div>
+            }
+            else if (!_cost.Available)
+            {
+                <EmptyState IconName="dollar" Title="Infracost is not installed"
+                            Text="Install Infracost above to estimate cost." />
+            }
+            else if (_cost.NeedsApiKey)
+            {
+                <div class="fx-hint warn"><Icon Name="alert" Size="12" /> @_cost.Error</div>
+                <button class="fx-btn small ghost" style="margin-top:10px;" @onclick="ClearApiKeyAsync">Re-enter API key</button>
+            }
+            else if (_cost.Error is not null && _cost.TotalMonthlyCost is null && _cost.Resources.Count == 0)
+            {
+                <div class="fx-hint warn"><Icon Name="alert" Size="12" /> @_cost.Error</div>
+                <div class="fx-hint" style="margin-top:6px;">Tip: run <span class="fx-mono">terraform init</span> for this environment first — Infracost needs initialised providers.</div>
+            }
+            else
+            {
+                <div class="fx-cost-summary">
+                    <div class="fx-cost-total">
+                        <div class="fx-cost-label">Projected monthly cost</div>
+                        <div class="fx-cost-value">@Money(_cost.TotalMonthlyCost, _cost.Currency)</div>
+                    </div>
+                    @if (_cost.IsDiff)
+                    {
+                        <div class="fx-cost-total">
+                            <div class="fx-cost-label">Change (diff vs baseline)</div>
+                            <div class="fx-cost-value @(( _cost.TotalMonthlyDelta ?? 0) > 0 ? "up" : (_cost.TotalMonthlyDelta ?? 0) < 0 ? "down" : "")">
+                                @SignedMoney(_cost.TotalMonthlyDelta, _cost.Currency)
+                            </div>
+                        </div>
+                    }
+                    <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+                        <button class="fx-btn small" @onclick="SaveBaselineAsync" disabled="@_busy">Save baseline</button>
+                        <button class="fx-btn small ghost" @onclick="ClearApiKeyAsync" disabled="@_busy">Remove API key</button>
+                    </div>
+                </div>
+
+                @if (_cost.UnsupportedResourceCount > 0)
+                {
+                    <div class="fx-hint" style="margin:8px 0 12px;">@_cost.UnsupportedResourceCount resource(s) could not be priced by Infracost.</div>
+                }
+
+                @if (_cost.Resources.Count == 0)
+                {
+                    <div class="fx-hint">No priced resources in this environment.</div>
+                }
+                else
+                {
+                    <table class="fx-table fx-cost-table">
+                        <thead>
+                            <tr>
+                                <th>Resource</th>
+                                <th>Type</th>
+                                <th style="text-align:right;">Monthly</th>
+                                @if (_cost.IsDiff)
+                                {
+                                    <th style="text-align:right;">Change</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in _cost.Resources)
+                            {
+                                <tr>
+                                    <td class="fx-mono">@r.Name</td>
+                                    <td class="fx-mono muted">@r.ResourceType</td>
+                                    <td style="text-align:right;">@Money(r.MonthlyCost, _cost.Currency)</td>
+                                    @if (_cost.IsDiff)
+                                    {
+                                        <td style="text-align:right;" class="@(( r.MonthlyDelta ?? 0) > 0 ? "cost-up" : (r.MonthlyDelta ?? 0) < 0 ? "cost-down" : "")">
+                                            @SignedMoney(r.MonthlyDelta, _cost.Currency)
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private enum Tab { Static, Cost }
+
+    private InfrastructureProject? _project;
+    private List<ProjectEnvironment> _environments = [];
+    private Guid _envId;
+    private Guid _loadedId;
+    private bool _loading = true;
+    private bool _busy;
+    private string? _status;
+    private Tab _tab = Tab.Static;
+
+    private IReadOnlyList<CheckToolStatus> _tools = [];
+
+    // Static-analysis state
+    private StaticAnalysisReport? _report;
+    private CheckSeverity? _minSeverity; // null = all
+
+    // Cost state
+    private CostEstimate? _cost;
+    private bool _hasApiKey;
+    private string _apiKeyInput = "";
+
+    private ProjectEnvironment? _selectedEnv => _environments.FirstOrDefault(e => e.Id == _envId);
+    private string? _selectedEnvName => _selectedEnv?.Name;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == ProjectId) return;
+        _loadedId = ProjectId;
+        await LoadProjectAsync();
+    }
+
+    private async Task LoadProjectAsync()
+    {
+        _loading = true;
+        _project = await Projects.GetAsync(ProjectId);
+        _loading = false;
+        if (_project is null) return;
+
+        _environments = _project.Environments.OrderBy(e => e.DisplayOrder).ThenBy(e => e.Name).ToList();
+        _envId = _environments.FirstOrDefault()?.Id ?? Guid.Empty;
+        await RefreshToolsAsync();
+        _hasApiKey = await Cost.HasApiKeyAsync();
+    }
+
+    private async Task RefreshToolsAsync()
+    {
+        _tools = await Discovery.ResolveAllAsync(ProjectId);
+        StateHasChanged();
+    }
+
+    private void OnEnvChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id)) _envId = id;
+        _report = null;
+        _cost = null;
+    }
+
+    // --- Static analysis ---
+
+    private async Task RunAnalysisAsync()
+    {
+        if (_selectedEnv is null) return;
+        _busy = true;
+        _report = null;
+        _status = null;
+        StateHasChanged();
+        try
+        {
+            var progress = new Progress<string>(msg => { _status = msg; InvokeAsync(StateHasChanged); });
+            _report = await Analysis.AnalyzeAsync(ProjectId, _envId, progress);
+            _status = $"Found {_report.Findings.Count} finding(s).";
+        }
+        catch (Exception ex)
+        {
+            _status = $"Analysis failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private IEnumerable<CheckFinding> FilteredFindings()
+    {
+        if (_report is null) return [];
+        return _minSeverity is null
+            ? _report.Findings
+            : _report.Findings.Where(f => f.Severity >= _minSeverity.Value);
+    }
+
+    // --- Cost ---
+
+    private async Task RunEstimateAsync() => await RunCostAsync(() => Cost.EstimateAsync(ProjectId, _envId, Progress()));
+    private async Task RunDiffAsync() => await RunCostAsync(() => Cost.DiffAsync(ProjectId, _envId, Progress()));
+    private async Task SaveBaselineAsync() => await RunCostAsync(() => Cost.SaveBaselineAsync(ProjectId, _envId, Progress()));
+
+    private IProgress<string> Progress() => new Progress<string>(msg => { _status = msg; InvokeAsync(StateHasChanged); });
+
+    private async Task RunCostAsync(Func<Task<CostEstimate>> run)
+    {
+        if (_selectedEnv is null) return;
+        _busy = true;
+        _cost = null;
+        _status = null;
+        StateHasChanged();
+        try
+        {
+            _cost = await run();
+            _hasApiKey = await Cost.HasApiKeyAsync();
+            _status = _cost.Cancelled ? "Cancelled." : (_cost.Error ?? "Done.");
+        }
+        catch (Exception ex)
+        {
+            _status = $"Cost estimation failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveApiKeyAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_apiKeyInput)) return;
+        await Cost.SetApiKeyAsync(_apiKeyInput);
+        _apiKeyInput = "";
+        _hasApiKey = true;
+        _status = "Infracost API key saved.";
+        StateHasChanged();
+    }
+
+    private async Task ClearApiKeyAsync()
+    {
+        await Cost.ClearApiKeyAsync();
+        _hasApiKey = false;
+        _cost = null;
+        _status = "Infracost API key removed.";
+        StateHasChanged();
+    }
+
+    // --- Install ---
+
+    private async Task InstallAsync(CheckTool tool)
+    {
+        _busy = true;
+        _status = null;
+        StateHasChanged();
+        try
+        {
+            var progress = new Progress<string>(msg => { _status = msg; InvokeAsync(StateHasChanged); });
+            var result = await Installer.InstallLatestAsync(tool, progress);
+            _status = result.Success
+                ? $"{ToolName(tool)} {result.Version} installed."
+                : $"Install failed: {result.Error}";
+            await RefreshToolsAsync();
+        }
+        catch (Exception ex)
+        {
+            _status = $"Install failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private static string ToolName(CheckTool tool) => tool switch
+    {
+        CheckTool.TfLint => "TFLint",
+        CheckTool.Tfsec => "tfsec",
+        CheckTool.Trivy => "Trivy",
+        CheckTool.Infracost => "Infracost",
+        _ => tool.ToString()
+    };
+
+    private static string SeverityClass(CheckSeverity s) => s switch
+    {
+        CheckSeverity.Critical => "crit",
+        CheckSeverity.High => "high",
+        CheckSeverity.Medium => "med",
+        CheckSeverity.Low => "low",
+        CheckSeverity.Info => "info",
+        _ => "unknown"
+    };
+
+    private static string Money(decimal? amount, string? currency)
+    {
+        if (amount is null) return "—";
+        var value = amount.Value.ToString("0.00");
+        return string.IsNullOrEmpty(currency) ? value : $"{value} {currency}";
+    }
+
+    private static string SignedMoney(decimal? amount, string? currency)
+    {
+        if (amount is null) return "—";
+        var sign = amount.Value > 0 ? "+" : "";
+        return sign + Money(amount, currency);
+    }
+}

@@ -13,6 +13,9 @@
             <button class="fx-ribbon-btn @(Active == ProjectPage.Build ? "active" : "")" @onclick='() => Go("/build")' title="Visual resource builder">
                 <Icon Name="blocks" Size="14" /> <span>Build</span>
             </button>
+            <button class="fx-ribbon-btn @(Active == ProjectPage.Variables ? "active" : "")" @onclick='() => Go("/variables")' title="Variable values per environment">
+                <Icon Name="hash" Size="14" /> <span>Variables</span>
+            </button>
             <button class="fx-ribbon-btn @(Active == ProjectPage.Terraform ? "active" : "")" @onclick='() => Go("/terraform")' title="Terraform commands">
                 <Icon Name="terminal" Size="14" /> <span>Terraform</span>
             </button>
@@ -24,6 +27,9 @@
             </button>
             <button class="fx-ribbon-btn @(Active == ProjectPage.Plan ? "active" : "")" @onclick='() => Go("/plan")' title="Plan &amp; apply">
                 <Icon Name="shield" Size="14" /> <span>Plan &amp; apply</span>
+            </button>
+            <button class="fx-ribbon-btn @(Active == ProjectPage.Checks ? "active" : "")" @onclick='() => Go("/checks")' title="Static analysis &amp; cost checks">
+                <Icon Name="shield-check" Size="14" /> <span>Checks</span>
             </button>
             <button class="fx-ribbon-btn @(Active == ProjectPage.Pipelines ? "active" : "")" @onclick='() => Go("/pipelines")' title="Pipelines &amp; deployments">
                 <Icon Name="git-pull-request" Size="14" /> <span>Pipelines</span>
@@ -57,7 +63,7 @@
 </div>
 
 @code {
-    public enum ProjectPage { Files, Build, Terraform, Commands, Terminal, Plan, Pipelines, Inspect, Keys, SourceControl }
+    public enum ProjectPage { Files, Build, Variables, Terraform, Commands, Terminal, Plan, Checks, Pipelines, Inspect, Keys, SourceControl }
 
     [Parameter] public Guid ProjectId { get; set; }
     [Parameter] public string Name { get; set; } = "";
@@ -75,10 +81,12 @@
     {
         ProjectPage.Files => "Files",
         ProjectPage.Build => "Build",
+        ProjectPage.Variables => "Variables",
         ProjectPage.Terraform => "Terraform",
         ProjectPage.Commands => "Commands",
         ProjectPage.Terminal => "Terminal",
         ProjectPage.Plan => "Plan & apply",
+        ProjectPage.Checks => "Checks",
         ProjectPage.Pipelines => "Pipelines",
         ProjectPage.Inspect => "Inspect",
         ProjectPage.Keys => "Keys",

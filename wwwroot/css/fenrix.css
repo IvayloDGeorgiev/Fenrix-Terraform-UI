@@ -1323,6 +1323,15 @@ a:hover { color: var(--fx-accent-strong); }
 .fx-tmpl-file > summary { cursor: pointer; font-size: 12.5px; color: var(--fx-dim); }
 .fx-tmpl-file > summary:hover { color: var(--fx-text); }
 
+/* ── Variables manager (Phase 12) ───────────────────────────────────────── */
+.fx-var-row { padding: 12px 0; border-bottom: 1px solid var(--fx-border); }
+.fx-var-row:last-child { border-bottom: none; }
+.fx-var-row.missing { box-shadow: inset 3px 0 0 var(--fx-warn); padding-left: 10px; margin-left: -10px; }
+.fx-var-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fx-var-name { font-size: 13.5px; font-weight: 600; color: var(--fx-accent-text); }
+.fx-var-desc { font-size: 12px; color: var(--fx-dim); margin: 4px 0 0; }
+.fx-var-control { margin-top: 8px; max-width: 560px; }
+
 /* ── Help / documentation hub (Phase 12) ────────────────────────────────── */
 .fx-help-layout { display: grid; grid-template-columns: 220px 1fr; gap: 20px; align-items: start; }
 @media (max-width: 860px) { .fx-help-layout { grid-template-columns: 1fr; } }
@@ -1345,3 +1354,69 @@ a:hover { color: var(--fx-accent-strong); }
 .fx-help-ol li { margin-bottom: 6px; }
 .fx-help-tablewrap { border: 1px solid var(--fx-border); border-radius: var(--fx-radius-sm); overflow: auto; margin-bottom: 12px; }
 .fx-help-tablewrap .fx-table td { line-height: 1.5; }
+
+/* ---- Checks — static analysis & cost (Phase 13). See docs/34-checks.md. ---- */
+.fx-hint.warn { color: var(--fx-warn); }
+
+/* Tool-status ribbon */
+.fx-checktools-head { font-size: 12px; color: var(--fx-dim); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px; }
+.fx-checktool-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+.fx-checktool {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--fx-border); border-radius: 8px;
+  padding: 8px 12px; min-width: 150px;
+}
+.fx-checktool.ok { border-color: color-mix(in srgb, var(--fx-success) 45%, var(--fx-border)); }
+.fx-checktool.missing { border-color: color-mix(in srgb, var(--fx-warn) 45%, var(--fx-border)); }
+.fx-checktool-name { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; font-size: 13px; }
+.fx-checktool.ok .fx-checktool-name { color: var(--fx-success); }
+.fx-checktool.missing .fx-checktool-name { color: var(--fx-warn); }
+.fx-checktool-ver { font-size: 11.5px; color: var(--fx-faint); margin-left: auto; }
+
+/* Static-analysis findings */
+.fx-check-runs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.fx-sevfilter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.fx-sevchip {
+  border: 1px solid var(--fx-border); background: transparent; color: var(--fx-dim);
+  border-radius: 999px; padding: 3px 11px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.fx-sevchip:hover:not(:disabled) { color: var(--fx-text); }
+.fx-sevchip:disabled { opacity: 0.4; cursor: default; }
+.fx-sevchip.active { background: var(--fx-accent-tint); border-color: var(--fx-accent); color: var(--fx-accent-text); }
+
+.fx-findings { display: flex; flex-direction: column; gap: 8px; }
+.fx-finding {
+  display: flex; gap: 12px; align-items: flex-start;
+  border: 1px solid var(--fx-border); border-radius: 8px; padding: 10px 12px;
+}
+.fx-finding-body { flex: 1; min-width: 0; }
+.fx-finding-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 3px; }
+.fx-finding-rule { font-size: 12px; color: var(--fx-dim); }
+.fx-finding-title { font-weight: 500; font-size: 13px; margin: 1px 0; }
+.fx-finding-msg { font-size: 12.5px; color: var(--fx-text); overflow-wrap: anywhere; }
+.fx-finding-loc { font-size: 11.5px; color: var(--fx-faint); margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap; }
+.fx-finding-link { display: inline-flex; align-items: center; gap: 3px; }
+
+/* Severity badges + chip accents share one colour scale */
+.fx-sev {
+  flex-shrink: 0; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.03em; min-width: 62px; text-align: center;
+  border: 1px solid transparent;
+}
+.fx-sev.crit, .fx-sevchip.crit.active { color: #fff; background: var(--fx-danger); border-color: var(--fx-danger); }
+.fx-sev.high { color: #fff; background: #f97316; border-color: #f97316; }
+.fx-sev.med { color: #1a1400; background: var(--fx-warn); border-color: var(--fx-warn); }
+.fx-sev.low { color: var(--fx-accent-text); background: var(--fx-accent-tint); border-color: var(--fx-accent); }
+.fx-sev.info, .fx-sev.unknown { color: var(--fx-dim); border-color: var(--fx-border); }
+.fx-sevchip.crit { color: var(--fx-danger); }
+.fx-sevchip.high { color: #f97316; }
+.fx-sevchip.med { color: var(--fx-warn); }
+
+/* Cost */
+.fx-apikey { max-width: 620px; }
+.fx-cost-summary { display: flex; flex-wrap: wrap; gap: 28px; align-items: center; margin-bottom: 8px; }
+.fx-cost-label { font-size: 11.5px; color: var(--fx-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.fx-cost-value { font-size: 22px; font-weight: 600; font-family: var(--fx-font-mono); }
+.fx-cost-value.up, td.cost-up { color: var(--fx-danger); }
+.fx-cost-value.down, td.cost-down { color: var(--fx-success); }
+.fx-cost-table { margin-top: 6px; }

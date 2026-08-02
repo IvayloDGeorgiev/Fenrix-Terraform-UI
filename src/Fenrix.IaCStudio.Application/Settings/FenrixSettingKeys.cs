@@ -33,6 +33,13 @@ public static class FenrixSettingKeys
     /// <summary>Soft-wrap long lines in the editor (default false).</summary>
     public const string EditorWordWrap = "editor.wordWrap";           // true | false (default false)
 
+    // Checks — static analysis & cost (Phase 13). Per-tool executable overrides; resolution falls back to PATH.
+    // The Infracost API key is NOT a setting — it lives in the secret store. See docs/34-checks.md.
+    public const string TfLintExecutable = "checks.tflint.executable";
+    public const string TfsecExecutable = "checks.tfsec.executable";
+    public const string TrivyExecutable = "checks.trivy.executable";
+    public const string InfracostExecutable = "checks.infracost.executable";
+
     // Git
     public const string GitExecutable = "git.executable";
 

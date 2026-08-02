@@ -1,5 +1,6 @@
 using Fenrix.IaCStudio.Application.Abstractions;
 using Fenrix.IaCStudio.Application.Abstractions.Authoring;
+using Fenrix.IaCStudio.Application.Abstractions.Checks;
 using Fenrix.IaCStudio.Application.Abstractions.Cloud;
 using Fenrix.IaCStudio.Application.Abstractions.Connections;
 using Fenrix.IaCStudio.Application.Abstractions.Editor;
@@ -13,6 +14,7 @@ using Fenrix.IaCStudio.Application.Abstractions.Projects;
 using Fenrix.IaCStudio.Application.Abstractions.Providers;
 using Fenrix.IaCStudio.Application.Abstractions.Security;
 using Fenrix.IaCStudio.Application.Abstractions.Terraform;
+using Fenrix.IaCStudio.Infrastructure.Checks;
 using Fenrix.IaCStudio.Infrastructure.Cloud;
 using Fenrix.IaCStudio.Infrastructure.Connections;
 using Fenrix.IaCStudio.Infrastructure.Deployments;
@@ -226,6 +228,22 @@ public static class InfrastructureServiceCollectionExtensions
         // still routes mutating commands to their dedicated safe screens. See docs/05, docs/23, docs/31.
         services.AddScoped<ITerraformHelpService, TerraformHelpService>();
         services.AddSingleton<ITerminalService, ConPtyTerminalService>();
+
+        // Variables manager (Phase 12): parses variable declarations + tfvars into a typed editor and writes
+        // values back through the atomic-write + file-history path. See docs/33-variables.md.
+        services.AddScoped<IVariablesService, VariablesService>();
+
+        // Checks — static analysis & cost (Phase 13). Standalone, read-only screen (never folded into the
+        // verified plan/apply spine). The check runner captures tool output in memory (never logged); discovery
+        // resolves each binary (settings → PATH); the installer downloads official GitHub releases into the shared
+        // Tools dir and sets checks.<tool>.executable at Global scope; the static-analysis service runs TFLint +
+        // (Trivy | tfsec); the cost service drives Infracost with the API key held only in the secret store and
+        // injected as INFRACOST_API_KEY at run time. All scoped. No new DB migration. See docs/34-checks.md.
+        services.AddScoped<CheckProcessRunner>();
+        services.AddScoped<ICheckToolInstaller, CheckToolInstaller>();
+        services.AddScoped<ICheckToolDiscovery, CheckToolDiscovery>();
+        services.AddScoped<IStaticAnalysisService, StaticAnalysisService>();
+        services.AddScoped<ICostEstimationService, CostEstimationService>();
 
         // One-click Terraform install (Phase 12). Downloads the official HashiCorp build once into the shared
         // Tools dir and sets terraform.executable at Global scope so every project uses it. Uses the registered

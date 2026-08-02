@@ -1,0 +1,233 @@
+@page "/projects/{ProjectId:guid}/variables"
+@using Fenrix.IaCStudio.Application.Abstractions.Projects
+@using Fenrix.IaCStudio.Application.Abstractions.Terraform
+@using Fenrix.IaCStudio.Contracts.Terraform
+@using Fenrix.IaCStudio.Domain.Environments
+@using Fenrix.IaCStudio.Domain.Projects
+@inject IProjectService Projects
+@inject IVariablesService Variables
+
+@* Phase 12 · per-environment variables manager. Reads variable declarations + the environment's tfvars into a
+   typed editor (required flagged, sensitive masked) and writes values back to <slug>.tfvars. See docs/33-variables.md. *@
+
+@if (_project is null)
+{
+    <div class="fx-card" style="text-align:center;color:var(--fx-dim);">@(_loading ? "Loading…" : "Project not found.")</div>
+}
+else
+{
+    <ProjectHeader ProjectId="ProjectId" Name="@_project.Name" Active="ProjectHeader.ProjectPage.Variables" Trail="@_view?.TfvarsFileName">
+        <Actions>
+            @if (_view is not null && _view.MissingCount > 0)
+            {
+                <span class="fx-pill warn" title="Required variables with no value set">@_view.MissingCount required missing</span>
+            }
+            <button class="fx-btn accent" @onclick="SaveAsync" disabled="@(_saving || _view is null)">
+                <span class="fx-ico"><Icon Name="check" Size="13" /></span> @(_saving ? "Saving…" : "Save values")
+            </button>
+        </Actions>
+    </ProjectHeader>
+
+    <div class="fx-card" style="margin-bottom:16px;">
+        <div class="fx-field" style="margin-bottom:0;">
+            <label>Environment</label>
+            <select class="fx-select" value="@_envId" @onchange="OnEnvChanged" disabled="@_saving">
+                @foreach (var env in _environments)
+                {
+                    <option value="@env.Id">@env.Name@(env.IsProduction ? " (production)" : "")</option>
+                }
+            </select>
+            @if (_view is not null)
+            {
+                <div class="fx-hint" style="margin-top:6px;">Values save to <span class="fx-mono">@_view.TfvarsFileName</span> in this environment.</div>
+            }
+        </div>
+    </div>
+
+    @if (_view is null)
+    {
+        <div class="fx-card fx-hint">Loading variables…</div>
+    }
+    else if (_view.Variables.Count == 0)
+    {
+        <div class="fx-card">
+            <EmptyState IconName="hash" Title="No variables declared"
+                        Text="This environment's configuration declares no input variables. Add variable blocks in the Build screen or a .tf file." />
+        </div>
+    }
+    else
+    {
+        <div class="fx-card">
+            @if (_saved)
+            {
+                <div class="fx-hint" style="color:var(--fx-success);margin-bottom:10px;"><Icon Name="check" Size="12" /> Saved.</div>
+            }
+            @foreach (var v in _view.Variables)
+            {
+                <div class="fx-var-row @(v.IsMissing ? "missing" : "")">
+                    <div class="fx-var-head">
+                        <span class="fx-var-name fx-mono">@v.Name</span>
+                        <span class="fx-tag muted">@v.TypeExpression</span>
+                        @if (v.IsRequired)
+                        {
+                            <span class="fx-tag @(v.IsMissing ? "warn" : "")">required</span>
+                        }
+                        @if (v.Sensitive)
+                        {
+                            <span class="fx-tag warn"><Icon Name="eye" Size="10" /> sensitive</span>
+                        }
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(v.Description))
+                    {
+                        <div class="fx-var-desc">@v.Description</div>
+                    }
+                    <div class="fx-var-control">
+                        @switch (v.Kind)
+                        {
+                            case VariableKind.Bool:
+                                <select class="fx-select" @bind="_input[v.Name]" disabled="@_saving">
+                                    <option value="">@(v.HasDefault ? $"default ({v.DefaultRaw})" : "— unset —")</option>
+                                    <option value="true">true</option>
+                                    <option value="false">false</option>
+                                </select>
+                                break;
+
+                            case VariableKind.Complex:
+                                <textarea class="fx-textarea fx-mono" rows="3" @bind="_input[v.Name]" disabled="@_saving"
+                                          placeholder="@(v.HasDefault ? v.DefaultRaw : "HCL value, e.g. [\"a\", \"b\"] or { key = \"val\" }")"></textarea>
+                                break;
+
+                            case VariableKind.Number:
+                                <input class="fx-input fx-mono" type="number" step="any" @bind="_input[v.Name]" disabled="@_saving"
+                                       placeholder="@(v.HasDefault ? v.DefaultRaw : "number")" />
+                                break;
+
+                            default: // String
+                                <div style="display:flex;gap:6px;align-items:center;">
+                                    <input class="fx-input" type="@(v.Sensitive && !_reveal.Contains(v.Name) ? "password" : "text")"
+                                           @bind="_input[v.Name]" disabled="@_saving"
+                                           placeholder="@(v.HasDefault ? Unwrap(v.DefaultRaw) : "text")" />
+                                    @if (v.Sensitive)
+                                    {
+                                        <button class="fx-iconbtn" type="button" title="Show/hide" @onclick="() => ToggleReveal(v.Name)"><Icon Name="eye" Size="15" /></button>
+                                    }
+                                </div>
+                                break;
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private InfrastructureProject? _project;
+    private List<ProjectEnvironment> _environments = [];
+    private Guid _envId;
+    private EnvironmentVariables? _view;
+    private bool _loading = true;
+    private bool _saving;
+    private bool _saved;
+    private Guid _loadedId;
+
+    private readonly Dictionary<string, string> _input = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _reveal = new(StringComparer.Ordinal);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == ProjectId) return;
+        _loadedId = ProjectId;
+        await LoadProjectAsync();
+    }
+
+    private async Task LoadProjectAsync()
+    {
+        _loading = true;
+        _project = await Projects.GetAsync(ProjectId);
+        _loading = false;
+        if (_project is null) return;
+
+        _environments = _project.Environments.OrderBy(e => e.DisplayOrder).ThenBy(e => e.Name).ToList();
+        _envId = _environments.FirstOrDefault()?.Id ?? Guid.Empty;
+        await LoadVariablesAsync();
+    }
+
+    private async Task OnEnvChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out var id)) _envId = id;
+        await LoadVariablesAsync();
+    }
+
+    private async Task LoadVariablesAsync()
+    {
+        _saved = false;
+        _view = null;
+        _input.Clear();
+        _reveal.Clear();
+        StateHasChanged();
+
+        if (_envId == Guid.Empty) return;
+        _view = await Variables.LoadAsync(ProjectId, _envId);
+        foreach (var v in _view.Variables)
+            _input[v.Name] = InitialInput(v);
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_view is null) return;
+        _saving = true;
+        _saved = false;
+        StateHasChanged();
+        try
+        {
+            var edits = _view.Variables
+                .Select(v => new VariableValueEdit(v.Name, BuildRaw(v, _input.GetValueOrDefault(v.Name, ""))))
+                .ToList();
+            await Variables.SaveAsync(ProjectId, _envId, edits);
+            await LoadVariablesAsync();
+            _saved = true;
+        }
+        finally
+        {
+            _saving = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleReveal(string name)
+    {
+        if (!_reveal.Add(name)) _reveal.Remove(name);
+    }
+
+    // The stored raw HCL → a plain editable value for the field.
+    private static string InitialInput(ManagedVariable v)
+    {
+        if (v.ValueRaw is null) return "";
+        return v.Kind == VariableKind.String ? Unwrap(v.ValueRaw) : v.ValueRaw;
+    }
+
+    // The field value → raw HCL for tfvars (null ⇒ unset).
+    private static string? BuildRaw(ManagedVariable v, string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return null;
+        return v.Kind switch
+        {
+            VariableKind.String => "\"" + input.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"",
+            VariableKind.Number => input.Trim(),
+            VariableKind.Bool => input.Trim(),
+            _ => input // Complex: verbatim HCL
+        };
+    }
+
+    private static string Unwrap(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return "";
+        var t = raw.Trim();
+        if (t.Length >= 2 && t[0] == '"' && t[^1] == '"')
+            return t[1..^1].Replace("\\\"", "\"").Replace("\\\\", "\\");
+        return t;
+    }
+}

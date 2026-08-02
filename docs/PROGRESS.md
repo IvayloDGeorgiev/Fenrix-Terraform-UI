@@ -25,6 +25,7 @@ _Last updated: 2026-07-24 — status: **Phase 4 core complete** (saved plan `-ou
 | 10 | Visual resource builder | Not started |
 | 11 | Enterprise capability | Not started |
 | 12 | Release preparation | Not started |
+| 13 | Checks (static analysis + cost) · Variables verify | **Core complete** |
 
 ## Phase 0 — Design & documentation ✅
 
@@ -389,6 +390,39 @@ See [31-release-prep.md](31-release-prep.md) for the master checklist. Status (2
       37/37). Checklist in [31 §0](31-release-prep.md).
 - [ ] **Signed MSIX + stable channel (VS)** — the remaining gate for AC 1; cut `v1.0.0` after.
 
+## Phase 13 — Checks (static analysis + cost) · Variables verify
+
+Better Terraform management: run best-of-breed external tools over an environment and surface the results in one
+place, with the same safety posture as the rest of the app. Built standalone (not folded into plan/apply). See
+[34-checks.md](34-checks.md).
+
+- [x] **Static analysis** — TFLint (lint/deprecations) + Trivy (`trivy config`, preferred) or tfsec (fallback)
+      over the env working dir via the shared `ArgumentList` runner; JSON parsed in memory (never logged) into
+      normalised findings (severity/rule/message/file:line/resource/link), filterable by severity on a new
+      **Checks** screen/ribbon tab. Pure parsers `TfLintJsonParser`/`TfsecJsonParser`/`TrivyJsonParser` +
+      `CheckSeverityMap`.
+- [x] **Cost estimation** — Infracost `breakdown` (projected monthly + per-resource) and `diff` (delta vs a saved
+      baseline), JSON parsed by `InfracostJsonParser`, on the same Checks screen. Free API key stored in the
+      secret store (`Fenrix:checks:infracost`), injected as `INFRACOST_API_KEY` at run time only, prompted for
+      clearly — never plaintext on disk, never in args/history/logs.
+- [x] **Tool discovery + one-click install** — `ICheckToolDiscovery` (setting → PATH, `--version` probe) +
+      `ICheckToolInstaller` (official GitHub `releases/latest` → windows+arch asset → checksum → shared `Tools/`
+      dir → Global `checks.<tool>.executable`), mirroring the Phase 12 Terraform installer. Handles
+      `.zip`/`.exe`/`.tar.gz` assets.
+- [x] **Variables manager (verify)** — confirmed by inspection: `IVariablesService`/`VariablesService`,
+      `VariableParser` (over the Phase 10 `HclReader`), `VariablesEditor.razor`, the **Variables** ribbon tab, and
+      the scoped DI registration are well-formed; per-env typed tfvars editor (required flagged, sensitive masked,
+      saves to `<slug>.tfvars` via the atomic-write + file-history path). Not rebuilt.
+- [x] **Clean Architecture + no schema churn** — interfaces in Application, impls in Infrastructure, contracts in
+      Contracts; reuses the process-runner / discovery / secret-store spine; `ArgumentList` only. **No new NuGet,
+      no new DB migration.**
+- [ ] _Not folded into apply preflight (by design)._ A policy-gated fold (warn/block on Critical-High findings or
+      a cost ceiling) is **proposed in [34-checks.md](34-checks.md)** to agree before building — it would touch the
+      verified `TerraformApplyService.PreflightAsync` / `DeploymentGateEvaluator`.
+- [ ] **Not compiled here (sandbox VM was down):** build on `develop` + smoke-test the Checks screen and the
+      installers; validate the four JSON parsers against real `tflint`/`trivy`/`tfsec`/`infracost` output; confirm
+      the installer's resolved asset names on a real run.
+
 ## Acceptance criteria (see [ROADMAP.md](ROADMAP.md#acceptance-criteria))
 
 - **19 of 20 met** (criteria 2–20). **AC 17** now closed by the Phase 12 Commands builder + embedded Terminal.
@@ -418,4 +452,5 @@ See [31-release-prep.md](31-release-prep.md) for the master checklist. Status (2
 | 2026-07-31 | Phase 12 **packaging** is additive: `Package.appxmanifest` gains file associations + `fenrix-iac://` (MSIX-only, dev loop untouched) and a `win-msix.pubxml` profile; real Identity/Publisher + signing + the MSIX build are done in VS. | [18](18-packaging-deployment.md), [31](31-release-prep.md) |
 | 2026-07-31 | Phase 12 **project templates** — pick a complete, cost-aware starter when creating a project; it prefills every environment's working dir (networking + security + compute/storage). `IProjectTemplateService`/`ProjectTemplateService`: built-in catalog in code (`BuiltInTemplates`), user templates as JSON under `<dataRoot>\Templates` (no DB). New Project "Start from" Blank/Template picker + a `/templates` management page (browse, view files, create-from-project, delete). Cost philosophy: no NAT gateway where avoidable, Graviton/ARM, scale-to-zero/free-tier for demos, cheapest managed options (db.t4g.micro over Aurora, S3+CloudFront+OAC, single VM+Docker over managed k8s). **20 built-ins** — AWS ×8, Azure ×6, GCP ×4, Kubernetes + Local Docker — spanning static sites, serverless (free-tier), containers (scale-to-zero), VMs, networking, managed Postgres, and a remote-state backend. Grounded in current best-practice web research, not vendor defaults. | [32](32-project-templates.md) |
 | 2026-07-31 | Phase 12 **one-click Terraform install** — when no binary is found, an **Install Terraform** button downloads the official HashiCorp Windows build (checkpoint API → releases.hashicorp.com), verifies the published SHA-256, unzips `terraform.exe` into the **shared** `<dataRoot>\Tools\terraform\` (app-level, not per-project), and sets `terraform.executable` at **Global** scope so every project resolves it. `ITerraformInstaller`/`TerraformInstaller` via the registered `IHttpClientFactory`; no admin/PATH changes. | [05](05-terraform-engine.md), [14](14-settings.md) |
+| 2026-08-02 | Phase 13 **Checks** — a standalone, read-only screen running TFLint + a security scanner (**Trivy preferred, tfsec fallback** — run one to avoid duplicate findings) + **Infracost** over an environment's working dir through the shared `ArgumentList` runner; tool output is **captured in memory and never logged** (it can echo config values). Terraform-installer-style **discovery (setting→PATH) + one-click install** per tool (official GitHub `releases/latest`, checksum-verified, into the shared `Tools/` dir + a Global `checks.<tool>.executable` setting). The **Infracost API key is a secret** (Credential Manager via `ISecretStore`) injected as `INFRACOST_API_KEY` at run time only, prompted for clearly — never a setting/plaintext/history. Built **standalone; not folded into the apply/deploy gates** — a policy-gated fold is proposed (docs/34) to agree first. **No new NuGet, no new DB migration.** Variables manager verified by inspection (not rebuilt). — Ivo's calls (implement #1 static analysis then #2 cost; verify #3; keep Checks standalone; propose before folding into preflight). | [34](34-checks.md) |
 | 2026-07-31 | Phase 12 **full Terraform coverage (closes AC 17)** — Ivo's call to build both: a **Commands builder** (`terraform -help`-driven; new `TerraformCommandKind.Custom` carries an arg list through the one catalog→runner spine, preview == execution, redacted history; `TerraformCommandClassifier` redirects mutating commands — apply/destroy/import/state mv|rm|push/force-unlock/workspace new|delete|select/taint/untaint/login/logout — to their dedicated safe screens so ADR-0003 + locking hold) and an **embedded ConPTY Terminal** (`ITerminalService`/`ConPtyTerminalService` Win32 pseudo-console + hand-rolled dependency-free VT renderer `fenrix-terminal.js`; Windows-only; needs a VS build to validate the native plumbing). Pure `TerraformHelpParser`. Help page rewritten into a documentation hub with Terraform + Git cheatsheets. **No new migration.** | [05](05-terraform-engine.md), [23](23-command-transparency.md), [31](31-release-prep.md) |
