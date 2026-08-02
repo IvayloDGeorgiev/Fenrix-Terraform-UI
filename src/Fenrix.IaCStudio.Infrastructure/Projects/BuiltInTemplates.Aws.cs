@@ -1412,5 +1412,317 @@ internal static partial class BuiltInTemplates
                 An arm64 Lambda run on a schedule. Edit `src/handler.py` and re-apply to change the job; edit
                 `schedule` to change the cadence. Free tier covers light schedules.
                 """)));
+
+        // ── AWS · Web app + database on one free-tier VM (.NET/Blazor-friendly) ──────────────────────────
+        list.Add(T(
+            Info("aws-webapp-db-vm", "AWS · Web app + database (free-tier VM)",
+                "The cheap AWS analog of Azure App Service + Azure SQL: one free-tier-eligible EC2 instance running your web app, a PostgreSQL container, and Caddy (automatic HTTPS) via docker-compose. Everything a web-app-with-a-database needs on a single box — perfect for demos and personal projects. Defaults to the .NET ASP.NET sample image.",
+                TemplateProvider.Aws, TemplateCategory.WebApp, TemplateCostTier.Free,
+                "Free-tier eligible on a new/legacy account (t3.micro 750h + 30GB EBS); ~$7–8/mo afterwards. No RDS/App Runner cost — the DB runs on the same VM.",
+                ["dotnet", "blazor", "web", "postgres", "docker-compose", "https", "free-tier", "demo"],
+                teardownHint: "One instance = one line of billing; terraform destroy removes everything."),
+            F("providers.tf", """
+                terraform {
+                  required_version = ">= 1.5.0"
+                  required_providers {
+                    aws = {
+                      source  = "hashicorp/aws"
+                      version = "~> 5.0"
+                    }
+                    random = {
+                      source  = "hashicorp/random"
+                      version = "~> 3.6"
+                    }
+                  }
+                }
+
+                provider "aws" {
+                  region = var.region
+                }
+                """),
+            F("main.tf", """
+                locals {
+                  tags = merge(var.tags, { Project = var.project_name, ManagedBy = "terraform" })
+
+                  compose = templatefile("${path.module}/compose.yml.tftpl", {
+                    app_image = var.app_image
+                    app_port  = var.app_port
+                    db_name   = var.db_name
+                    db_user   = var.db_user
+                    db_pass   = random_password.db.result
+                  })
+
+                  caddyfile = templatefile("${path.module}/Caddyfile.tftpl", {
+                    domain   = var.domain
+                    app_port = var.app_port
+                  })
+                }
+
+                data "aws_vpc" "default" {
+                  default = true
+                }
+
+                data "aws_subnets" "default" {
+                  filter {
+                    name   = "vpc-id"
+                    values = [data.aws_vpc.default.id]
+                  }
+                }
+
+                # Latest Amazon Linux 2023 (x86_64 — matches the free-tier t3.micro).
+                data "aws_ami" "al2023" {
+                  most_recent = true
+                  owners      = ["amazon"]
+                  filter {
+                    name   = "name"
+                    values = ["al2023-ami-*-x86_64"]
+                  }
+                  filter {
+                    name   = "architecture"
+                    values = ["x86_64"]
+                  }
+                }
+
+                resource "random_password" "db" {
+                  length  = 24
+                  special = false
+                }
+
+                resource "aws_security_group" "web" {
+                  name        = "${var.project_name}-web"
+                  description = "HTTP/HTTPS + SSH"
+                  vpc_id      = data.aws_vpc.default.id
+
+                  ingress {
+                    description = "HTTP"
+                    from_port   = 80
+                    to_port     = 80
+                    protocol    = "tcp"
+                    cidr_blocks = ["0.0.0.0/0"]
+                  }
+                  ingress {
+                    description = "HTTPS"
+                    from_port   = 443
+                    to_port     = 443
+                    protocol    = "tcp"
+                    cidr_blocks = ["0.0.0.0/0"]
+                  }
+                  ingress {
+                    description = "SSH (lock to your IP in production)"
+                    from_port   = 22
+                    to_port     = 22
+                    protocol    = "tcp"
+                    cidr_blocks = [var.ssh_cidr]
+                  }
+                  egress {
+                    from_port   = 0
+                    to_port     = 0
+                    protocol    = "-1"
+                    cidr_blocks = ["0.0.0.0/0"]
+                  }
+                  tags = local.tags
+                }
+
+                resource "aws_instance" "app" {
+                  ami                         = data.aws_ami.al2023.id
+                  instance_type               = var.instance_type
+                  subnet_id                   = data.aws_subnets.default.ids[0]
+                  vpc_security_group_ids      = [aws_security_group.web.id]
+                  associate_public_ip_address = true
+
+                  # Install Docker + the compose plugin, drop the rendered files, and start the stack.
+                  # The compose/Caddy files are base64-encoded so no shell escaping is needed.
+                  user_data = <<-EOT
+                    #!/bin/bash
+                    set -e
+                    dnf update -y
+                    dnf install -y docker
+                    systemctl enable --now docker
+                    mkdir -p /usr/local/lib/docker/cli-plugins
+                    curl -sL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+                      -o /usr/local/lib/docker/cli-plugins/docker-compose
+                    chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+                    mkdir -p /opt/app
+                    echo '${base64encode(local.compose)}' | base64 -d > /opt/app/docker-compose.yml
+                    echo '${base64encode(local.caddyfile)}' | base64 -d > /opt/app/Caddyfile
+                    cd /opt/app
+                    docker compose up -d
+                  EOT
+
+                  root_block_device {
+                    volume_size = 30 # within the free-tier EBS allowance
+                    volume_type = "gp3"
+                  }
+
+                  tags = merge(local.tags, { Name = var.project_name })
+                }
+
+                # A stable public IP (free while attached to a running instance) — point your domain here.
+                resource "aws_eip" "app" {
+                  instance = aws_instance.app.id
+                  tags     = local.tags
+                }
+                """),
+            F("compose.yml.tftpl", """
+                services:
+                  app:
+                    image: ${app_image}
+                    restart: unless-stopped
+                    environment:
+                      ASPNETCORE_URLS: "http://+:${app_port}"
+                      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=${db_name};Username=${db_user};Password=${db_pass}"
+                    depends_on:
+                      - db
+                    networks: [web]
+
+                  db:
+                    image: postgres:16-alpine
+                    restart: unless-stopped
+                    environment:
+                      POSTGRES_DB: ${db_name}
+                      POSTGRES_USER: ${db_user}
+                      POSTGRES_PASSWORD: ${db_pass}
+                    volumes:
+                      - dbdata:/var/lib/postgresql/data
+                    networks: [web]
+
+                  caddy:
+                    image: caddy:2-alpine
+                    restart: unless-stopped
+                    ports:
+                      - "80:80"
+                      - "443:443"
+                    volumes:
+                      - ./Caddyfile:/etc/caddy/Caddyfile
+                      - caddydata:/data
+                    depends_on:
+                      - app
+                    networks: [web]
+
+                volumes:
+                  dbdata:
+                  caddydata:
+
+                networks:
+                  web:
+                """),
+            F("Caddyfile.tftpl", """
+                # With a domain set, Caddy fetches a free Let's Encrypt certificate automatically.
+                # With no domain, it just serves HTTP on port 80.
+                ${domain != "" ? domain : ":80"} {
+                  reverse_proxy app:${app_port}
+                }
+                """),
+            F("variables.tf", """
+                variable "project_name" {
+                  description = "Short name used to prefix resources."
+                  type        = string
+                }
+
+                variable "region" {
+                  description = "AWS region."
+                  type        = string
+                  default     = "us-east-1"
+                }
+
+                variable "instance_type" {
+                  description = "t3.micro is free-tier eligible (750h/mo). t3.small if you need more headroom."
+                  type        = string
+                  default     = "t3.micro"
+                }
+
+                variable "app_image" {
+                  description = "Your web app's container image. Defaults to the ASP.NET sample (listens on 8080). Push your own to ECR and set it here."
+                  type        = string
+                  default     = "mcr.microsoft.com/dotnet/samples:aspnetapp"
+                }
+
+                variable "app_port" {
+                  description = "Port your app listens on inside the container (.NET 8+ defaults to 8080)."
+                  type        = number
+                  default     = 8080
+                }
+
+                variable "domain" {
+                  description = "Custom domain pointed at this instance's IP. Leave empty for HTTP-only on the public IP."
+                  type        = string
+                  default     = ""
+                }
+
+                variable "db_name" {
+                  description = "PostgreSQL database name."
+                  type        = string
+                  default     = "app"
+                }
+
+                variable "db_user" {
+                  description = "PostgreSQL user."
+                  type        = string
+                  default     = "app"
+                }
+
+                variable "ssh_cidr" {
+                  description = "CIDR allowed to SSH. Lock to your IP/32 in production."
+                  type        = string
+                  default     = "0.0.0.0/0"
+                }
+
+                variable "tags" {
+                  description = "Extra tags applied to every resource."
+                  type        = map(string)
+                  default     = {}
+                }
+                """),
+            F("outputs.tf", """
+                output "public_ip" {
+                  description = "Point your domain's A record here."
+                  value       = aws_eip.app.public_ip
+                }
+
+                output "url" {
+                  description = "Open your app here."
+                  value       = var.domain != "" ? "https://${var.domain}" : "http://${aws_eip.app.public_ip}"
+                }
+
+                output "db_password" {
+                  description = "Generated PostgreSQL password (also injected into the app's connection string)."
+                  value       = random_password.db.result
+                  sensitive   = true
+                }
+                """),
+            F("terraform.tfvars", """
+                project_name  = "my-webapp"
+                region        = "us-east-1"
+                instance_type = "t3.micro"
+                # app_image   = "<account>.dkr.ecr.us-east-1.amazonaws.com/my-app:latest"
+                # domain      = "app.example.com"   # point its A record at the public_ip, then HTTPS is automatic
+                # ssh_cidr    = "203.0.113.10/32"
+                """),
+            F("README.md", """
+                # AWS web app + database (free-tier VM)
+
+                The cheap AWS equivalent of **Azure App Service + Azure SQL + Key Vault**, for demos and personal
+                projects. One free-tier EC2 instance runs, via docker-compose:
+
+                - **your web app** (defaults to the .NET ASP.NET sample; swap `app_image` for your own ECR image),
+                - **PostgreSQL** (a container with a persistent volume — no RDS bill),
+                - **Caddy** as a reverse proxy that fetches a free HTTPS certificate automatically when you set a `domain`.
+
+                The database password is generated and injected into the app's `ConnectionStrings__DefaultConnection`
+                (Npgsql format). Read it with `terraform output -raw db_password`.
+
+                ## Use
+                1. (Optional) push your app image to ECR and set `app_image`.
+                2. Plan & apply. Open the `url` output.
+                3. For HTTPS: set `domain`, point its A record at the `public_ip`, re-apply — Caddy handles the cert.
+
+                ## Cost vs Azure
+                On Azure this shape can run near-$0 on the free App Service + free Azure SQL offer. AWS has no
+                always-free managed SQL, so this runs the DB on the same free-tier VM: **free-tier eligible, then
+                ~$7–8/mo**. To harden for production later, move the DB to **RDS** and secrets to **SSM Parameter
+                Store** (free standard tier) or **Secrets Manager**.
+
+                `terraform destroy` removes everything.
+                """)));
     }
 }

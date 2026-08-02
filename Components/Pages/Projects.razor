@@ -10,6 +10,10 @@
         <h1 class="fx-page-title">Projects</h1>
         <p class="fx-page-sub" style="margin:0;">Your registered Terraform projects. Files on disk stay the source of truth.</p>
     </div>
+    <button class="fx-btn" @onclick="RescanAsync" disabled="@_rescanning"
+            title="Re-scan the projects folder for projects added or removed on disk">
+        <span class="fx-ico"><Icon Name="refresh" Size="14" /></span> @(_rescanning ? "Rescanning…" : "Rescan")
+    </button>
     <button class="fx-btn" @onclick="() => _showImport = true">
         <span class="fx-ico"><Icon Name="upload" Size="14" /></span> Add existing
     </button>
@@ -17,6 +21,11 @@
         <span class="fx-ico"><Icon Name="folder-plus" Size="14" /></span> New project
     </button>
 </div>
+
+@if (_rescanStatus is not null)
+{
+    <div class="fx-hint" style="margin:-8px 0 14px;color:var(--fx-accent-text);">@_rescanStatus</div>
+}
 
 @if (_loading)
 {
@@ -116,6 +125,8 @@ else
     private bool _loading = true;
     private bool _showNew;
     private bool _showImport;
+    private bool _rescanning;
+    private string? _rescanStatus;
 
     private string _query = "";
     private Location _location = Location.All;
@@ -175,4 +186,29 @@ else
     }
 
     private void Open(Guid projectId) => Nav.NavigateTo($"/projects/{projectId}");
+
+    // Re-scan the projects folder so manually added/removed projects show up without a restart.
+    private async Task RescanAsync()
+    {
+        _rescanning = true;
+        _rescanStatus = null;
+        StateHasChanged();
+        try
+        {
+            var r = await ProjectSvc.RescanAsync();
+            await LoadAsync();
+            _rescanStatus = r.Added == 0 && r.Removed == 0
+                ? "Rescan complete — no changes found."
+                : $"Rescan complete — added {r.Added}, removed {r.Removed}.";
+        }
+        catch (Exception ex)
+        {
+            _rescanStatus = $"Rescan failed: {ex.Message}";
+        }
+        finally
+        {
+            _rescanning = false;
+            StateHasChanged();
+        }
+    }
 }

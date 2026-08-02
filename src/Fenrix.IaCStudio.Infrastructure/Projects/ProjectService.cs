@@ -25,6 +25,7 @@ public sealed class ProjectService(
     IFileHistoryStore history,
     IGitRepositoryInitializer gitInitializer,
     IProjectTemplateService templates,
+    IProjectImportScanner importScanner,
     IWorkspacePaths paths,
     ILogger<ProjectService> logger) : IProjectService
 {
@@ -34,6 +35,7 @@ public sealed class ProjectService(
     private readonly IFileHistoryStore _history = history;
     private readonly IGitRepositoryInitializer _gitInitializer = gitInitializer;
     private readonly IProjectTemplateService _templates = templates;
+    private readonly IProjectImportScanner _importScanner = importScanner;
     private readonly IWorkspacePaths _paths = paths;
     private readonly ILogger<ProjectService> _logger = logger;
 
@@ -105,6 +107,85 @@ public sealed class ProjectService(
 
         _logger.LogInformation("Created project {Name} ({Id}) at {Root}", project.Name, project.Id, projectRoot);
         return project;
+    }
+
+    public async Task<ProjectRescanResult> RescanAsync(CancellationToken ct = default)
+    {
+        var projectsDir = _paths.ProjectsDirectory;
+        var registered = await _db.Projects.ToListAsync(ct);
+        var registeredPaths = new HashSet<string>(
+            registered.Select(p => NormalizePath(p.RootPath)), StringComparer.OrdinalIgnoreCase);
+
+        var added = 0;
+        var scanned = 0;
+
+        // 1) Register project folders added on disk outside Fenrix.
+        if (Directory.Exists(projectsDir))
+        {
+            foreach (var dir in Directory.EnumerateDirectories(projectsDir))
+            {
+                ct.ThrowIfCancellationRequested();
+                scanned++;
+                if (registeredPaths.Contains(NormalizePath(dir))) continue;
+                if (!LooksLikeProject(dir)) continue;
+
+                try
+                {
+                    var scan = await _importScanner.ScanAsync(dir, ct);
+                    await ImportAsync(scan, ct);
+                    added++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Rescan: could not import candidate project at {Dir}", dir);
+                }
+            }
+        }
+
+        // 2) Unregister workspace projects whose folder was deleted. Leave linked projects alone — they may
+        //    live on removable/network storage that is only temporarily unavailable.
+        var missing = registered
+            .Where(p => !p.IsLinked && !Directory.Exists(p.RootPath))
+            .Select(p => p.Id)
+            .ToList();
+
+        var removed = 0;
+        foreach (var id in missing)
+        {
+            try
+            {
+                await RemoveAsync(id, ct);
+                removed++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Rescan: could not unregister missing project {Id}", id);
+            }
+        }
+
+        _logger.LogInformation("Rescan complete: +{Added} / -{Removed} (scanned {Scanned}).", added, removed, scanned);
+        return new ProjectRescanResult(added, removed, scanned);
+    }
+
+    private static string NormalizePath(string path)
+    {
+        try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
+        catch { return path; }
+    }
+
+    /// <summary>A folder counts as a project if it has a Fenrix manifest or any Terraform file.</summary>
+    private static bool LooksLikeProject(string dir)
+    {
+        if (File.Exists(Path.Combine(dir, ".fenrix", "project-manifest.json")))
+            return true;
+        try
+        {
+            return Directory.EnumerateFiles(dir, "*.tf", SearchOption.AllDirectories).Any();
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public async Task<InfrastructureProject> ImportAsync(ImportScanResult scan, CancellationToken ct = default)

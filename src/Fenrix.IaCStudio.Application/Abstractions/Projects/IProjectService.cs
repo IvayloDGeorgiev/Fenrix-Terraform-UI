@@ -18,6 +18,13 @@ public interface IProjectService
     /// <summary>All registered projects (optionally including archived), newest activity first.</summary>
     Task<IReadOnlyList<ProjectSummary>> ListAsync(bool includeArchived = false, CancellationToken ct = default);
 
+    /// <summary>
+    /// Re-scans the Fenrix projects directory so manual changes on disk are reflected: registers project folders
+    /// that were added outside Fenrix, and unregisters workspace projects whose folder was deleted. Linked
+    /// projects (outside the workspace) are left alone. Never modifies files. See docs/03-domain-model.md.
+    /// </summary>
+    Task<ProjectRescanResult> RescanAsync(CancellationToken ct = default);
+
     /// <summary>The most recently opened projects, most recent first.</summary>
     Task<IReadOnlyList<ProjectSummary>> GetRecentAsync(int take = 8, CancellationToken ct = default);
 
