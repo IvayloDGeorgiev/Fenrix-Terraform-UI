@@ -32,6 +32,12 @@ bracket matching, an outline, snippets, and schema-aware reference helpers (`var
 `terraform validate` diagnostics inline. Changes you make in Windows Explorer or another editor are detected and
 reconciled automatically, and every save is versioned so you can recover an earlier copy.
 
+Prefer a form over hand-editing tfvars? The **Variables** screen reads every `variable` declaration in the
+environment and gives you a typed control per variable (text, number, true/false, or raw HCL for lists/maps).
+Required variables are flagged, missing ones are highlighted, and sensitive values are masked. Saving writes the
+environment's `<environment>.tfvars` file through the same versioned, atomic path — each environment keeps its
+own values.
+
 ## 3 · Run Terraform
 
 From a project, use the **Terraform** screen for `init`, `format`, `validate`, and `version`, each as a typed
@@ -49,7 +55,28 @@ The **Plan & apply** screen is where changes reach real infrastructure, and it i
 3. Production environments require a typed confirmation. Destroy and drift (refresh-only) have their own guarded
    flows. One state-changing operation runs per environment at a time (an on-disk lock).
 
-## 5 · Cloud connections
+## 5 · Check quality, security & cost
+
+The **Checks** screen runs best-of-breed open-source tools over an environment and shows the results in one
+place. It's read-only — it never changes infrastructure. If a tool isn't installed, click **Install** on its card
+(Fenrix downloads the official release, verifies its checksum, and configures it for every project).
+
+- **TFLint** — a *linter*. Catches deprecated syntax, invalid values (e.g. a bad instance type), unused
+  declarations, and provider best practices. Run it on every project; it complements `terraform validate`.
+- **Trivy** (`trivy config`) — the recommended *security* scan. Flags misconfigurations before they're created:
+  public buckets, unencrypted disks, open security groups, missing logging or TLS, over-broad IAM.
+- **tfsec** — Trivy's predecessor (same rules, now legacy). Only for teams already using it; Fenrix runs it as a
+  fallback when Trivy isn't installed, and prefers Trivy when both are present.
+- **Infracost** — a *cost* estimator. Shows the projected monthly bill and the delta a change would introduce.
+  Needs a free API key (get one at infracost.io); Fenrix stores it in the Windows Credential Manager, never in
+  plaintext, and passes it to Infracost only as a run-time environment variable.
+
+On the **Static analysis** tab, click **Run analysis** to see every finding with its severity, rule, file and
+line; filter with the severity chips (Critical → Info) to focus on what matters. On the **Cost** tab, **Estimate
+cost** shows the monthly breakdown, and **Save baseline** + **Diff** show what a pending change will cost. Checks
+is advisory today — it doesn't block Plan & apply.
+
+## 6 · Cloud connections
 
 Create a connection once in **Connections** (Azure, AWS, or Google), then **bind it to an environment**. Fenrix
 composes the credentials at run time and leans on the native tool stores (az cache, AWS profiles/SSO, gcloud
@@ -57,7 +84,7 @@ ADC); the only secret it ever holds is an Azure service-principal secret, kept i
 resolved just-in-time. Each environment can point at a different cloud account. A state-changing run is blocked
 until the environment is bound, so you never apply to the wrong account.
 
-## 6 · Source control
+## 7 · Source control
 
 The **Source control** screen gives you staging, commit (with amend/sign-off), fetch/pull/push, branches,
 history, a read-only diff viewer, stashes, merges with conflict resolution, tags, worktrees, and more —
@@ -66,7 +93,7 @@ existing Git Credential Manager credentials. If a repository host is connected (
 Bitbucket**), the Provider panel adds repository browsing, pull/merge requests, pipeline status, and branch
 policies.
 
-## 7 · Keys, inspection, and deployments
+## 8 · Keys, inspection, and deployments
 
 - **Keys** manages per-project SSH/EC2 key pairs. Import an existing key or generate one; private keys are
   encrypted at rest with DPAPI, outside your project and never in Git. Export is off by default and audited.
@@ -74,14 +101,14 @@ policies.
 - **Pipelines** shows a deployment board and a version × environment matrix, with governed one-click deploy
   (plan → gates → apply the exact saved plan), promote/rollback, and fan-out.
 
-## 8 · Enterprise mode (optional)
+## 9 · Enterprise mode (optional)
 
 Fenrix is single-user by default. Dropping an `enterprise.json` into the data root turns on governance: shared
 metadata (SQLite or SQL Server), role-based access, a central audit trail, shared policy and templates, and
 role-gated approvals. Nothing changes for a single user who never enables it — and when enabled, governance only
 ever adds gates, never removes them. See [29-enterprise.md](29-enterprise.md).
 
-## 9 · Backup & recovery
+## 10 · Backup & recovery
 
 Fenrix snapshots its metadata database on every launch (kept under `Backups/`), including just before it applies
 any database migration on an upgrade — so a bad upgrade is recoverable. If the app is closed unexpectedly, the

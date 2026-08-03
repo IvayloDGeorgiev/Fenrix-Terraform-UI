@@ -55,6 +55,15 @@
                 <p><strong>Beautify</strong> runs <span class="fx-mono">terraform fmt</span> over the current buffer through stdin (nothing is written until you save). <strong>Validate</strong> surfaces <span class="fx-mono">terraform validate</span> diagnostics inline as gutter markers and squiggles. Saves go through an atomic-write + file-history path, with an unsaved-changes guard.</p>
                 break;
 
+            case "variables":
+                <h2 class="fx-help-h">Variables — per-environment values</h2>
+                <p>The <strong>Variables</strong> screen is a typed editor for your Terraform input variables, so you set values in a form instead of hand-editing tfvars text. Fenrix reads every <span class="fx-mono">variable "…" {}</span> declaration in the environment's configuration and merges it with the current values from that environment's tfvars file.</p>
+                <h3 class="fx-help-sub">What you get</h3>
+                <p>A control matched to each variable's type — a text box for <span class="fx-mono">string</span>, a number field for <span class="fx-mono">number</span>, a true/false picker for <span class="fx-mono">bool</span>, and a raw-HCL box for lists, maps and objects. <strong>Required</strong> variables (those with no default) are flagged, and any that are <strong>missing</strong> a value are highlighted so you catch them before a plan prompts or fails. <strong>Sensitive</strong> values are masked behind a reveal toggle.</p>
+                <h3 class="fx-help-sub">Where it saves</h3>
+                <p>Saving writes back to the environment's <span class="fx-mono">&lt;environment&gt;.tfvars</span> file — the same file Terraform loads via <span class="fx-mono">-var-file</span> — through the atomic-write + file-history path, so every save is versioned and recoverable. Unset values are simply omitted from the file. Each environment has its own values, so Dev and Live never share secrets or settings.</p>
+                break;
+
             case "terraform":
                 <h2 class="fx-help-h">Terraform screen (typed commands)</h2>
                 <p>The <strong>Terraform</strong> screen exposes the everyday commands as typed forms: <span class="fx-mono">init</span>, <span class="fx-mono">fmt</span>, <span class="fx-mono">validate</span>, and <span class="fx-mono">version</span>. Pick options with checkboxes; the <strong>command preview</strong> shows the exact invocation (sensitive values redacted) before you run it, and output streams live.</p>
@@ -86,6 +95,55 @@
                     <li><strong>Production</strong> environments require a typed confirmation. <strong>Destroy</strong> and <strong>drift</strong> (refresh-only) have their own guarded flows.</li>
                 </ol>
                 <p>One state-changing operation runs per environment at a time, enforced by an on-disk lock. A deployment is recorded automatically after every successful apply, so the Pipelines board is always accurate.</p>
+                break;
+
+            case "checks":
+                <h2 class="fx-help-h">Checks — static analysis &amp; cost</h2>
+                <p>The <strong>Checks</strong> screen runs best-of-breed open-source tools over an environment's working directory and shows the results in one place. It is <strong>read-only</strong> — it inspects your configuration and never changes infrastructure or state. There are two tabs: <strong>Static analysis</strong> (quality + security) and <strong>Cost</strong>.</p>
+                <p>Fenrix doesn't bundle these tools; it drives the real ones. If a tool isn't installed, its card in the <strong>Analysis tools</strong> ribbon shows an <strong>Install</strong> button — one click downloads the official release, verifies its checksum, and configures it for every project (no admin rights, no PATH changes). You can also point Fenrix at an existing install in Settings.</p>
+
+                <h3 class="fx-help-sub">What each tool is — and when to use it</h3>
+                <div class="fx-help-tablewrap">
+                    <table class="fx-table">
+                        <thead><tr><th>Tool</th><th>What it is</th><th>What it catches</th><th>When to use it</th></tr></thead>
+                        <tbody>
+                            <tr>
+                                <td style="white-space:nowrap;color:var(--fx-accent-text);font-weight:600;">TFLint</td>
+                                <td>A Terraform <strong>linter</strong> — code-quality checks that go beyond the compiler.</td>
+                                <td>Deprecated syntax, invalid values (e.g. a non-existent instance type), unused declarations, missing versions, and provider-specific best practices and naming rules.</td>
+                                <td>On <strong>every</strong> project, as a first-pass quality gate. It complements <span class="fx-mono">terraform validate</span> (which only checks internal consistency) by catching mistakes that are valid HCL but wrong.</td>
+                            </tr>
+                            <tr>
+                                <td style="white-space:nowrap;color:var(--fx-accent-text);font-weight:600;">Trivy</td>
+                                <td>Aqua Security's all-in-one scanner; <span class="fx-mono">trivy config</span> does <strong>security misconfiguration</strong> scanning of IaC.</td>
+                                <td>Insecure infrastructure <em>before</em> it's created: public storage buckets, unencrypted disks/databases, wide-open security groups, missing logging or TLS, over-broad IAM.</td>
+                                <td>As your <strong>security scan</strong>. This is the recommended one going forward — if both Trivy and tfsec are installed, Fenrix runs Trivy and skips tfsec to avoid duplicate findings.</td>
+                            </tr>
+                            <tr>
+                                <td style="white-space:nowrap;color:var(--fx-accent-text);font-weight:600;">tfsec</td>
+                                <td>The <strong>predecessor</strong> to Trivy's config scanning — same team, same rule set, Terraform-focused.</td>
+                                <td>The same class of security misconfigurations as Trivy.</td>
+                                <td>Only if you already standardise on tfsec. It's effectively <strong>legacy</strong> (folded into Trivy upstream); new setups should prefer Trivy. Fenrix uses it as a fallback when Trivy isn't installed.</td>
+                            </tr>
+                            <tr>
+                                <td style="white-space:nowrap;color:var(--fx-accent-text);font-weight:600;">Infracost</td>
+                                <td>A <strong>cost estimator</strong> (not a security tool) — powers the Cost tab.</td>
+                                <td>The estimated monthly cloud bill from public pricing, per resource, and the cost delta a change would introduce.</td>
+                                <td>Before applying, to catch surprise bills and review the cost of a change. Needs a free API key (below).</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="fx-hint">In short: run <strong>TFLint + Trivy</strong> together on every environment (quality + security), and <strong>Infracost</strong> when you want to see the price tag. tfsec is only there for teams already using it.</p>
+
+                <h3 class="fx-help-sub">Reading the results</h3>
+                <p>Click <strong>Run analysis</strong> and Fenrix runs whichever tools are installed, then lists every finding with its severity, rule id, message, file and line, and a link to the rule's documentation. Findings are normalised onto one scale — <span class="fx-mono">Critical &gt; High &gt; Medium &gt; Low &gt; Info</span> — so TFLint and the security scanner sort together. Use the severity chips to filter to "this level and above" (e.g. show only <strong>High+</strong>). A per-tool chip shows whether each tool wasn't installed, errored, or found N issues. If a tool errors with no findings, it usually means the working directory hasn't been <span class="fx-mono">init</span>-ed yet.</p>
+
+                <h3 class="fx-help-sub">Cost tab &amp; the Infracost API key</h3>
+                <p>Infracost needs a <strong>free API key</strong> (get one at infracost.io, or run <span class="fx-mono">infracost auth login</span>). Fenrix prompts for it on the Cost tab and stores it in the <strong>Windows Credential Manager</strong> — never in plaintext on disk, never in a setting, and it's only ever passed to Infracost as an environment variable at run time. <strong>Estimate cost</strong> shows the projected monthly total and a per-resource breakdown; <strong>Save baseline</strong> snapshots the current estimate, and <strong>Diff</strong> then shows the monthly change versus that baseline — useful for reviewing what a pending change will cost.</p>
+
+                <h3 class="fx-help-sub">Standalone by design</h3>
+                <p>Checks is a separate screen and does <strong>not</strong> block Plan &amp; apply today — it's advisory. Making a check result an apply gate (for example, block on Critical/High security findings, or on a cost ceiling) is a planned, opt-in policy; it isn't wired in yet, so a clean or dirty Checks run never changes what you can deploy.</p>
                 break;
 
             case "inspect":
@@ -235,8 +293,8 @@
     {
         ["Start here"] = [("start", "Getting started"), ("concepts", "Concepts & safety")],
         ["Working"] = [("projects", "Projects & environments"), ("files", "Files & editor"),
-                       ("terraform", "Terraform screen"), ("commands", "Commands builder"), ("terminal", "Embedded terminal")],
-        ["Change safely"] = [("plan", "Plan & apply"), ("inspect", "Inspect & state"), ("build", "Visual builder"), ("keys", "Keys")],
+                       ("variables", "Variables"), ("terraform", "Terraform screen"), ("commands", "Commands builder"), ("terminal", "Embedded terminal")],
+        ["Change safely"] = [("plan", "Plan & apply"), ("checks", "Checks (analysis & cost)"), ("inspect", "Inspect & state"), ("build", "Visual builder"), ("keys", "Keys")],
         ["Collaborate"] = [("git", "Source control"), ("connections", "Connections"), ("pipelines", "Pipelines"), ("enterprise", "Enterprise")],
         ["Reference"] = [("tf-cheatsheet", "Terraform cheatsheet"), ("git-cheatsheet", "Git cheatsheet"),
                          ("backup", "Backup & recovery"), ("shortcuts", "Shortcuts"), ("trouble", "Troubleshooting")],
